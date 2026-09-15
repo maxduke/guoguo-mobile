@@ -263,6 +263,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
           input: '${entry.directory}/${entry.input}',
           output: temporary,
           contentKey: entry.contentKey,
+          hls: entry.input.endsWith('.m3u8'),
         );
         await File(temporary).rename(entry.output);
       }

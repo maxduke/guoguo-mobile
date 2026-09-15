@@ -11,6 +11,7 @@ import '../platform/media_preparer.dart';
 import '../platform/provider_client.dart';
 import 'components.dart';
 import 'cast_sheet.dart';
+import 'player_viewport.dart';
 
 class PlayerPage extends StatefulWidget {
   const PlayerPage({
@@ -45,6 +46,7 @@ class _PlayerPageState extends State<PlayerPage> {
       _prefetching = false,
       _disposed = false;
   double _speed = 1, _drag = 0;
+  bool _fullscreen = false, _fill = true;
   DateTime _lastSaved = DateTime.fromMillisecondsSinceEpoch(0);
   StreamSubscription<List<ConnectivityResult>>? _network;
   @override
@@ -66,12 +68,12 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   BetterPlayerController _newController() => BetterPlayerController(
-    const BetterPlayerConfiguration(
+    BetterPlayerConfiguration(
       autoPlay: false,
       autoDispose: false,
-      fit: BoxFit.contain,
+      fit: _fill ? BoxFit.cover : BoxFit.contain,
       allowedScreenSleep: false,
-      controlsConfiguration: BetterPlayerControlsConfiguration(
+      controlsConfiguration: const BetterPlayerControlsConfiguration(
         showControls: false,
       ),
     ),
@@ -133,11 +135,13 @@ class _PlayerPageState extends State<PlayerPage> {
         _localPath = _prefetchedPath;
         _prefetchedPath = null;
         _preparer = _prefetchPreparer;
+        preparer = _preparer;
         _prefetchPreparer = null;
         _prefetchedController = null;
         _prefetchedMedia = null;
         _prefetchedIndex = -1;
       } else {
+        _clearPrefetch();
         final local = await widget.downloads.localFile(
           widget.drama,
           widget.episodes[index],
@@ -154,6 +158,10 @@ class _PlayerPageState extends State<PlayerPage> {
             widget.episodes[index],
             quality: quality,
           );
+          if (!mounted || generation != _generation) {
+            await widget.store.provider.release(resolved);
+            return;
+          }
           preparer = MediaPreparer();
           _preparer = preparer;
           path = await preparer.prepare(resolved);
@@ -175,6 +183,7 @@ class _PlayerPageState extends State<PlayerPage> {
       _controller = candidate;
       _media = resolved;
       candidate!.setBetterPlayerGlobalKey(_playerKey);
+      candidate.setOverriddenFit(_fill ? BoxFit.cover : BoxFit.contain);
       candidate.addEventsListener(_event);
       final record = widget.store.history[widget.drama.key];
       final start =
@@ -190,11 +199,13 @@ class _PlayerPageState extends State<PlayerPage> {
       }
     } catch (error) {
       candidate?.dispose(forceDispose: true);
+      await preparer?.dispose();
       await widget.store.provider.release(resolved);
       if (mounted && generation == _generation) {
         setState(() {
           _controller = null;
           _media = null;
+          _preparer = null;
           _loading = false;
           _error = '$error';
         });
@@ -335,6 +346,16 @@ class _PlayerPageState extends State<PlayerPage> {
     unawaited(widget.store.provider.release(_prefetchedMedia));
     _prefetchedMedia = null;
     _prefetchedIndex = -1;
+    _prefetchedPath = null;
+  }
+
+  void _toggleFullscreen() {
+    setState(() => _fullscreen = !_fullscreen);
+    unawaited(
+      SystemChrome.setEnabledSystemUIMode(
+        _fullscreen ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+      ),
+    );
   }
 
   Future<void> _togglePlay() async {
@@ -401,7 +422,11 @@ class _PlayerPageState extends State<PlayerPage> {
   );
   @override
   Widget build(BuildContext context) {
-    final wide = MediaQuery.sizeOf(context).width >= 900;
+    final wide =
+        MediaQuery.sizeOf(context).shortestSide >= 600 &&
+        MediaQuery.sizeOf(context).width >= 900 &&
+        !_fullscreen &&
+        !_locked;
     final value = _controller?.videoPlayerController?.value;
     final duration = value?.duration?.inMilliseconds.toDouble() ?? 0;
     final position = value?.position.inMilliseconds.toDouble() ?? 0;
@@ -439,7 +464,10 @@ class _PlayerPageState extends State<PlayerPage> {
                 fit: StackFit.expand,
                 children: [
                   if (_controller != null && !_loading)
-                    BetterPlayer(key: _playerKey, controller: _controller!),
+                    PlayerViewport(
+                      playerKey: _playerKey,
+                      controller: _controller!,
+                    ),
                   if (_loading)
                     const Center(
                       child: Column(
@@ -494,8 +522,40 @@ class _PlayerPageState extends State<PlayerPage> {
                       ),
                     ),
                   Positioned(
+                    left: 10,
+                    top: MediaQuery.paddingOf(context).top + 10,
+                    child: Row(
+                      children: [
+                        IconButton(
+                          tooltip: _fullscreen ? '退出全屏' : '全屏播放',
+                          onPressed: _toggleFullscreen,
+                          icon: Icon(
+                            _fullscreen
+                                ? Icons.fullscreen_exit
+                                : Icons.fullscreen,
+                            color: Colors.white,
+                          ),
+                        ),
+                        if (!_locked)
+                          IconButton(
+                            tooltip: _fill ? '显示完整画面' : '铺满播放区域',
+                            onPressed: () {
+                              setState(() => _fill = !_fill);
+                              _controller?.setOverriddenFit(
+                                _fill ? BoxFit.cover : BoxFit.contain,
+                              );
+                            },
+                            icon: Icon(
+                              _fill ? Icons.fit_screen : Icons.crop_free,
+                              color: Colors.white,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Positioned(
                     right: 10,
-                    top: 10,
+                    top: MediaQuery.paddingOf(context).top + 10,
                     child: IconButton(
                       tooltip: _locked ? '解锁手势' : '锁定手势',
                       onPressed: () => setState(() => _locked = !_locked),
@@ -510,7 +570,7 @@ class _PlayerPageState extends State<PlayerPage> {
             ),
           ),
         ),
-        if (!_locked)
+        if (!_locked && !_fullscreen)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
             child: Column(
@@ -603,7 +663,7 @@ class _PlayerPageState extends State<PlayerPage> {
     );
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: _locked
+      appBar: _locked || _fullscreen
           ? null
           : AppBar(
               backgroundColor: Colors.black,
@@ -637,6 +697,10 @@ class _PlayerPageState extends State<PlayerPage> {
               ],
             ),
       body: SafeArea(
+        top: !_fullscreen,
+        bottom: !_fullscreen,
+        left: !_fullscreen,
+        right: !_fullscreen,
         child: Column(
           children: [
             Expanded(
@@ -657,7 +721,7 @@ class _PlayerPageState extends State<PlayerPage> {
                     )
                   : video,
             ),
-            if (!_locked)
+            if (!_locked && !_fullscreen)
               Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 22,
@@ -740,6 +804,7 @@ class _PlayerPageState extends State<PlayerPage> {
     _clearPrefetch();
     unawaited(widget.store.provider.release(_media));
     unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
+    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
     super.dispose();
   }
 }

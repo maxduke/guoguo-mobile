@@ -26,7 +26,11 @@ jobs:
       - run: flutter pub get
       - run: dart format --output=none --set-exit-if-changed lib test packages/guoguo_core/lib
       - run: flutter analyze
+      - name: Install media regression tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: flutter test --concurrency=2
+        env:
+          GUOGUO_FFMPEG: ffmpeg
       - run: go test ./...
         working-directory: native/core
   ios:

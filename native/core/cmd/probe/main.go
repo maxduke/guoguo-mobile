@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -9,12 +10,15 @@ import (
 	"juku/mobile"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"time"
 )
 
 func main() {
 	source := flag.String("source", "hongguo", "hongguo, huangdou or huangguo")
 	mediaProbe := flag.Bool("media", false, "resolve one episode and fetch only its first 1024 bytes")
+	decodeProbe := flag.Bool("decode", false, "prepare and decode one full episode using a locally installed ffmpeg")
 	flag.Parse()
 	dir, err := os.MkdirTemp("", "guoguo-probe-")
 	if err != nil {
@@ -40,7 +44,7 @@ func main() {
 		panic(err)
 	}
 	fmt.Printf("source=%s items=%d warning=%s\n", *source, len(rows.Items), rows.Warning)
-	if !*mediaProbe || len(rows.Items) == 0 {
+	if (!*mediaProbe && !*decodeProbe) || len(rows.Items) == 0 {
 		return
 	}
 	var drama struct {
@@ -100,4 +104,34 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("episodes=%d mediaHTTP=%d bytes=%d hls=%t encrypted=%t\n", len(chapters.Chapters), response.StatusCode, len(data), media.HLS, media.ContentKey != "")
+	if *decodeProbe {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		output := filepath.Join(dir, "prepared.mp4")
+		args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-rw_timeout", "20000000"}
+		var headers string
+		for name, value := range media.Headers {
+			headers += name + ": " + value + "\r\n"
+		}
+		if headers != "" {
+			args = append(args, "-headers", headers)
+		}
+		if media.ContentKey != "" {
+			args = append(args, "-decryption_key", media.ContentKey)
+		}
+		if media.HLS {
+			args = append(args, "-allowed_extensions", "ALL")
+		}
+		args = append(args, "-i", media.URL, "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart", output)
+		// Never echo arguments or native logs containing signed URLs and keys.
+		if err := exec.CommandContext(ctx, "ffmpeg", args...).Run(); err != nil {
+			fmt.Fprintln(os.Stderr, "media preparation failed (credentials omitted)")
+			os.Exit(1)
+		}
+		if err := exec.CommandContext(ctx, "ffmpeg", "-v", "error", "-xerror", "-i", output, "-f", "null", "-").Run(); err != nil {
+			fmt.Fprintln(os.Stderr, "prepared media decoding failed")
+			os.Exit(1)
+		}
+		fmt.Println("fullEpisodePreparation=passed fullEpisodeDecode=passed")
+	}
 }
