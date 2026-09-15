@@ -53,8 +53,8 @@ packages/guoguo_core/android/libs/
 **/*.aar
 **/*.xcframework/
 **/go-build*/
-**/data/
-**/media/
+/native/core/data/
+/native/core/media/
 **/*.ipa
 **/*.apk
 **/*.p12

@@ -14,7 +14,8 @@ dependencies:
   better_player_plus: ^1.4.1
   background_downloader: ^9.6.1
   cached_network_image: ^3.4.1
-  connectivity_plus: ^7.0.0
+  # 7.1+ requires Xcode 26.1.1; keep compatible with the macos-15 builder.
+  connectivity_plus: 7.0.0
   file_picker: ^13.0.0
   path_provider: ^2.1.5
   share_plus: ^13.0.0
