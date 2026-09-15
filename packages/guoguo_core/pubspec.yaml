@@ -1,0 +1,18 @@
+name: guoguo_core
+description: On-device provider bridge for Guoguo.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: '>=3.11.0 <4.0.0'
+  flutter: '>=3.38.0'
+dependencies:
+  flutter:
+    sdk: flutter
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.maxduke.guoguo_core
+        pluginClass: GuoguoCorePlugin
+      ios:
+        pluginClass: GuoguoCorePlugin

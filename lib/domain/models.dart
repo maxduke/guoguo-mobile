@@ -1,0 +1,159 @@
+enum DramaSource {
+  hongguo('红果', '真人 · 漫剧 · AI 剧'),
+  huangguo('黄果', '发现更多好故事'),
+  huangdou('黄豆', '短剧，也有新滋味');
+
+  const DramaSource(this.label, this.subtitle);
+  final String label;
+  final String subtitle;
+  static DramaSource parse(Object? value) => values.firstWhere(
+    (source) => source.name == value,
+    orElse: () => throw const FormatException('未知站源'),
+  );
+}
+
+class Drama {
+  const Drama({
+    required this.id,
+    required this.source,
+    required this.title,
+    this.description = '',
+    this.cover = '',
+    this.category = '',
+    this.episodes = 0,
+  });
+  final String id, title, description, cover, category;
+  final DramaSource source;
+  final int episodes;
+  String get key => '${source.name}:$id';
+  factory Drama.fromJson(Map<String, dynamic> json) {
+    final id = json['id'] as String;
+    final title = json['title'] as String;
+    if (id.isEmpty || title.isEmpty) throw const FormatException('短剧资料不完整');
+    return Drama(
+      id: id,
+      source: DramaSource.parse(json['source']),
+      title: title,
+      description: json['description'] as String? ?? '',
+      cover: json['cover'] as String? ?? '',
+      category: json['category'] as String? ?? '',
+      episodes: (json['episodes'] as num?)?.toInt() ?? 0,
+    );
+  }
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'source': source.name,
+    'title': title,
+    'description': description,
+    'cover': cover,
+    'category': category,
+    'episodes': episodes,
+  };
+}
+
+class Episode {
+  const Episode({
+    required this.id,
+    required this.title,
+    required this.number,
+    required this.raw,
+  });
+  final String id, title;
+  final int number;
+  final Map<String, dynamic> raw;
+  factory Episode.fromJson(Map<String, dynamic> json, int index) => Episode(
+    id: json['id'] as String,
+    title: json['title'] as String? ?? '第 ${index + 1} 集',
+    number: int.tryParse('${json['currentEpisode']}') ?? index + 1,
+    raw: json,
+  );
+}
+
+class WatchRecord {
+  const WatchRecord({
+    required this.drama,
+    required this.episodeId,
+    required this.episodeIndex,
+    required this.positionMs,
+    required this.durationMs,
+    required this.updatedAt,
+  });
+  final Drama drama;
+  final String episodeId;
+  final int episodeIndex, positionMs, durationMs;
+  final DateTime updatedAt;
+  double get progress =>
+      durationMs <= 0 ? 0 : (positionMs / durationMs).clamp(0, 1);
+  factory WatchRecord.fromJson(Map<String, dynamic> json) {
+    final index = json['episodeIndex'] as int;
+    final position = json['positionMs'] as int;
+    final duration = json['durationMs'] as int;
+    if (index < 0 || position < 0 || duration < 0) {
+      throw const FormatException('观看记录无效');
+    }
+    return WatchRecord(
+      drama: Drama.fromJson(Map<String, dynamic>.from(json['drama'] as Map)),
+      episodeId: json['episodeId'] as String,
+      episodeIndex: index,
+      positionMs: position,
+      durationMs: duration,
+      updatedAt: DateTime.parse(json['updatedAt'] as String),
+    );
+  }
+  Map<String, dynamic> toJson() => {
+    'drama': drama.toJson(),
+    'episodeId': episodeId,
+    'episodeIndex': episodeIndex,
+    'positionMs': positionMs,
+    'durationMs': durationMs,
+    'updatedAt': updatedAt.toUtc().toIso8601String(),
+  };
+}
+
+class ResolvedMedia {
+  ResolvedMedia.fromJson(Map<String, dynamic> json)
+    : url = json['url'] as String,
+      remoteUrl = json['remoteUrl'] as String,
+      session = json['session'] as String? ?? '',
+      contentKey = json['contentKey'] as String? ?? '',
+      headers = Map<String, String>.from(json['headers'] as Map? ?? {}),
+      qualities = (json['qualities'] as List? ?? []).cast<int>(),
+      quality = json['quality'] as int? ?? 0,
+      hls = json['hls'] == true,
+      castDirect = json['castDirect'] == true;
+  final String url, remoteUrl, session, contentKey;
+  final Map<String, String> headers;
+  final List<int> qualities;
+  final int quality;
+  final bool hls, castDirect;
+}
+
+class RecordBackup {
+  RecordBackup(this.favorites, this.history);
+  final List<Drama> favorites;
+  final List<WatchRecord> history;
+  factory RecordBackup.fromJson(Map<String, dynamic> json) {
+    if (json['format'] != 'guoguo.records' || json['version'] != 1) {
+      throw const FormatException('不支持的备份格式或版本');
+    }
+    final favorites = json['favorites'] as List;
+    final history = json['history'] as List;
+    if (favorites.length > 100000 || history.length > 100000) {
+      throw const FormatException('备份记录过多');
+    }
+    return RecordBackup(
+      favorites
+          .map((v) => Drama.fromJson(Map<String, dynamic>.from(v as Map)))
+          .toList(),
+      history
+          .map((v) => WatchRecord.fromJson(Map<String, dynamic>.from(v as Map)))
+          .toList(),
+    );
+  }
+  Map<String, dynamic> toJson() => {
+    'format': 'guoguo.records',
+    'version': 1,
+    'favorites': favorites.map((v) => v.toJson()).toList(),
+    'history': history.map((v) => v.toJson()).toList(),
+  };
+}

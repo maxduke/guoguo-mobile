@@ -1,0 +1,64 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    name: Flutter and core checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: native/core/go.sum
+      - run: flutter pub get
+      - run: dart format --output=none --set-exit-if-changed lib test packages/guoguo_core/lib
+      - run: flutter analyze
+      - run: flutter test --concurrency=2
+      - run: go test ./...
+        working-directory: native/core
+  ios:
+    name: iOS unsigned build
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: native/core/go.sum
+      - run: scripts/setup_core.sh
+      - run: scripts/build_core.sh ios
+      - run: flutter config --no-enable-swift-package-manager
+      - run: flutter pub get
+      - name: Prepare linked media libraries
+        run: scripts/prepare_ios_media.sh
+      - run: flutter build ios --release --no-codesign
+      - name: Package for personal signing
+        run: |
+          mkdir -p build/sideload/Payload
+          cp -R build/ios/iphoneos/Runner.app build/sideload/Payload/
+          cd build/sideload
+          zip -qr Guoguo-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Guoguo-iOS-unsigned
+          path: build/sideload/Guoguo-unsigned.ipa
+          retention-days: 14
