@@ -189,267 +189,302 @@ class _HomePageState extends State<HomePage> {
     final horizontal = wide ? 40.0 : 22.0;
     return RefreshIndicator(
       onRefresh: () => store.refresh(),
-      child: CustomScrollView(
-        key: PageStorageKey('library-${store.source.name}'),
-        physics: const AlwaysScrollableScrollPhysics(),
-        slivers: [
-          SliverPadding(
-            padding: EdgeInsets.fromLTRB(horizontal, 8, horizontal, 0),
-            sliver: SliverList.list(
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      '发现好剧',
-                      style: Theme.of(context).textTheme.headlineLarge,
-                    ),
-                    const Spacer(),
-                    TextButton.icon(
-                      onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute<void>(
-                          builder: (_) =>
-                              RankingsPage(store: store, onOpen: _open),
-                        ),
+      child: NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          if (notification.depth == 0 &&
+              notification is ScrollUpdateNotification &&
+              notification.metrics.extentAfter < 700 &&
+              _query.isEmpty &&
+              store.sourceErrors[store.source] == null) {
+            unawaited(store.loadMore());
+          }
+          return false;
+        },
+        child: CustomScrollView(
+          key: PageStorageKey('library-${store.source.name}'),
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(horizontal, 8, horizontal, 0),
+              sliver: SliverList.list(
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        '发现好剧',
+                        style: Theme.of(context).textTheme.headlineLarge,
                       ),
-                      icon: const Icon(Icons.bar_chart_rounded, size: 19),
-                      label: const Text('榜单'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                Row(
-                  children: [
-                    for (final source in DramaSource.values)
-                      Expanded(
-                        child: Padding(
-                          padding: EdgeInsets.only(
-                            right: source == DramaSource.values.last ? 0 : 10,
+                      const Spacer(),
+                      TextButton.icon(
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) =>
+                                RankingsPage(store: store, onOpen: _open),
                           ),
-                          child: Semantics(
-                            selected: store.source == source,
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(15),
-                              onTap: () => perform(context, () async {
-                                _search.clear();
-                                ++_searchGeneration;
-                                setState(() {
-                                  _query = '';
-                                  _category = '全部';
-                                  _searchError = null;
-                                  _searching = false;
-                                });
-                                await store.selectSource(source);
-                                if ((store.catalogs[source] ?? []).isEmpty) {
-                                  await store.refresh(source);
-                                }
-                              }),
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 180),
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 14,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: store.source == source
-                                      ? Theme.of(context).colorScheme.primary
-                                      : Theme.of(
-                                          context,
-                                        ).colorScheme.surfaceContainerLow,
-                                  borderRadius: BorderRadius.circular(15),
-                                ),
-                                child: Text(
-                                  source.label,
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w700,
+                        ),
+                        icon: const Icon(Icons.bar_chart_rounded, size: 19),
+                        label: const Text('榜单'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      for (final source in DramaSource.values)
+                        Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.only(
+                              right: source == DramaSource.values.last ? 0 : 10,
+                            ),
+                            child: Semantics(
+                              selected: store.source == source,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(15),
+                                onTap: () => perform(context, () async {
+                                  _search.clear();
+                                  ++_searchGeneration;
+                                  setState(() {
+                                    _query = '';
+                                    _category = '全部';
+                                    _searchError = null;
+                                    _searching = false;
+                                  });
+                                  await store.selectSource(source);
+                                  if ((store.catalogs[source] ?? []).isEmpty) {
+                                    await store.refresh(source);
+                                  }
+                                }),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 180),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 14,
+                                  ),
+                                  decoration: BoxDecoration(
                                     color: store.source == source
-                                        ? Theme.of(
-                                            context,
-                                          ).colorScheme.onPrimary
+                                        ? Theme.of(context).colorScheme.primary
                                         : Theme.of(
                                             context,
-                                          ).colorScheme.onSurface,
+                                          ).colorScheme.surfaceContainerLow,
+                                    borderRadius: BorderRadius.circular(15),
+                                  ),
+                                  child: Text(
+                                    source.label,
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      color: store.source == source
+                                          ? Theme.of(
+                                              context,
+                                            ).colorScheme.onPrimary
+                                          : Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface,
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
                           ),
                         ),
-                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  TextField(
+                    controller: _search,
+                    onChanged: (v) {
+                      ++_searchGeneration;
+                      setState(() {
+                        _query = v;
+                        _searchError = null;
+                        _searching = false;
+                      });
+                    },
+                    onSubmitted: _submit,
+                    textInputAction: TextInputAction.search,
+                    decoration: InputDecoration(
+                      hintText: '搜索${store.source.label}短剧，找到下一部心动',
+                      prefixIcon: const Icon(Icons.search_rounded),
+                      suffixIcon: _searching
+                          ? const Padding(
+                              padding: EdgeInsets.all(15),
+                              child: SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          : IconButton(
+                              tooltip: '联网搜索',
+                              icon: const Icon(Icons.arrow_forward_rounded),
+                              onPressed: () => _submit(_search.text),
+                            ),
+                    ),
+                  ),
+                  if (_searchError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: _Notice(_searchError!, Icons.info_outline_rounded),
+                    ),
+                  if (_query.isEmpty) ...[
+                    const SizedBox(height: 22),
+                    _editorial(wide),
+                    const SizedBox(height: 22),
                   ],
+                  if (_query.isEmpty && store.recent.isNotEmpty) ...[
+                    _continueCard(store.recent.first),
+                    const SizedBox(height: 22),
+                  ],
+                  Row(
+                    children: [
+                      Text(
+                        _query.isEmpty ? '慢慢选，慢慢看' : '搜索结果',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const Spacer(),
+                      if (loading)
+                        const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      else
+                        IconButton(
+                          tooltip: '更新当前站源',
+                          onPressed: () => store.refresh(),
+                          icon: const Icon(Icons.refresh_rounded),
+                        ),
+                      Text(
+                        '已加载 ${rows.length} 部',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (categories.length > 1)
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final category in categories)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: ChoiceChip(
+                                label: Text(category),
+                                selected: _category == category,
+                                onSelected: (_) =>
+                                    setState(() => _category = category),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  if (store.sourceErrors[store.source] != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: _Notice(
+                        store.sourceErrors[store.source]!,
+                        Icons.cloud_off_outlined,
+                      ),
+                    ),
+                  const SizedBox(height: 12),
+                ],
+              ),
+            ),
+            if (rows.isEmpty)
+              SliverToBoxAdapter(
+                child: EmptyState(
+                  icon: loading
+                      ? Icons.travel_explore
+                      : Icons.movie_filter_outlined,
+                  title: loading
+                      ? '正在找寻好故事'
+                      : _query.isNotEmpty
+                      ? '暂时没有找到'
+                      : '你的下一部好剧，在这里',
+                  message: loading
+                      ? '首次加载需要一点时间，内容会保存在设备上'
+                      : _query.isNotEmpty
+                      ? '换个关键词，或点击搜索联网查找'
+                      : '轻点更新，加载${store.source.label}剧库',
+                  action: loading
+                      ? null
+                      : FilledButton.icon(
+                          onPressed: () => store.refresh(),
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('更新剧库'),
+                        ),
                 ),
-                const SizedBox(height: 18),
-                TextField(
-                  controller: _search,
-                  onChanged: (v) {
-                    ++_searchGeneration;
-                    setState(() {
-                      _query = v;
-                      _searchError = null;
-                      _searching = false;
-                    });
+              )
+            else
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(horizontal, 0, horizontal, 28),
+                sliver: SliverLayoutBuilder(
+                  builder: (context, constraints) {
+                    final columns = (constraints.crossAxisExtent / 165)
+                        .floor()
+                        .clamp(2, 7);
+                    return SliverGrid.builder(
+                      itemCount: rows.length,
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: columns,
+                        mainAxisSpacing: 22,
+                        crossAxisSpacing: 14,
+                        childAspectRatio: .61,
+                      ),
+                      itemBuilder: (context, index) => DramaCard(
+                        drama: rows[index],
+                        onTap: () => _open(rows[index]),
+                        favorite: store.favorites.containsKey(rows[index].key),
+                        onFavorite: () => perform(
+                          context,
+                          () => store.toggleFavorite(rows[index]),
+                        ),
+                      ),
+                    );
                   },
-                  onSubmitted: _submit,
-                  textInputAction: TextInputAction.search,
-                  decoration: InputDecoration(
-                    hintText: '搜索${store.source.label}短剧，找到下一部心动',
-                    prefixIcon: const Icon(Icons.search_rounded),
-                    suffixIcon: _searching
-                        ? const Padding(
-                            padding: EdgeInsets.all(15),
-                            child: SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        : IconButton(
-                            tooltip: '联网搜索',
-                            icon: const Icon(Icons.arrow_forward_rounded),
-                            onPressed: () => _submit(_search.text),
-                          ),
-                  ),
                 ),
-                if (_searchError != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 12),
-                    child: _Notice(_searchError!, Icons.info_outline_rounded),
-                  ),
-                if (_query.isEmpty) ...[
-                  const SizedBox(height: 22),
-                  _editorial(wide),
-                  const SizedBox(height: 22),
-                ],
-                if (_query.isEmpty && store.recent.isNotEmpty) ...[
-                  _continueCard(store.recent.first),
-                  const SizedBox(height: 22),
-                ],
-                Row(
-                  children: [
-                    Text(
-                      _query.isEmpty ? '慢慢选，慢慢看' : '搜索结果',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const Spacer(),
-                    if (loading)
-                      const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    else
-                      IconButton(
-                        tooltip: '更新当前站源',
-                        onPressed: () => store.refresh(),
-                        icon: const Icon(Icons.refresh_rounded),
-                      ),
-                    Text(
-                      '${rows.length} 部',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-                if (categories.length > 1)
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
+              ),
+            if (store.library.isNotEmpty && _query.isEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 24),
+                  child: Center(
+                    child: Column(
                       children: [
-                        for (final category in categories)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: ChoiceChip(
-                              label: Text(category),
-                              selected: _category == category,
-                              onSelected: (_) =>
-                                  setState(() => _category = category),
-                            ),
+                        Text(
+                          '已加载 ${store.library.length} 部 · ${store.hasMore[store.source] == true ? "继续下滑加载" : "当前来源已返回完毕"}',
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          '已加载数量不代表全站总量',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                        if (store.hasMore[store.source] == true)
+                          OutlinedButton.icon(
+                            onPressed: loading ? null : store.loadMore,
+                            icon: loading
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.expand_more),
+                            label: Text(loading ? '正在加载…' : '加载更多短剧'),
                           ),
                       ],
                     ),
                   ),
-                if (store.sourceErrors[store.source] != null)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: _Notice(
-                      store.sourceErrors[store.source]!,
-                      Icons.cloud_off_outlined,
-                    ),
-                  ),
-                const SizedBox(height: 12),
-              ],
-            ),
-          ),
-          if (rows.isEmpty)
-            SliverToBoxAdapter(
-              child: EmptyState(
-                icon: loading
-                    ? Icons.travel_explore
-                    : Icons.movie_filter_outlined,
-                title: loading
-                    ? '正在找寻好故事'
-                    : _query.isNotEmpty
-                    ? '暂时没有找到'
-                    : '你的下一部好剧，在这里',
-                message: loading
-                    ? '首次加载需要一点时间，内容会保存在设备上'
-                    : _query.isNotEmpty
-                    ? '换个关键词，或点击搜索联网查找'
-                    : '轻点更新，加载${store.source.label}剧库',
-                action: loading
-                    ? null
-                    : FilledButton.icon(
-                        onPressed: () => store.refresh(),
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('更新剧库'),
-                      ),
-              ),
-            )
-          else
-            SliverPadding(
-              padding: EdgeInsets.fromLTRB(horizontal, 0, horizontal, 28),
-              sliver: SliverLayoutBuilder(
-                builder: (context, constraints) {
-                  final columns = (constraints.crossAxisExtent / 165)
-                      .floor()
-                      .clamp(2, 7);
-                  return SliverGrid.builder(
-                    itemCount: rows.length,
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: columns,
-                      mainAxisSpacing: 22,
-                      crossAxisSpacing: 14,
-                      childAspectRatio: .61,
-                    ),
-                    itemBuilder: (context, index) => DramaCard(
-                      drama: rows[index],
-                      onTap: () => _open(rows[index]),
-                      favorite: store.favorites.containsKey(rows[index].key),
-                      onFavorite: () => perform(
-                        context,
-                        () => store.toggleFavorite(rows[index]),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          if (store.hasMore[store.source] == true && _query.isEmpty)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 24),
-                child: Center(
-                  child: OutlinedButton.icon(
-                    onPressed: loading ? null : store.loadMore,
-                    icon: const Icon(Icons.expand_more),
-                    label: const Text('加载更多短剧'),
-                  ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }

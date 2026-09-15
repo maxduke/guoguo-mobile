@@ -27,53 +27,61 @@ func validImageURL(remote *url.URL) bool {
 
 func (app *UIApp) loadCoverImage(ctx context.Context, remoteURL string, decode func([]byte, string) []byte) ([]byte, error) {
 	return app.coverImages.load(ctx, remoteURL, func(ctx context.Context) ([]byte, error) {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, remoteURL, nil)
-		if err != nil {
-			return nil, err
+		return app.downloader.fetchCoverImage(ctx, remoteURL, decode, true)
+	})
+}
+
+// Mobile uses platform image decoding, never the desktop executable converter.
+func (downloader *Downloader) fetchCoverImage(ctx context.Context, remoteURL string, decode func([]byte, string) []byte, convertHEIC bool) ([]byte, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, remoteURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if !validImageURL(request.URL) {
+		return nil, errors.New("封面地址不受支持")
+	}
+	request.Header.Set("Referer", imageReferer(remoteURL))
+	request.Header.Set("User-Agent", userAgent)
+	request.Header.Set("Accept", "image/webp,image/jpeg,image/png,image/gif,*/*;q=0.5")
+	client := *downloader.client
+	client.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		if len(via) >= 5 || !validImageURL(request.URL) {
+			return errors.New("封面重定向地址不受支持")
 		}
-		if !validImageURL(request.URL) {
-			return nil, errors.New("封面地址不受支持")
-		}
-		request.Header.Set("Referer", imageReferer(remoteURL))
-		request.Header.Set("User-Agent", userAgent)
-		request.Header.Set("Accept", "image/webp,image/jpeg,image/png,image/gif,*/*;q=0.5")
-		client := *app.downloader.client
-		client.CheckRedirect = func(request *http.Request, via []*http.Request) error {
-			if len(via) >= 5 || !validImageURL(request.URL) {
-				return errors.New("封面重定向地址不受支持")
-			}
-			request.Header.Set("Referer", imageReferer(request.URL.String()))
-			return nil
-		}
-		response, err := client.Do(request)
-		if err != nil {
-			return nil, err
-		}
-		defer response.Body.Close()
-		if response.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("封面上游 HTTP %d", response.StatusCode)
-		}
-		if response.ContentLength > maxCoverBytes {
-			return nil, errors.New("封面文件过大")
-		}
-		data, err := io.ReadAll(io.LimitReader(response.Body, maxCoverBytes+1))
-		if err != nil {
-			return nil, err
-		}
-		if len(data) > maxCoverBytes {
-			return nil, errors.New("封面文件过大")
-		}
-		if decode != nil {
-			data = decode(data, remoteURL)
-		}
-		if isKnownImage(data) {
+		request.Header.Set("Referer", imageReferer(request.URL.String()))
+		return nil
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("封面上游 HTTP %d", response.StatusCode)
+	}
+	if response.ContentLength > maxCoverBytes {
+		return nil, errors.New("封面文件过大")
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxCoverBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxCoverBytes {
+		return nil, errors.New("封面文件过大")
+	}
+	if decode != nil {
+		data = decode(data, remoteURL)
+	}
+	if isKnownImage(data) {
+		return data, nil
+	}
+	if isHEICImage(data) {
+		if !convertHEIC {
 			return data, nil
 		}
-		if isHEICImage(data) {
-			return app.downloader.convertHEICCover(ctx, data)
-		}
-		return nil, errors.New("封面内容无效，请检查代理或站点是否需要验证")
-	})
+		return downloader.convertHEICCover(ctx, data)
+	}
+	return nil, errors.New("封面内容无效，请检查代理或站点是否需要验证")
 }
 
 type coverOutput struct {

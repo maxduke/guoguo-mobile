@@ -162,6 +162,7 @@ class AppStore extends ChangeNotifier {
 
   Future<void> loadMore() async {
     final target = source;
+    if (offline || hasMore[target] != true) return;
     if (!loadingSources.add(target)) return;
     notifyListeners();
     try {
@@ -174,7 +175,12 @@ class AppStore extends ChangeNotifier {
       _mergeCatalog(target, rows);
       catalogPages[target] = page;
       hasMore[target] = response['hasMore'] == true;
-      sourceErrors.remove(target);
+      final warning = response['warning'] as String? ?? '';
+      if (warning.isNotEmpty) {
+        sourceErrors[target] = warning;
+      } else {
+        sourceErrors.remove(target);
+      }
       await persist();
     } catch (error) {
       sourceErrors[target] = '$error';

@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../data/app_store.dart';
 import '../data/download_store.dart';
+import '../data/cover_cache.dart';
 import 'components.dart';
 
 class SettingsPage extends StatelessWidget {
@@ -190,6 +191,7 @@ class SettingsPage extends StatelessWidget {
                       subtitle: const Text('收藏、历史和已下载视频会保留'),
                       onTap: () => perform(context, () async {
                         await DefaultCacheManager().emptyCache();
+                        await coverCache.emptyCache();
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(content: Text('封面缓存已清理')),

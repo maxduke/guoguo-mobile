@@ -4,6 +4,7 @@ package app
 // HTTP UI, downloading executables, or requiring a remote business server.
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,9 @@ type MobileClient struct {
 	downloader *Downloader
 	mu         sync.Mutex
 	proxies    map[string]*hlsProxy
+	covers     coverImageCache
+	catalogMu  sync.Mutex
+	known      []Drama
 }
 
 func NewMobileClient(directory string) (*MobileClient, error) {
@@ -34,10 +38,12 @@ func NewMobileClient(directory string) (*MobileClient, error) {
 	cfg.MaxPagesPerSort = 1
 	cfg.Retries = 2
 	downloader := NewDownloader(cfg)
+	var known []Drama
 	if cache, err := readLibraryCache(directory); err == nil {
 		downloader.restoreHongguoCatalog(cache.HongguoApp)
+		known = cache.Dramas
 	}
-	return &MobileClient{downloader: downloader, proxies: make(map[string]*hlsProxy)}, nil
+	return &MobileClient{downloader: downloader, proxies: make(map[string]*hlsProxy), known: known}, nil
 }
 
 type mobileRequest struct {
@@ -45,6 +51,7 @@ type mobileRequest struct {
 	Source  string  `json:"source"`
 	ID      string  `json:"id"`
 	Query   string  `json:"query"`
+	URL     string  `json:"url"`
 	Board   string  `json:"board"`
 	Page    int     `json:"page"`
 	Quality int     `json:"quality"`
@@ -78,6 +85,14 @@ func (c *MobileClient) Call(raw string) (string, error) {
 	defer cancel()
 	var value any
 	switch request.Method {
+	case "cover":
+		data, err := c.covers.load(ctx, request.URL, func(ctx context.Context) ([]byte, error) {
+			return c.downloader.fetchCoverImage(ctx, request.URL, decodeImageBytes, false)
+		})
+		if err != nil {
+			return "", publicError(err)
+		}
+		value = map[string]any{"data": base64.StdEncoding.EncodeToString(data), "contentType": imageContentType(data)}
 	case "downloadPlan":
 		if request.Chapter.ID == "" {
 			return "", errors.New("缺少分集 ID")
@@ -88,21 +103,37 @@ func (c *MobileClient) Call(raw string) (string, error) {
 		}
 		value = plan
 	case "catalog":
+		c.catalogMu.Lock()
+		defer c.catalogMu.Unlock()
 		if request.Source != "hongguo" && request.Source != "huangdou" && request.Source != "huangguo" {
 			return "", errors.New("未知站源")
 		}
 		var rows []Drama
 		var err error
-		if request.Page > 200 {
+		hasMore := false
+		if request.Page > 200 && request.Source != sourceHongguo {
 			return "", errors.New("页码超出范围")
 		}
 		if request.Source == sourceHongguo {
+			ctx = withKnownHongguoDramas(ctx, c.known)
 			if request.Page > 1 {
 				ctx = context.WithValue(ctx, libraryMoreKey{}, true)
 			}
 			rows, err = c.downloader.fetchHongguoDramas(ctx)
 			state := c.downloader.hongguoCatalogSnapshot()
-			if saveErr := writeLibraryCache(c.downloader.cfg.dataDirectory(), libraryCache{HongguoApp: state}); saveErr != nil && err == nil {
+			byID := make(map[string]Drama, len(c.known)+len(rows))
+			for _, row := range c.known {
+				byID[row.ID] = row
+			}
+			for _, row := range rows {
+				byID[row.ID] = row
+			}
+			c.known = c.known[:0]
+			for _, row := range byID {
+				c.known = append(c.known, row)
+			}
+			hasMore = hongguoCatalogHasMore(state)
+			if saveErr := writeLibraryCache(c.downloader.cfg.dataDirectory(), libraryCache{HongguoApp: state, Dramas: c.known}); saveErr != nil && err == nil {
 				err = saveErr
 			}
 		} else if request.Source == sourceHuangdou && request.Page > 1 {
@@ -119,6 +150,9 @@ func (c *MobileClient) Call(raw string) (string, error) {
 		} else {
 			rows, err = c.downloader.fetchAllDramas(ctx, request.Source)
 		}
+		if request.Source == sourceHuangdou {
+			hasMore = len(rows) > 0 && request.Page < 200
+		}
 		warning := ""
 		if err != nil {
 			if len(rows) == 0 {
@@ -126,7 +160,7 @@ func (c *MobileClient) Call(raw string) (string, error) {
 			}
 			warning = publicError(err).Error()
 		}
-		value = map[string]any{"items": mobileDramas(rows), "warning": warning, "hasMore": request.Source != "huangguo" && len(rows) > 0 && request.Page < 200}
+		value = map[string]any{"items": mobileDramas(rows), "warning": warning, "hasMore": hasMore, "catalogScope": "available"}
 	case "search":
 		if request.Source != "hongguo" {
 			return "", errors.New("当前站源尚未接入联网搜索，可继续使用本地筛选")

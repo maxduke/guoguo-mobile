@@ -7,10 +7,12 @@ import 'package:flutter/services.dart';
 import '../data/app_store.dart';
 import '../data/download_store.dart';
 import '../domain/models.dart';
+import '../platform/episode_buffer.dart';
 import '../platform/media_preparer.dart';
 import '../platform/provider_client.dart';
 import 'components.dart';
 import 'cast_sheet.dart';
+import 'episode_pager.dart';
 import 'player_viewport.dart';
 
 class PlayerPage extends StatefulWidget {
@@ -31,752 +33,555 @@ class PlayerPage extends StatefulWidget {
   State<PlayerPage> createState() => _PlayerPageState();
 }
 
-class _PlayerPageState extends State<PlayerPage> {
-  final _playerKey = GlobalKey();
-  BetterPlayerController? _controller;
-  ResolvedMedia? _media, _prefetchedMedia;
-  BetterPlayerController? _prefetchedController;
-  MediaPreparer? _preparer, _prefetchPreparer;
-  String? _error, _localPath, _prefetchedPath;
-  int _prefetchGeneration = 0;
-  int _index = 0, _generation = 0, _prefetchedIndex = -1;
-  bool _loading = true,
-      _locked = false,
-      _boost = false,
-      _prefetching = false,
-      _disposed = false;
-  double _speed = 1, _drag = 0;
-  bool _fullscreen = false, _fill = true;
-  DateTime _lastSaved = DateTime.fromMillisecondsSinceEpoch(0);
+class _Playable {
+  _Playable(this.controller, this.preparer, this.media, this.path);
+  final BetterPlayerController controller;
+  final MediaPreparer preparer;
+  final ResolvedMedia? media;
+  final String path;
+  final key = GlobalKey();
+}
+
+class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
+  late final PageController _pages;
+  late final EpisodeBuffer<_Playable> _buffer;
+  final Map<int, int> _qualities = {};
+  _Playable? _active;
+  Future<void> _paused = Future.value();
+  bool _pendingPlay = false;
+  Timer? _hideTimer, _preloadTimer, _settleTimer;
   StreamSubscription<List<ConnectivityResult>>? _network;
+  int _index = 0, _generation = 0;
+  bool _controls = false, _locked = false, _fill = false, _boost = false;
+  bool _loading = true, _foreground = true, _modal = false, _scrubbing = false;
+  double _speed = 1;
+  String? _error;
+  DateTime _lastSaved = DateTime.fromMillisecondsSinceEpoch(0);
+
   @override
   void initState() {
     super.initState();
     _index = widget.initialIndex;
+    _pages = PageController(initialPage: _index);
+    _buffer = EpisodeBuffer(load: _prepare, release: _release);
+    WidgetsBinding.instance.addObserver(this);
+    widget.store.addListener(_preferencesChanged);
     _network = Connectivity().onConnectivityChanged.listen((states) {
       if (!states.contains(ConnectivityResult.wifi) &&
           !widget.store.cellularPrefetch) {
-        _clearPrefetch();
+        _preloadTimer?.cancel();
+        _buffer.retain({_index});
+      } else {
+        _schedulePrefetch();
       }
     });
-    widget.store.addListener(_onPreferences);
-    unawaited(_load(_index, resume: true));
+    unawaited(
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky),
+    );
+    unawaited(_activate(resume: true));
   }
 
-  void _onPreferences() {
-    if (!widget.store.prefetch) _clearPrefetch();
-  }
-
-  BetterPlayerController _newController() => BetterPlayerController(
-    BetterPlayerConfiguration(
-      autoPlay: false,
-      autoDispose: false,
-      fit: _fill ? BoxFit.cover : BoxFit.contain,
-      allowedScreenSleep: false,
-      controlsConfiguration: const BetterPlayerControlsConfiguration(
-        showControls: false,
-      ),
-    ),
-  );
-  BetterPlayerDataSource _dataSource(String path, ResolvedMedia? media) =>
-      BetterPlayerDataSource(
-        path.startsWith('http')
-            ? BetterPlayerDataSourceType.network
-            : BetterPlayerDataSourceType.file,
-        path,
-        headers: media?.headers,
-        videoFormat: media?.hls == true && path.startsWith('http')
-            ? BetterPlayerVideoFormat.hls
-            : null,
-        notificationConfiguration: BetterPlayerNotificationConfiguration(
-          showNotification: true,
-          title: widget.drama.title,
-          author: '果果 · 第 ${_index + 1} 集',
-        ),
-      );
-
-  Future<void> _load(
-    int index, {
-    bool resume = false,
-    int quality = 0,
-    Duration? position,
-  }) async {
-    if (index < 0 || index >= widget.episodes.length || _disposed) return;
-    final generation = ++_generation;
-    await _save();
-    if (!mounted || generation != _generation) return;
-    final old = _controller;
-    _controller = null;
-    old?.removeEventsListener(_event);
-    old?.dispose(forceDispose: true);
-    final previousPreparer = _preparer;
-    final previousMedia = _media;
-    _preparer = null;
-    _media = null;
-    await previousPreparer?.dispose();
-    unawaited(widget.store.provider.release(previousMedia));
-    if (!mounted || generation != _generation) return;
-    setState(() {
-      _index = index;
-      _loading = true;
-      _error = null;
-      _localPath = null;
-      _boost = false;
-    });
-    BetterPlayerController? candidate;
-    ResolvedMedia? resolved;
-    MediaPreparer? preparer;
+  Future<_Playable> _prepare(
+    int index,
+    EpisodeCancellation cancellation,
+  ) async {
+    final preparer = MediaPreparer();
+    cancellation.onCancel = () => unawaited(preparer.cancel());
+    BetterPlayerController? controller;
+    ResolvedMedia? media;
     try {
-      if (_prefetchedIndex == index &&
-          _prefetchedController != null &&
-          quality == 0) {
-        candidate = _prefetchedController;
-        resolved = _prefetchedMedia;
-        _localPath = _prefetchedPath;
-        _prefetchedPath = null;
-        _preparer = _prefetchPreparer;
-        preparer = _preparer;
-        _prefetchPreparer = null;
-        _prefetchedController = null;
-        _prefetchedMedia = null;
-        _prefetchedIndex = -1;
-      } else {
-        _clearPrefetch();
-        final local = await widget.downloads.localFile(
+      cancellation.check();
+      var path = await widget.downloads.localFile(
+        widget.drama,
+        widget.episodes[index],
+      );
+      cancellation.check();
+      if (path == null) {
+        if (widget.store.offline) {
+          throw const ProviderException('此分集尚未下载，请联网后播放');
+        }
+        media = await widget.store.provider.resolve(
           widget.drama,
           widget.episodes[index],
+          quality: _qualities[index] ?? 0,
         );
-        String path;
-        if (local != null) {
-          path = local;
-        } else {
-          if (widget.store.offline) {
-            throw const ProviderException('此分集尚未下载，请联网后播放');
-          }
-          resolved = await widget.store.provider.resolve(
-            widget.drama,
-            widget.episodes[index],
-            quality: quality,
-          );
-          if (!mounted || generation != _generation) {
-            await widget.store.provider.release(resolved);
-            return;
-          }
-          preparer = MediaPreparer();
-          _preparer = preparer;
-          path = await preparer.prepare(resolved);
-        }
-        if (!mounted || generation != _generation) {
-          await widget.store.provider.release(resolved);
-          await preparer?.dispose();
-          return;
-        }
-        _localPath = path.startsWith('http') ? null : path;
-        candidate = _newController();
-        await candidate.setupDataSource(_dataSource(path, resolved));
+        cancellation.check();
+        path = await preparer.prepare(media);
+        cancellation.check();
       }
-      if (!mounted || generation != _generation) {
-        candidate?.dispose(forceDispose: true);
-        await widget.store.provider.release(resolved);
-        return;
-      }
-      _controller = candidate;
-      _media = resolved;
-      candidate!.setBetterPlayerGlobalKey(_playerKey);
-      candidate.setOverriddenFit(_fill ? BoxFit.cover : BoxFit.contain);
-      candidate.addEventsListener(_event);
+      controller = BetterPlayerController(
+        BetterPlayerConfiguration(
+          autoPlay: false,
+          autoDispose: false,
+          fit: _fill ? BoxFit.cover : BoxFit.contain,
+          allowedScreenSleep: false,
+          controlsConfiguration: const BetterPlayerControlsConfiguration(
+            showControls: false,
+          ),
+        ),
+      );
+      await controller.setupDataSource(
+        BetterPlayerDataSource(
+          path.startsWith('http')
+              ? BetterPlayerDataSourceType.network
+              : BetterPlayerDataSourceType.file,
+          path,
+          headers: media?.headers,
+          videoFormat: media?.hls == true && path.startsWith('http')
+              ? BetterPlayerVideoFormat.hls
+              : null,
+          notificationConfiguration: BetterPlayerNotificationConfiguration(
+            showNotification: true,
+            title: widget.drama.title,
+            author: '果果 · 第 ${widget.episodes[index].number} 集',
+          ),
+        ),
+      );
+      cancellation.check();
+      return _Playable(controller, preparer, media, path);
+    } catch (_) {
+      controller?.dispose(forceDispose: true);
+      await preparer.dispose();
+      await _releaseMedia(media);
+      rethrow;
+    }
+  }
+
+  Future<void> _releaseMedia(ResolvedMedia? media) async {
+    try {
+      await widget.store.provider.release(media);
+    } catch (_) {
+      /* Best-effort session cleanup. */
+    }
+  }
+
+  Future<void> _release(_Playable item) async {
+    item.controller.removeEventsListener(_event);
+    item.controller.dispose(forceDispose: true);
+    await item.preparer.dispose();
+    await _releaseMedia(item.media);
+  }
+
+  void _save() {
+    final value = _active?.controller.videoPlayerController?.value;
+    if (value == null ||
+        value.duration == null ||
+        value.duration == Duration.zero) {
+      return;
+    }
+    _lastSaved = DateTime.now();
+    unawaited(
+      widget.store
+          .saveWatch(
+            WatchRecord(
+              drama: widget.drama,
+              episodeId: widget.episodes[_index].id,
+              episodeIndex: _index,
+              positionMs: value.position.inMilliseconds,
+              durationMs: value.duration!.inMilliseconds,
+              updatedAt: DateTime.now(),
+            ),
+          )
+          .catchError((Object _) {}),
+    );
+  }
+
+  void _pageChanged(int index) {
+    _save();
+    _hideTimer?.cancel();
+    _preloadTimer?.cancel();
+    _settleTimer?.cancel();
+    ++_generation;
+    _active?.controller.removeEventsListener(_event);
+    _paused = _active?.controller.pause() ?? Future.value();
+    unawaited(_paused.catchError((Object _) {}));
+    setState(() {
+      _index = index;
+      _active = null;
+      _loading = true;
+      _error = null;
+      _boost = false;
+      _controls = false;
+    });
+    _buffer.retain({index - 1, index, index + 1});
+    _settleTimer = Timer(
+      const Duration(milliseconds: 120),
+      () => unawaited(_activate()),
+    );
+  }
+
+  Future<void> _activate({bool resume = false, Duration? position}) async {
+    _pendingPlay = false;
+    final generation = ++_generation;
+    final index = _index;
+    try {
+      final item = await _buffer.prepare(index);
+      if (!mounted || generation != _generation) return;
+      _active = item;
+      item.controller.setBetterPlayerGlobalKey(item.key);
+      item.controller.setOverriddenFit(_fill ? BoxFit.cover : BoxFit.contain);
+      item.controller.addEventsListener(_event);
       final record = widget.store.history[widget.drama.key];
-      final start =
+      var start =
           position ??
           (resume && record?.episodeId == widget.episodes[index].id
               ? Duration(milliseconds: record!.positionMs)
-              : Duration.zero);
-      if (start > Duration.zero) await candidate.seekTo(start);
-      await candidate.setSpeed(_speed);
-      await candidate.play();
-      if (mounted && generation == _generation) {
-        setState(() => _loading = false);
+              : null);
+      final value = item.controller.videoPlayerController?.value;
+      final duration = value?.duration ?? Duration.zero;
+      if (start == null &&
+          duration > Duration.zero &&
+          value!.position >= duration - const Duration(milliseconds: 300)) {
+        start = Duration.zero;
       }
+      if (start != null) await item.controller.seekTo(start);
+      if (!mounted || generation != _generation) return;
+      await item.controller.setSpeed(_speed);
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _loading = false;
+        _error = null;
+      });
+      await WidgetsBinding.instance.endOfFrame;
+      await _paused;
+      if (!mounted || generation != _generation) return;
+      if (!_foreground) {
+        _pendingPlay = true;
+        return;
+      }
+      await item.controller.play();
+      _schedulePrefetch();
     } catch (error) {
-      candidate?.dispose(forceDispose: true);
-      await preparer?.dispose();
-      await widget.store.provider.release(resolved);
       if (mounted && generation == _generation) {
         setState(() {
-          _controller = null;
-          _media = null;
-          _preparer = null;
           _loading = false;
-          _error = '$error';
+          _error = error is EpisodeCancelled ? '准备已取消，请重试' : '$error';
         });
       }
     }
   }
 
+  void _retry({int? quality}) {
+    _save();
+    final position = _active?.controller.videoPlayerController?.value.position;
+    _active?.controller.removeEventsListener(_event);
+    _active = null;
+    if (quality != null) _qualities[_index] = quality;
+    _buffer.evict(_index);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    unawaited(_activate(resume: position == null, position: position));
+  }
+
   void _event(BetterPlayerEvent event) {
-    if (!mounted || _disposed) return;
-    if (event.betterPlayerEventType == BetterPlayerEventType.finished) {
-      if (_index + 1 < widget.episodes.length) {
-        unawaited(_load(_index + 1));
-      } else {
-        unawaited(_save());
-      }
-    }
-    if (event.betterPlayerEventType == BetterPlayerEventType.progress) {
-      final value = _controller?.videoPlayerController?.value;
-      if (value?.isPlaying == true &&
-          DateTime.now().difference(_lastSaved).inSeconds >= 5) {
-        unawaited(_save());
-      }
-      final duration = value?.duration ?? Duration.zero;
-      final position = value?.position ?? Duration.zero;
-      if (duration > Duration.zero &&
-          duration - position < const Duration(seconds: 20)) {
-        unawaited(_prefetch());
-      }
-      setState(() {});
-    }
-    if (event.betterPlayerEventType == BetterPlayerEventType.exception) {
-      setState(() => _error = '视频暂时无法播放，请重试或切换分集');
-    }
-    if (event.betterPlayerEventType == BetterPlayerEventType.play ||
-        event.betterPlayerEventType == BetterPlayerEventType.pause) {
-      setState(() {});
-    }
-  }
-
-  Future<void> _save() async {
-    final value = _controller?.videoPlayerController?.value;
-    if (value == null ||
-        value.duration == null ||
-        value.duration == Duration.zero ||
-        value.position == Duration.zero) {
-      return;
-    }
-    _lastSaved = DateTime.now();
-    try {
-      await widget.store.saveWatch(
-        WatchRecord(
-          drama: widget.drama,
-          episodeId: widget.episodes[_index].id,
-          episodeIndex: _index,
-          positionMs: value.position.inMilliseconds,
-          durationMs: value.duration!.inMilliseconds,
-          updatedAt: DateTime.now(),
-        ),
-      );
-    } catch (_) {
-      /* AppStore exposes persistence failures in the main UI. */
+    if (!mounted) return;
+    switch (event.betterPlayerEventType) {
+      case BetterPlayerEventType.finished:
+        _save();
+        if (_index + 1 < widget.episodes.length) {
+          _goTo(_index + 1);
+        } else {
+          _showControls();
+        }
+        break;
+      case BetterPlayerEventType.progress:
+        if (DateTime.now().difference(_lastSaved).inSeconds >= 10) _save();
+        break;
+      case BetterPlayerEventType.exception:
+        setState(() {
+          _error = '视频暂时无法播放，请重试或切换分集';
+          _loading = false;
+        });
+        break;
+      case BetterPlayerEventType.play:
+        _armHide();
+        _schedulePrefetch();
+        break;
+      case BetterPlayerEventType.pause:
+        _hideTimer?.cancel();
+        break;
+      default:
+        break;
     }
   }
 
-  Future<void> _prefetch() async {
-    final next = _index + 1;
+  void _preferencesChanged() {
+    if (!widget.store.prefetch) {
+      _preloadTimer?.cancel();
+      _buffer.retain({_index});
+    }
+  }
+
+  void _schedulePrefetch() {
     if (!widget.store.prefetch ||
-        _prefetching ||
-        _prefetchedIndex == next ||
-        next >= widget.episodes.length ||
-        _disposed) {
+        !_foreground ||
+        _active == null ||
+        _loading ||
+        _index + 1 >= widget.episodes.length ||
+        _buffer.contains(_index + 1)) {
       return;
     }
-    _prefetching = true;
-    final generation = _generation;
-    final prefetchGeneration = ++_prefetchGeneration;
-    var transferred = false;
-    ResolvedMedia? media;
-    BetterPlayerController? controller;
-    final preparer = MediaPreparer();
-    _prefetchPreparer = preparer;
-    try {
-      final states = await Connectivity().checkConnectivity();
-      if (!states.contains(ConnectivityResult.wifi) &&
-          !widget.store.cellularPrefetch) {
-        return;
+    _preloadTimer?.cancel();
+    final index = _index;
+    _preloadTimer = Timer(const Duration(seconds: 2), () async {
+      try {
+        final states = await Connectivity().checkConnectivity();
+        if (!mounted ||
+            index != _index ||
+            !_foreground ||
+            !widget.store.prefetch ||
+            states.contains(ConnectivityResult.none) ||
+            (!states.contains(ConnectivityResult.wifi) &&
+                !widget.store.cellularPrefetch)) {
+          return;
+        }
+        await _buffer.prepare(index + 1);
+      } catch (_) {
+        /* Speculative failure must not interrupt this episode. */
       }
-      if (states.contains(ConnectivityResult.none)) return;
-      media = await widget.store.provider.resolve(
-        widget.drama,
-        widget.episodes[next],
-      );
-      if (_disposed ||
-          generation != _generation ||
-          prefetchGeneration != _prefetchGeneration) {
-        return;
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    if (!_foreground) {
+      _preloadTimer?.cancel();
+      _save();
+    } else {
+      if (_pendingPlay) {
+        _pendingPlay = false;
+        unawaited(_active?.controller.play());
       }
-      final path = await preparer.prepare(media);
-      if (_disposed ||
-          generation != _generation ||
-          prefetchGeneration != _prefetchGeneration) {
-        return;
-      }
-      controller = _newController();
-      await controller.setupDataSource(_dataSource(path, media));
-      if (_disposed ||
-          generation != _generation ||
-          prefetchGeneration != _prefetchGeneration ||
-          !widget.store.prefetch) {
-        return;
-      }
-      _clearPrefetch(cancelPending: false);
-      _prefetchedPath = path.startsWith('http') ? null : path;
-      _prefetchedMedia = media;
-      _prefetchedController = controller;
-      _prefetchedIndex = next;
-      transferred = true;
-      media = null;
-      controller = null;
-    } catch (_) {
-      /* Prebuffer failures must not interrupt current playback. */
-    } finally {
-      controller?.dispose(forceDispose: true);
-      await widget.store.provider.release(media);
-      if (!transferred) await preparer.dispose();
-      _prefetching = false;
+      _schedulePrefetch();
     }
   }
 
-  void _clearPrefetch({bool cancelPending = true}) {
-    if (cancelPending) {
-      ++_prefetchGeneration;
-      unawaited(_prefetchPreparer?.dispose());
-      _prefetchPreparer = null;
+  void _goTo(int index) {
+    if (index == _index || index < 0 || index >= widget.episodes.length) return;
+    if ((index - _index).abs() > 1) {
+      _pages.jumpToPage(index);
+      return;
     }
-    _prefetchedController?.dispose(forceDispose: true);
-    _prefetchedController = null;
-    unawaited(widget.store.provider.release(_prefetchedMedia));
-    _prefetchedMedia = null;
-    _prefetchedIndex = -1;
-    _prefetchedPath = null;
-  }
-
-  void _toggleFullscreen() {
-    setState(() => _fullscreen = !_fullscreen);
     unawaited(
-      SystemChrome.setEnabledSystemUIMode(
-        _fullscreen ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+      _pages.animateToPage(
+        index,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
       ),
     );
   }
 
-  Future<void> _togglePlay() async {
-    if (_controller?.isPlaying() == true) {
-      await _controller?.pause();
-    } else {
-      await _controller?.play();
+  void _armHide() {
+    _hideTimer?.cancel();
+    if (!_controls ||
+        _modal ||
+        _scrubbing ||
+        _active?.controller.isPlaying() != true) {
+      return;
     }
-    if (mounted) setState(() {});
+    _hideTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _controls = false);
+    });
   }
 
-  void _showEpisodes() => showModalBottomSheet<void>(
-    context: context,
-    showDragHandle: true,
-    isScrollControlled: true,
-    builder: (context) => SafeArea(
-      child: SizedBox(
-        height: MediaQuery.sizeOf(context).height * .55,
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: _episodeGrid(),
+  void _showControls() {
+    setState(() => _controls = true);
+    _armHide();
+  }
+
+  void _tap() {
+    if (_locked) return;
+    setState(() => _controls = !_controls);
+    _armHide();
+  }
+
+  Future<void> _togglePlay() async {
+    final controller = _active?.controller;
+    if (controller == null) return;
+    if (controller.isPlaying() == true) {
+      await controller.pause();
+    } else {
+      final value = controller.videoPlayerController?.value;
+      final duration = value?.duration ?? Duration.zero;
+      if (duration > Duration.zero &&
+          value!.position >= duration - const Duration(milliseconds: 300)) {
+        await controller.seekTo(Duration.zero);
+      }
+      await controller.play();
+    }
+    if (mounted) _showControls();
+  }
+
+  Future<void> _sheet(Widget child) async {
+    _modal = true;
+    _hideTimer?.cancel();
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: const Color(0xFF161A18),
+      isScrollControlled: true,
+      builder: (_) => Theme(
+        data: ThemeData.dark(),
+        child: SafeArea(child: child),
+      ),
+    );
+    _modal = false;
+    if (mounted) _armHide();
+  }
+
+  Future<void> _showEpisodes() => _sheet(
+    SizedBox(
+      height: MediaQuery.sizeOf(context).height * .55,
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            Text(
+              '选集 · 共 ${widget.episodes.length} 集',
+              style: const TextStyle(color: Colors.white, fontSize: 18),
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: GridView.builder(
+                itemCount: widget.episodes.length,
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 75,
+                  mainAxisExtent: 48,
+                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
+                ),
+                itemBuilder: (context, index) => FilledButton.tonal(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _goTo(index);
+                  },
+                  style: FilledButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    backgroundColor: index == _index
+                        ? const Color(0xFF345D55)
+                        : null,
+                  ),
+                  child: Text('${widget.episodes[index].number}'),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     ),
   );
-  Widget _episodeGrid() => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        '选集 · 共 ${widget.episodes.length} 集',
-        style: Theme.of(context).textTheme.titleLarge,
-      ),
-      const SizedBox(height: 16),
-      Expanded(
-        child: GridView.builder(
-          itemCount: widget.episodes.length,
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: 75,
-            mainAxisExtent: 48,
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-          ),
-          itemBuilder: (context, index) => FilledButton.tonal(
-            onPressed: () {
-              if (ModalRoute.of(context) is ModalBottomSheetRoute) {
-                Navigator.pop(context);
-              }
-              unawaited(_load(index));
-            },
-            style: FilledButton.styleFrom(
-              padding: EdgeInsets.zero,
-              backgroundColor: index == _index
-                  ? Theme.of(context).colorScheme.primary
-                  : null,
-              foregroundColor: index == _index
-                  ? Theme.of(context).colorScheme.onPrimary
-                  : null,
-            ),
-            child: Text('${widget.episodes[index].number}'),
-          ),
+  Future<void> _showMore() async {
+    final item = _active;
+    await _sheet(
+      ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * .75,
         ),
-      ),
-    ],
-  );
-  @override
-  Widget build(BuildContext context) {
-    final wide =
-        MediaQuery.sizeOf(context).shortestSide >= 600 &&
-        MediaQuery.sizeOf(context).width >= 900 &&
-        !_fullscreen &&
-        !_locked;
-    final value = _controller?.videoPlayerController?.value;
-    final duration = value?.duration?.inMilliseconds.toDouble() ?? 0;
-    final position = value?.position.inMilliseconds.toDouble() ?? 0;
-    final video = Column(
-      children: [
-        Expanded(
-          child: GestureDetector(
-            onTap: _locked ? null : _togglePlay,
-            onVerticalDragStart: _locked ? null : (_) => _drag = 0,
-            onVerticalDragUpdate: _locked
-                ? null
-                : (details) => _drag += details.delta.dy,
-            onVerticalDragEnd: _locked
-                ? null
-                : (_) {
-                    if (_drag.abs() > 70) {
-                      unawaited(_load(_index + (_drag < 0 ? 1 : -1)));
-                    }
-                  },
-            onLongPressStart: _locked
-                ? null
-                : (_) {
-                    setState(() => _boost = true);
-                    unawaited(_controller?.setSpeed(2));
-                  },
-            onLongPressEnd: _locked
-                ? null
-                : (_) {
-                    setState(() => _boost = false);
-                    unawaited(_controller?.setSpeed(_speed));
-                  },
-            child: ColoredBox(
-              color: Colors.black,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (_controller != null && !_loading)
-                    PlayerViewport(
-                      playerKey: _playerKey,
-                      controller: _controller!,
-                    ),
-                  if (_loading)
-                    const Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          CircularProgressIndicator(color: Colors.white),
-                          SizedBox(height: 18),
-                          Text(
-                            '正在准备视频…',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                        ],
-                      ),
-                    ),
-                  if (_error != null)
-                    Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(28),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.error_outline,
-                              color: Colors.white70,
-                              size: 36,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              _error!,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(color: Colors.white70),
-                            ),
-                            const SizedBox(height: 18),
-                            FilledButton(
-                              onPressed: () => _load(_index, resume: true),
-                              child: const Text('重试'),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  if (_boost)
-                    const Positioned(
-                      top: 22,
-                      left: 0,
-                      right: 0,
-                      child: Center(
-                        child: Text(
-                          '▶▶ 2 倍速播放',
-                          style: TextStyle(color: Colors.white),
-                        ),
-                      ),
-                    ),
-                  Positioned(
-                    left: 10,
-                    top: MediaQuery.paddingOf(context).top + 10,
-                    child: Row(
-                      children: [
-                        IconButton(
-                          tooltip: _fullscreen ? '退出全屏' : '全屏播放',
-                          onPressed: _toggleFullscreen,
-                          icon: Icon(
-                            _fullscreen
-                                ? Icons.fullscreen_exit
-                                : Icons.fullscreen,
-                            color: Colors.white,
-                          ),
-                        ),
-                        if (!_locked)
-                          IconButton(
-                            tooltip: _fill ? '显示完整画面' : '铺满播放区域',
-                            onPressed: () {
-                              setState(() => _fill = !_fill);
-                              _controller?.setOverriddenFit(
-                                _fill ? BoxFit.cover : BoxFit.contain,
-                              );
-                            },
-                            icon: Icon(
-                              _fill ? Icons.fit_screen : Icons.crop_free,
-                              color: Colors.white,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  Positioned(
-                    right: 10,
-                    top: MediaQuery.paddingOf(context).top + 10,
-                    child: IconButton(
-                      tooltip: _locked ? '解锁手势' : '锁定手势',
-                      onPressed: () => setState(() => _locked = !_locked),
-                      icon: Icon(
-                        _locked ? Icons.lock : Icons.lock_open,
-                        color: Colors.white70,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-        if (!_locked && !_fullscreen)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-            child: Column(
-              children: [
-                Slider(
-                  value: position.clamp(0, duration),
-                  max: duration <= 0 ? 1 : duration,
-                  onChanged: _loading
-                      ? null
-                      : (v) => _controller?.seekTo(
-                          Duration(milliseconds: v.toInt()),
-                        ),
-                  activeColor: const Color(0xFF9DCDB0),
-                ),
-                Row(
-                  children: [
-                    IconButton(
-                      tooltip: value?.isPlaying == true ? '暂停' : '播放',
-                      onPressed: _togglePlay,
-                      icon: Icon(
-                        value?.isPlaying == true
-                            ? Icons.pause
-                            : Icons.play_arrow,
-                        color: Colors.white,
-                      ),
-                    ),
-                    Text(
-                      '${_time(position)} / ${_time(duration)}',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 11,
-                      ),
-                    ),
-                    const Spacer(),
-                    PopupMenuButton<double>(
-                      tooltip: '播放倍速',
-                      initialValue: _speed,
-                      onSelected: (v) {
-                        setState(() => _speed = v);
-                        _controller?.setSpeed(v);
-                      },
-                      itemBuilder: (_) => [
-                        for (final speed in [.75, 1.0, 1.25, 1.5, 2.0])
-                          PopupMenuItem(value: speed, child: Text('$speed 倍速')),
-                      ],
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Text(
-                          '${_speed}x',
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: '画中画',
-                      onPressed: _controller == null
-                          ? null
-                          : () => perform(context, () async {
-                              await _controller!.enablePictureInPicture(
-                                _playerKey,
-                              );
-                            }),
-                      icon: const Icon(
-                        Icons.picture_in_picture_alt_outlined,
-                        color: Colors.white,
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: '切换横竖屏',
-                      onPressed: () => SystemChrome.setPreferredOrientations(
-                        MediaQuery.orientationOf(context) ==
-                                Orientation.portrait
-                            ? [
-                                DeviceOrientation.landscapeLeft,
-                                DeviceOrientation.landscapeRight,
-                              ]
-                            : [DeviceOrientation.portraitUp],
-                      ),
-                      icon: const Icon(
-                        Icons.screen_rotation_outlined,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: _locked || _fullscreen
-          ? null
-          : AppBar(
-              backgroundColor: Colors.black,
-              foregroundColor: Colors.white,
-              title: Text(
-                widget.drama.title,
-                style: const TextStyle(fontSize: 16),
-              ),
-              actions: [
-                if (Platform.isIOS)
-                  const SizedBox(
-                    width: 44,
-                    height: 44,
-                    child: UiKitView(viewType: 'guoguo/airplay'),
-                  ),
-                IconButton(
-                  tooltip: '投屏到电视',
-                  onPressed: _media == null
-                      ? null
-                      : () => showCastSheet(
-                          context,
-                          _media!,
-                          widget.drama.title,
-                          _localPath,
-                          onConnected: () async {
-                            await _controller?.pause();
-                          },
-                        ),
-                  icon: const Icon(Icons.cast),
-                ),
-              ],
-            ),
-      body: SafeArea(
-        top: !_fullscreen,
-        bottom: !_fullscreen,
-        left: !_fullscreen,
-        right: !_fullscreen,
-        child: Column(
+        child: ListView(
+          shrinkWrap: true,
           children: [
-            Expanded(
-              child: wide
-                  ? Row(
-                      children: [
-                        Expanded(flex: 3, child: video),
-                        Expanded(
-                          child: Theme(
-                            data: ThemeData.dark(),
-                            child: Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: _episodeGrid(),
-                            ),
-                          ),
-                        ),
-                      ],
-                    )
-                  : video,
+            ListTile(
+              leading: const Icon(Icons.fit_screen),
+              title: Text(_fill ? '显示完整画面' : '等比例铺满（裁切边缘）'),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() => _fill = !_fill);
+                _active?.controller.setOverriddenFit(
+                  _fill ? BoxFit.cover : BoxFit.contain,
+                );
+              },
             ),
-            if (!_locked && !_fullscreen)
+            ListTile(
+              leading: const Icon(Icons.screen_rotation_outlined),
+              title: const Text('切换横竖屏'),
+              onTap: () {
+                Navigator.pop(context);
+                unawaited(
+                  SystemChrome.setPreferredOrientations(
+                    MediaQuery.orientationOf(context) == Orientation.portrait
+                        ? [
+                            DeviceOrientation.landscapeLeft,
+                            DeviceOrientation.landscapeRight,
+                          ]
+                        : [DeviceOrientation.portraitUp],
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.picture_in_picture_alt),
+              title: const Text('画中画'),
+              enabled: item != null,
+              onTap: () {
+                Navigator.pop(context);
+                if (item != null) {
+                  perform(context, () async {
+                    await item.controller.enablePictureInPicture(item.key);
+                  });
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.cast),
+              title: const Text('投屏到电视'),
+              enabled: item?.media != null,
+              onTap: () {
+                Navigator.pop(context);
+                if (item?.media != null) {
+                  showCastSheet(
+                    context,
+                    item!.media!,
+                    widget.drama.title,
+                    item.path.startsWith('http') ? null : item.path,
+                    onConnected: item.controller.pause,
+                  );
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.download_outlined),
+              title: const Text('下载当前集'),
+              onTap: () {
+                Navigator.pop(context);
+                perform(
+                  context,
+                  () => widget.downloads.enqueue(
+                    widget.drama,
+                    widget.episodes[_index],
+                    _index,
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.lock_outline),
+              title: const Text('锁定手势'),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() {
+                  _locked = true;
+                  _controls = false;
+                });
+              },
+            ),
+            if ((item?.media?.qualities.length ?? 0) > 1)
               Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 22,
-                  vertical: 8,
-                ),
-                child: Row(
+                padding: const EdgeInsets.all(16),
+                child: Wrap(
+                  spacing: 8,
                   children: [
-                    Expanded(
-                      child: Text(
-                        '${widget.drama.source.label} · 第 ${_index + 1} 集',
-                        style: const TextStyle(color: Colors.white70),
+                    for (final quality in item!.media!.qualities)
+                      ChoiceChip(
+                        label: Text('${quality}P'),
+                        selected: quality == item.media!.quality,
+                        onSelected: (_) {
+                          Navigator.pop(context);
+                          _retry(quality: quality);
+                        },
                       ),
-                    ),
-                    if ((_media?.qualities.length ?? 0) > 1)
-                      PopupMenuButton<int>(
-                        tooltip: '清晰度',
-                        onSelected: (q) => _load(
-                          _index,
-                          quality: q,
-                          position: value?.position,
-                        ),
-                        itemBuilder: (_) => [
-                          for (final q in _media!.qualities)
-                            PopupMenuItem(value: q, child: Text('${q}P')),
-                        ],
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Text(
-                            '${_media?.quality}P',
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                        ),
-                      ),
-                    IconButton(
-                      tooltip: '下载当前集',
-                      onPressed: () => perform(
-                        context,
-                        () => widget.downloads.enqueue(
-                          widget.drama,
-                          widget.episodes[_index],
-                          _index,
-                        ),
-                      ),
-                      icon: const Icon(
-                        Icons.download_outlined,
-                        color: Colors.white70,
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: _showEpisodes,
-                      child: const Text(
-                        '选集',
-                        style: TextStyle(color: Color(0xFF9DCDB0)),
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -786,25 +591,347 @@ class _PlayerPageState extends State<PlayerPage> {
     );
   }
 
+  Widget _page(BuildContext context, int index) {
+    final item = _buffer.peek(index);
+    final selected = index == _index;
+    return RepaintBoundary(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (item != null)
+            PlayerViewport(playerKey: item.key, controller: item.controller)
+          else
+            Opacity(opacity: .25, child: Poster(widget.drama, radius: 0)),
+          if (selected && _loading)
+            const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(color: Colors.white),
+                  SizedBox(height: 16),
+                  Text('正在准备这一集…', style: TextStyle(color: Colors.white70)),
+                ],
+              ),
+            ),
+          if (!selected && item == null)
+            Center(
+              child: Text(
+                '第 ${widget.episodes[index].number} 集',
+                style: const TextStyle(color: Colors.white, fontSize: 22),
+              ),
+            ),
+          if (selected && _error != null)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _error!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton(onPressed: _retry, child: const Text('重试')),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _transport() {
+    final controller = _active?.controller.videoPlayerController;
+    Widget build() {
+      final value = controller?.value;
+      return PlayerTransport(
+        duration: value?.duration?.inMilliseconds.toDouble() ?? 0,
+        position: value?.position.inMilliseconds.toDouble() ?? 0,
+        playing: value?.isPlaying == true,
+        enabled: !_loading && _active != null,
+        speed: _speed,
+        onPlay: _togglePlay,
+        onEpisodes: _showEpisodes,
+        onSpeed: (speed) {
+          setState(() => _speed = speed);
+          unawaited(_active?.controller.setSpeed(speed));
+          _armHide();
+        },
+        onScrub: (scrubbing) {
+          _scrubbing = scrubbing;
+          _armHide();
+        },
+        onSeek: (position) {
+          unawaited(
+            _active?.controller.seekTo(
+              Duration(milliseconds: position.round()),
+            ),
+          );
+          _armHide();
+        },
+      );
+    }
+
+    return controller == null
+        ? build()
+        : ValueListenableBuilder(
+            valueListenable: controller,
+            builder: (context, value, child) => build(),
+          );
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
+    body: AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _tap,
+            onDoubleTap: _locked ? null : _togglePlay,
+            onLongPressStart: _locked
+                ? null
+                : (_) {
+                    setState(() => _boost = true);
+                    unawaited(_active?.controller.setSpeed(2));
+                  },
+            onLongPressEnd: _locked
+                ? null
+                : (_) {
+                    setState(() => _boost = false);
+                    unawaited(_active?.controller.setSpeed(_speed));
+                  },
+            child: EpisodePager(
+              controller: _pages,
+              count: widget.episodes.length,
+              onChanged: _pageChanged,
+              builder: _page,
+              locked: _locked,
+            ),
+          ),
+          if (_boost)
+            const Center(
+              child: IgnorePointer(
+                child: Text('2 倍速', style: TextStyle(color: Colors.white)),
+              ),
+            ),
+          if (_locked)
+            SafeArea(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: IconButton.filledTonal(
+                  tooltip: '解锁手势',
+                  onPressed: () {
+                    setState(() => _locked = false);
+                    _showControls();
+                  },
+                  icon: const Icon(Icons.lock_open),
+                ),
+              ),
+            ),
+          IgnorePointer(
+            ignoring: !_controls || _locked,
+            child: AnimatedOpacity(
+              opacity: _controls && !_locked ? 1 : 0,
+              duration: const Duration(milliseconds: 180),
+              child: SafeArea(
+                child: Column(
+                  children: [
+                    DecoratedBox(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.black87, Colors.transparent],
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            tooltip: '返回',
+                            onPressed: () => Navigator.maybePop(context),
+                            icon: const Icon(
+                              Icons.arrow_back,
+                              color: Colors.white,
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              '${widget.drama.title} · 第 ${widget.episodes[_index].number} 集',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ),
+                          if (Platform.isIOS)
+                            const SizedBox(
+                              width: 44,
+                              height: 44,
+                              child: UiKitView(viewType: 'guoguo/airplay'),
+                            ),
+                          IconButton(
+                            tooltip: '更多播放设置',
+                            onPressed: _showMore,
+                            icon: const Icon(
+                              Icons.more_horiz,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Spacer(),
+                    DecoratedBox(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.transparent, Colors.black87],
+                        ),
+                      ),
+                      child: _transport(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+  @override
+  void dispose() {
+    ++_generation;
+    _save();
+    _hideTimer?.cancel();
+    _preloadTimer?.cancel();
+    _settleTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    widget.store.removeListener(_preferencesChanged);
+    _network?.cancel();
+    _active?.controller.removeEventsListener(_event);
+    _buffer.close();
+    _pages.dispose();
+    unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
+    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+    super.dispose();
+  }
+}
+
+/// Only the controls rebuild for position updates, never the video/page tree.
+class PlayerTransport extends StatefulWidget {
+  const PlayerTransport({
+    super.key,
+    required this.duration,
+    required this.position,
+    required this.playing,
+    required this.enabled,
+    required this.speed,
+    required this.onPlay,
+    required this.onEpisodes,
+    required this.onSpeed,
+    required this.onScrub,
+    required this.onSeek,
+  });
+  final double duration, position, speed;
+  final bool playing, enabled;
+  final VoidCallback onPlay, onEpisodes;
+  final ValueChanged<double> onSpeed, onSeek;
+  final ValueChanged<bool> onScrub;
+  @override
+  State<PlayerTransport> createState() => _PlayerTransportState();
+}
+
+class _PlayerTransportState extends State<PlayerTransport> {
+  double? _preview;
   String _time(double ms) {
     final seconds = ms ~/ 1000;
     return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
   }
 
   @override
-  void dispose() {
-    _disposed = true;
-    ++_generation;
-    unawaited(_save());
-    widget.store.removeListener(_onPreferences);
-    _network?.cancel();
-    _controller?.removeEventsListener(_event);
-    _controller?.dispose(forceDispose: true);
-    unawaited(_preparer?.dispose());
-    _clearPrefetch();
-    unawaited(widget.store.provider.release(_media));
-    unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
-    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
-    super.dispose();
-  }
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Slider(
+          value: (_preview ?? widget.position).clamp(0, widget.duration),
+          max: widget.duration > 0 ? widget.duration : 1,
+          activeColor: const Color(0xFF9DCDB0),
+          onChangeStart: widget.enabled
+              ? (value) {
+                  widget.onScrub(true);
+                  setState(() => _preview = value);
+                }
+              : null,
+          onChanged: widget.enabled
+              ? (value) => setState(() => _preview = value)
+              : null,
+          onChangeEnd: widget.enabled
+              ? (value) {
+                  widget.onSeek(value);
+                  widget.onScrub(false);
+                  setState(() => _preview = null);
+                }
+              : null,
+        ),
+        Row(
+          children: [
+            IconButton(
+              tooltip: widget.playing ? '暂停' : '播放',
+              onPressed: widget.enabled ? widget.onPlay : null,
+              icon: Icon(
+                widget.playing ? Icons.pause : Icons.play_arrow,
+                color: Colors.white,
+              ),
+            ),
+            Expanded(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '${_time(_preview ?? widget.position)} / ${_time(widget.duration)}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ),
+            ),
+            PopupMenuButton<double>(
+              tooltip: '播放倍速',
+              initialValue: widget.speed,
+              onSelected: widget.onSpeed,
+              itemBuilder: (_) => [
+                for (final speed in [.75, 1.0, 1.25, 1.5, 2.0])
+                  PopupMenuItem(value: speed, child: Text('$speed 倍速')),
+              ],
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(
+                  '${widget.speed}x',
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: widget.onEpisodes,
+              child: const Text(
+                '选集',
+                style: TextStyle(color: Color(0xFF9DCDB0)),
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
 }

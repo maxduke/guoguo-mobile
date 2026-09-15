@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../domain/models.dart';
+import '../data/cover_cache.dart';
 
 class Poster extends StatelessWidget {
   const Poster(this.drama, {super.key, this.radius = 16});
@@ -58,6 +59,7 @@ class Poster extends StatelessWidget {
           ? placeholder
           : CachedNetworkImage(
               imageUrl: drama.cover,
+              cacheManager: coverCache,
               fit: BoxFit.cover,
               memCacheWidth: 600,
               placeholder: (_, _) => placeholder,

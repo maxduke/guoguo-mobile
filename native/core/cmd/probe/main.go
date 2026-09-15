@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -19,6 +20,8 @@ func main() {
 	source := flag.String("source", "hongguo", "hongguo, huangdou or huangguo")
 	mediaProbe := flag.Bool("media", false, "resolve one episode and fetch only its first 1024 bytes")
 	decodeProbe := flag.Bool("decode", false, "prepare and decode one full episode using a locally installed ffmpeg")
+	pages := flag.Int("pages", 1, "number of catalog pages to inspect")
+	covers := flag.Bool("covers", false, "fetch and decode up to three cover images through the mobile facade")
 	flag.Parse()
 	dir, err := os.MkdirTemp("", "guoguo-probe-")
 	if err != nil {
@@ -39,11 +42,70 @@ func main() {
 	var rows struct {
 		Items   []json.RawMessage `json:"items"`
 		Warning string            `json:"warning"`
+		HasMore bool              `json:"hasMore"`
 	}
 	if err := json.Unmarshal([]byte(result), &rows); err != nil {
 		panic(err)
 	}
 	fmt.Printf("source=%s items=%d warning=%s\n", *source, len(rows.Items), rows.Warning)
+	unique := map[string]bool{}
+	count := func(items []json.RawMessage) {
+		for _, raw := range items {
+			var item struct {
+				ID string `json:"id"`
+			}
+			_ = json.Unmarshal(raw, &item)
+			unique[item.ID] = true
+		}
+	}
+	count(rows.Items)
+	fmt.Printf("page=1 unique=%d hasMore=%t\n", len(unique), rows.HasMore)
+	more := rows.HasMore
+	for page := 2; page <= *pages && more; page++ {
+		request, _ = json.Marshal(map[string]any{"method": "catalog", "source": *source, "page": page})
+		raw, callErr := c.Call(string(request))
+		if callErr != nil {
+			fmt.Fprintln(os.Stderr, callErr)
+			os.Exit(1)
+		}
+		var next struct {
+			Items   []json.RawMessage `json:"items"`
+			HasMore bool              `json:"hasMore"`
+			Warning string            `json:"warning"`
+		}
+		if err := json.Unmarshal([]byte(raw), &next); err != nil {
+			panic(err)
+		}
+		count(next.Items)
+		more = next.HasMore
+		fmt.Printf("page=%d returned=%d unique=%d hasMore=%t warning=%s\n", page, len(next.Items), len(unique), more, next.Warning)
+	}
+	if *covers {
+		for index, raw := range rows.Items[:min(3, len(rows.Items))] {
+			var item struct {
+				Cover string `json:"cover"`
+			}
+			_ = json.Unmarshal(raw, &item)
+			request, _ = json.Marshal(map[string]string{"method": "cover", "url": item.Cover})
+			value, err := c.Call(string(request))
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			var result struct {
+				Data        string `json:"data"`
+				ContentType string `json:"contentType"`
+			}
+			if err := json.Unmarshal([]byte(value), &result); err != nil {
+				panic(err)
+			}
+			bytes, err := base64.StdEncoding.DecodeString(result.Data)
+			if err != nil {
+				panic(err)
+			}
+			fmt.Printf("cover=%d bytes=%d type=%s\n", index+1, len(bytes), result.ContentType)
+		}
+	}
 	if (!*mediaProbe && !*decodeProbe) || len(rows.Items) == 0 {
 		return
 	}
