@@ -38,7 +38,9 @@ public class GuoguoCorePlugin: NSObject, FlutterPlugin {
                     guard let client = activeClient, let request = call.arguments as? String else {
                         throw NSError(domain: "Guoguo", code: 3, userInfo: [NSLocalizedDescriptionKey: "站源尚未初始化"])
                     }
-                    let response = try client.call(request)
+                    var error: NSError?
+                    let response = client.call(request, error: &error)
+                    if let error = error { throw error }
                     DispatchQueue.main.async { result(response) }
                 default:
                     DispatchQueue.main.async { result(FlutterMethodNotImplemented) }
