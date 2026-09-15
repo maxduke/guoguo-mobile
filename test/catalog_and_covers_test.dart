@@ -27,13 +27,19 @@ class _Pages implements ProviderClient {
 }
 
 class _Cover implements ProviderClient {
+  _Cover({this.id});
+  final String? id;
   @override
   Future<Map<String, dynamic>> call(
     String method, [
     Map<String, dynamic> args = const {},
   ]) async {
     expect(method, 'cover');
-    expect(args['url'], 'https://pic.zdmhyg.cn/fixture');
+    if (id != null) {
+      expect(args, {'id': id, 'url': ''});
+    } else {
+      expect(args['url'], 'https://pic.zdmhyg.cn/fixture');
+    }
     return {
       'data': base64Encode([255, 216, 255, 0]),
       'contentType': 'image/jpeg',
@@ -42,6 +48,21 @@ class _Cover implements ProviderClient {
 }
 
 void main() {
+  test(
+    'saved records without a cover request artwork by provider identity',
+    () async {
+      for (final source in [DramaSource.huangguo, DramaSource.huangdou]) {
+        final id = source == DramaSource.huangguo
+            ? 'huangguoai:target'
+            : 'huangdou:target';
+        final drama = Drama(id: id, source: source, title: 'fixture');
+        final response = await ProviderCoverService(
+          _Cover(id: id),
+        ).get(coverRequest(drama));
+        expect(response.statusCode, 200);
+      }
+    },
+  );
   test(
     'pagination deduplicates, retains partial errors and resumes after restart',
     () async {

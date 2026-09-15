@@ -25,46 +25,64 @@ class Poster extends StatelessWidget {
         ),
       ),
       child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.local_movies_outlined,
-                color: Colors.white54,
-                size: 32,
-              ),
-              const SizedBox(height: 14),
-              Text(
-                drama.title,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                  height: 1.4,
+        child: LayoutBuilder(
+          builder: (context, size) {
+            if (size.maxWidth < 100 || size.maxHeight < 100) {
+              return const Center(
+                child: Icon(
+                  Icons.local_movies_outlined,
+                  color: Colors.white54,
+                  size: 24,
                 ),
+              );
+            }
+            return Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.local_movies_outlined,
+                    color: Colors.white54,
+                    size: 32,
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    drama.title,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(radius),
-      child: drama.cover.isEmpty
-          ? placeholder
-          : CachedNetworkImage(
-              imageUrl: drama.cover,
-              cacheManager: coverCache,
-              fit: BoxFit.cover,
-              memCacheWidth: 600,
-              placeholder: (_, _) => placeholder,
-              errorWidget: (_, _, _) => placeholder,
-            ),
+    return LayoutBuilder(
+      builder: (context, bounds) => ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: CachedNetworkImage(
+          imageUrl: coverRequest(drama),
+          cacheKey: 'drama-cover-v2:${drama.key}',
+          cacheManager: coverCache,
+          fit: BoxFit.cover,
+          memCacheWidth: bounds.maxWidth.isFinite
+              ? (bounds.maxWidth * MediaQuery.devicePixelRatioOf(context))
+                    .clamp(64, 600)
+                    .round()
+              : 600,
+          placeholder: (_, _) => placeholder,
+          errorWidget: (_, _, _) => placeholder,
+        ),
+      ),
     );
   }
 }

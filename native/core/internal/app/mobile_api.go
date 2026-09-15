@@ -86,8 +86,22 @@ func (c *MobileClient) Call(raw string) (string, error) {
 	var value any
 	switch request.Method {
 	case "cover":
-		data, err := c.covers.load(ctx, request.URL, func(ctx context.Context) ([]byte, error) {
-			return c.downloader.fetchCoverImage(ctx, request.URL, decodeImageBytes, false)
+		cacheKey := request.URL
+		if request.ID != "" {
+			cacheKey = "drama:" + request.ID
+		}
+		data, err := c.covers.load(ctx, cacheKey, func(ctx context.Context) ([]byte, error) {
+			if request.URL != "" {
+				data, err := c.downloader.fetchCoverImage(ctx, request.URL, decodeImageBytes, false)
+				if err == nil || request.ID == "" {
+					return data, err
+				}
+			}
+			address, err := c.downloader.mobileCoverAddress(ctx, request.ID)
+			if err != nil {
+				return nil, err
+			}
+			return c.downloader.fetchCoverImage(ctx, address, decodeImageBytes, false)
 		})
 		if err != nil {
 			return "", publicError(err)

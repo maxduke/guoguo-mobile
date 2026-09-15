@@ -22,6 +22,7 @@ func main() {
 	decodeProbe := flag.Bool("decode", false, "prepare and decode one full episode using a locally installed ffmpeg")
 	pages := flag.Int("pages", 1, "number of catalog pages to inspect")
 	covers := flag.Bool("covers", false, "fetch and decode up to three cover images through the mobile facade")
+	board := flag.String("board", "", "inspect a ranking board instead of the catalog")
 	flag.Parse()
 	dir, err := os.MkdirTemp("", "guoguo-probe-")
 	if err != nil {
@@ -34,6 +35,9 @@ func main() {
 	}
 	defer c.Close()
 	request, _ := json.Marshal(map[string]string{"method": "catalog", "source": *source})
+	if *board != "" {
+		request, _ = json.Marshal(map[string]string{"method": "ranking", "board": *board})
+	}
 	result, err := c.Call(string(request))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -46,6 +50,17 @@ func main() {
 	}
 	if err := json.Unmarshal([]byte(result), &rows); err != nil {
 		panic(err)
+	}
+	if *board != "" {
+		for i, raw := range rows.Items {
+			var item struct {
+				Drama json.RawMessage `json:"drama"`
+			}
+			if err := json.Unmarshal(raw, &item); err != nil {
+				panic(err)
+			}
+			rows.Items[i] = item.Drama
+		}
 	}
 	fmt.Printf("source=%s items=%d warning=%s\n", *source, len(rows.Items), rows.Warning)
 	unique := map[string]bool{}
@@ -63,6 +78,9 @@ func main() {
 	more := rows.HasMore
 	for page := 2; page <= *pages && more; page++ {
 		request, _ = json.Marshal(map[string]any{"method": "catalog", "source": *source, "page": page})
+		if *board != "" {
+			request, _ = json.Marshal(map[string]any{"method": "ranking", "board": *board, "page": page})
+		}
 		raw, callErr := c.Call(string(request))
 		if callErr != nil {
 			fmt.Fprintln(os.Stderr, callErr)
@@ -76,6 +94,17 @@ func main() {
 		if err := json.Unmarshal([]byte(raw), &next); err != nil {
 			panic(err)
 		}
+		if *board != "" {
+			for i, raw := range next.Items {
+				var item struct {
+					Drama json.RawMessage `json:"drama"`
+				}
+				if err := json.Unmarshal(raw, &item); err != nil {
+					panic(err)
+				}
+				next.Items[i] = item.Drama
+			}
+		}
 		count(next.Items)
 		more = next.HasMore
 		fmt.Printf("page=%d returned=%d unique=%d hasMore=%t warning=%s\n", page, len(next.Items), len(unique), more, next.Warning)
@@ -84,9 +113,10 @@ func main() {
 		for index, raw := range rows.Items[:min(3, len(rows.Items))] {
 			var item struct {
 				Cover string `json:"cover"`
+				ID    string `json:"id"`
 			}
 			_ = json.Unmarshal(raw, &item)
-			request, _ = json.Marshal(map[string]string{"method": "cover", "url": item.Cover})
+			request, _ = json.Marshal(map[string]string{"method": "cover", "url": item.Cover, "id": item.ID})
 			value, err := c.Call(string(request))
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)

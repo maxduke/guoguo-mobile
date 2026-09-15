@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guoguo_mobile/ui/episode_pager.dart';
 import 'package:guoguo_mobile/ui/player_page.dart';
+import 'package:guoguo_mobile/ui/player_gestures.dart';
 import 'package:guoguo_mobile/data/app_store.dart';
 import 'package:guoguo_mobile/data/download_store.dart';
 import 'package:guoguo_mobile/data/storage.dart';
@@ -62,8 +63,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byTooltip('返回').hitTestable(), findsNothing);
       await tester.tapAt(const Offset(195, 300));
-      // Resolve the single-vs-double-tap recognizer before checking chrome.
-      await tester.pump(const Duration(milliseconds: 350));
+      // A single tap responds without waiting for a possible double tap.
+      await tester.pump();
+      expect(
+        tester.widget<AnimatedOpacity>(find.byType(AnimatedOpacity)).opacity,
+        1,
+      );
       await tester.pumpAndSettle();
       expect(find.byTooltip('返回').hitTestable(), findsOneWidget);
       expect(
@@ -75,9 +80,59 @@ void main() {
         lessThanOrEqualTo(810),
       );
       expect(tester.takeException(), isNull);
+      await tester.tapAt(const Offset(195, 300));
+      await tester.pump();
+      expect(
+        tester.widget<AnimatedOpacity>(find.byType(AnimatedOpacity)).opacity,
+        0,
+      );
       await tester.pumpWidget(const SizedBox());
       downloads.dispose();
       store.dispose();
+    },
+  );
+  testWidgets(
+    'hold boosts, sliding previews, release seeks once; cancel restores speed',
+    (tester) async {
+      final seeks = <double>[];
+      final boosts = <bool>[];
+      var taps = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerGestures(
+            position: () => 50000,
+            duration: () => 100000,
+            onSeek: seeks.add,
+            onBoost: boosts.add,
+            onScrub: (_) {},
+            onTap: () => taps++,
+            child: const ColoredBox(color: Colors.black),
+          ),
+        ),
+      );
+      final gesture = await tester.startGesture(const Offset(400, 300));
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(boosts, [true]);
+      await gesture.moveBy(const Offset(-200, 0));
+      await tester.pump();
+      expect(boosts, [true, false]);
+      expect(seeks, isEmpty);
+      expect(find.textContaining('快退'), findsOneWidget);
+      await gesture.up();
+      await tester.pump();
+      expect(seeks, hasLength(1));
+      expect(seeks.single, lessThan(50000));
+      expect(taps, 0);
+      final cancelled = await tester.startGesture(const Offset(400, 300));
+      await tester.pump(const Duration(milliseconds: 600));
+      await cancelled.cancel();
+      await tester.pump();
+      expect(boosts.last, false);
+      expect(seeks, hasLength(1));
+      await tester.drag(find.byType(PlayerGestures), const Offset(2000, 0));
+      await tester.pump();
+      expect(seeks.last, 100000);
+      expect(taps, 0);
     },
   );
   testWidgets(
@@ -87,13 +142,21 @@ void main() {
       var selected = 0;
       await tester.pumpWidget(
         MaterialApp(
-          home: EpisodePager(
-            controller: pages,
-            count: 3,
-            onChanged: (index) => selected = index,
-            builder: (context, index) => ColoredBox(
-              color: Colors.black,
-              child: Center(child: Text('episode$index')),
+          home: PlayerGestures(
+            position: () => 10000,
+            duration: () => 100000,
+            onSeek: (_) => fail('vertical swiping must not seek'),
+            onBoost: (_) => fail('vertical swiping must not boost'),
+            onScrub: (_) {},
+            onTap: () => fail('vertical swiping must not toggle controls'),
+            child: EpisodePager(
+              controller: pages,
+              count: 3,
+              onChanged: (index) => selected = index,
+              builder: (context, index) => ColoredBox(
+                color: Colors.black,
+                child: Center(child: Text('episode$index')),
+              ),
             ),
           ),
         ),
@@ -156,4 +219,29 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets('horizontal video swipe previews and seeks once', (tester) async {
+    final seeks = <double>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlayerGestures(
+          position: () => 50000,
+          duration: () => 100000,
+          onSeek: seeks.add,
+          onBoost: (_) {},
+          onScrub: (_) {},
+          onTap: () {},
+          child: const ColoredBox(color: Colors.black),
+        ),
+      ),
+    );
+    final gesture = await tester.startGesture(const Offset(200, 300));
+    await gesture.moveBy(const Offset(80, 0));
+    await tester.pump();
+    expect(seeks, isEmpty);
+    await gesture.moveBy(const Offset(80, 0));
+    await gesture.up();
+    await tester.pump();
+    expect(seeks, hasLength(1));
+    expect(seeks.single, greaterThan(50000));
+  });
 }

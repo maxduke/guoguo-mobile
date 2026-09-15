@@ -72,6 +72,19 @@ func TestHongguoRankingStreamAndValidation(t *testing.T) {
 	}
 }
 
+func TestHuangguoRankingKeepsCardArtworkAlongsideJSONLDOrder(t *testing.T) {
+	board, _ := findRankingBoard("huangguo-hot")
+	body := `<script type="application/ld+json">{"@graph":[{"@type":"ItemList","@id":"https://huangguoai.com/ranks/hot/#itemlist","itemListElement":[{"position":1,"name":"高三爱情故事","url":"https://huangguoai.com/detail/117/"}]}]}</script>`
+	body += `<div class="hg-rank-item" data-track-id="117"><a class="hg-rank-item__cover"><img data-src="/upload_01/art.jpg"></a></div>`
+	result, err := parseHuangguoRanking(body, board)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) == 0 || result.Items[0].Drama.Cover != "https://huangguoai.com/upload_01/art.jpg" {
+		t.Fatalf("ranking artwork not preserved: %+v", result.Items)
+	}
+}
+
 func TestHuangdouRankingPreservesOrderAndMetrics(t *testing.T) {
 	rows := []any{
 		map[string]any{"id": "rp_first", "name": "低热度先返回", "hot_rate": "20", "click": "100"},

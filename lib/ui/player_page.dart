@@ -14,6 +14,7 @@ import 'components.dart';
 import 'cast_sheet.dart';
 import 'episode_pager.dart';
 import 'player_viewport.dart';
+import 'player_gestures.dart';
 
 class PlayerPage extends StatefulWidget {
   const PlayerPage({
@@ -52,7 +53,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   Timer? _hideTimer, _preloadTimer, _settleTimer;
   StreamSubscription<List<ConnectivityResult>>? _network;
   int _index = 0, _generation = 0;
-  bool _controls = false, _locked = false, _fill = false, _boost = false;
+  bool _controls = false, _locked = false, _fill = false;
   bool _loading = true, _foreground = true, _modal = false, _scrubbing = false;
   double _speed = 1;
   String? _error;
@@ -200,7 +201,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _active = null;
       _loading = true;
       _error = null;
-      _boost = false;
       _controls = false;
     });
     _buffer.retain({index - 1, index, index + 1});
@@ -483,6 +483,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         child: ListView(
           shrinkWrap: true,
           children: [
+            const ListTile(
+              leading: Icon(Icons.touch_app_outlined),
+              title: Text('播放手势'),
+              subtitle: Text(
+                '单击显示或隐藏控件；上下滑动切换分集；左右滑动调节进度。长按 2 倍速，按住后左右滑动可快进快退，松手跳转。',
+              ),
+            ),
             ListTile(
               leading: const Icon(Icons.fit_screen),
               title: Text(_fill ? '显示完整画面' : '等比例铺满（裁切边缘）'),
@@ -599,7 +606,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         fit: StackFit.expand,
         children: [
           if (item != null)
-            PlayerViewport(playerKey: item.key, controller: item.controller)
+            IgnorePointer(
+              child: PlayerViewport(
+                playerKey: item.key,
+                controller: item.controller,
+              ),
+            )
           else
             Opacity(opacity: .25, child: Poster(widget.drama, radius: 0)),
           if (selected && _loading)
@@ -691,22 +703,43 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
+          PlayerGestures(
             onTap: _tap,
-            onDoubleTap: _locked ? null : _togglePlay,
-            onLongPressStart: _locked
-                ? null
-                : (_) {
-                    setState(() => _boost = true);
-                    unawaited(_active?.controller.setSpeed(2));
-                  },
-            onLongPressEnd: _locked
-                ? null
-                : (_) {
-                    setState(() => _boost = false);
-                    unawaited(_active?.controller.setSpeed(_speed));
-                  },
+            enabled: !_locked && !_loading && _active != null,
+            position: () =>
+                _active
+                    ?.controller
+                    .videoPlayerController
+                    ?.value
+                    .position
+                    .inMilliseconds
+                    .toDouble() ??
+                0,
+            duration: () =>
+                _active
+                    ?.controller
+                    .videoPlayerController
+                    ?.value
+                    .duration
+                    ?.inMilliseconds
+                    .toDouble() ??
+                0,
+            onBoost: (boost) {
+              unawaited(_active?.controller.setSpeed(boost ? 2 : _speed));
+              _scrubbing = boost;
+              _armHide();
+            },
+            onScrub: (value) {
+              _scrubbing = value;
+              _armHide();
+            },
+            onSeek: (value) {
+              unawaited(
+                _active?.controller.seekTo(
+                  Duration(milliseconds: value.round()),
+                ),
+              );
+            },
             child: EpisodePager(
               controller: _pages,
               count: widget.episodes.length,
@@ -715,12 +748,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               locked: _locked,
             ),
           ),
-          if (_boost)
-            const Center(
-              child: IgnorePointer(
-                child: Text('2 倍速', style: TextStyle(color: Colors.white)),
-              ),
-            ),
           if (_locked)
             SafeArea(
               child: Align(
@@ -909,7 +936,12 @@ class _PlayerTransportState extends State<PlayerTransport> {
             PopupMenuButton<double>(
               tooltip: '播放倍速',
               initialValue: widget.speed,
-              onSelected: widget.onSpeed,
+              onOpened: () => widget.onScrub(true),
+              onCanceled: () => widget.onScrub(false),
+              onSelected: (speed) {
+                widget.onSpeed(speed);
+                widget.onScrub(false);
+              },
               itemBuilder: (_) => [
                 for (final speed in [.75, 1.0, 1.25, 1.5, 2.0])
                   PopupMenuItem(value: speed, child: Text('$speed 倍速')),

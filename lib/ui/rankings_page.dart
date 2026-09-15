@@ -143,17 +143,45 @@ class _RankingsPageState extends State<RankingsPage> {
                       child: ListTile(
                         contentPadding: const EdgeInsets.all(14),
                         onTap: () => widget.onOpen(drama),
-                        leading: Text(
-                          '${row['rank']}',
-                          style: TextStyle(
-                            fontSize: 27,
-                            fontWeight: FontWeight.w700,
-                            color: Theme.of(context).colorScheme.secondary,
+                        leading: SizedBox(
+                          width: 92,
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 30,
+                                child: Text(
+                                  '${row['rank']}',
+                                  style: TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w700,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.secondary,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              SizedBox(
+                                width: 42,
+                                height: 56,
+                                child: Poster(drama, radius: 6),
+                              ),
+                            ],
                           ),
                         ),
-                        title: Text(drama.title),
+                        title: Text(
+                          drama.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                         subtitle: Text(
-                          '${drama.source.label} · ${drama.category}',
+                          [
+                            drama.source.label,
+                            if (drama.category.isNotEmpty) drama.category,
+                            if (drama.episodes > 0) '${drama.episodes} 集',
+                          ].join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                         trailing: const Icon(Icons.chevron_right),
                       ),

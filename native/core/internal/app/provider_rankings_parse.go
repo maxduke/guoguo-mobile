@@ -13,6 +13,7 @@ import (
 var rankingScriptTags = regexp.MustCompile(`(?is)<script\b[^>]*>`)
 var rankingJSONLD = regexp.MustCompile(`(?is)<script\b[^>]*type=["']application/ld\+json["'][^>]*>(.*?)</script>`)
 var rankingSourceID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,100}$`)
+var huangguoRankingCardStart = regexp.MustCompile(`(?is)<div\b[^>]*class=["'][^"']*\bhg-rank-item\b[^"']*["'][^>]*>`)
 
 type hongguoRankingContent struct {
 	Success bool `json:"isSuccess"`
@@ -118,6 +119,8 @@ func parseHuangdouRanking(decoded any, page int) (rankingPage, error) {
 		seen[id] = true
 		remark := firstNonEmpty(mapString(row, "update_label"), mapString(row, "corner"))
 		drama := Drama{ID: providerDramaID(sourceHuangdou, id), Source: sourceHuangdou, SourceID: id, Title: title, Name: title, ChannelName: "黄豆", CategoryName: mapString(row, "category"), TotalEpisode: mapString(row, "episode_count"), Remark: remark, ReleaseStatus: releaseStatusFromRemark(remark), Heat: mapString(row, "hot_rate"), Views: normalizeViews(mapString(row, "click")), OnlineDate: providerReleaseDate(mapString(row, "issue_date"))}
+		artwork := huangdouDramaFromMap(row)
+		drama.Cover, drama.CoverURL = artwork.Cover, artwork.CoverURL
 		metric := ""
 		if drama.Heat != "" {
 			metric = drama.Heat + "热度"
@@ -167,8 +170,37 @@ func parseHuangguoRanking(body string, board rankingBoard) (rankingPage, error) 
 				drama := Drama{ID: providerDramaID(sourceHuangguoAI, id), Source: sourceHuangguoAI, SourceID: id, Title: item.Name, Name: item.Name}
 				result.Items = append(result.Items, rankingItem{Rank: item.Position, Drama: drama})
 			}
+			enrichHuangguoRankingCovers(body, board.path, &result)
 			return result, nil
 		}
 	}
 	return rankingPage{}, fmt.Errorf("%s: %w", board.Name, failure)
+}
+
+// The JSON-LD ranking is the authoritative order, while the adjacent HTML
+// cards carry the actual artwork URL. Keeping the two responsibilities apart
+// makes the parser resilient to cosmetic changes in card markup.
+func enrichHuangguoRankingCovers(body, boardPath string, result *rankingPage) {
+	if len(result.Items) == 0 {
+		return
+	}
+	byID := make(map[string]int, len(result.Items))
+	for index, item := range result.Items {
+		byID[item.Drama.SourceID] = index
+	}
+	pageURL := huangguoAIBaseURL + "/ranks/" + boardPath + "/"
+	for _, match := range huangguoRankingCardStart.FindAllStringIndex(body, -1) {
+		block := huangguoElementBlock(body, match[0], match[1], "div")
+		id := cleanID(extractAttr(block, "data-track-id"))
+		index, ok := byID[id]
+		if !ok || bestDramaCover(result.Items[index].Drama) != "" {
+			continue
+		}
+		cover := huangguoClassBlock(block, "hg-rank-item__cover")
+		address := resolveProviderURL(pageURL, extractAttr(cover, "data-src", "data-original", "src"))
+		if address != "" {
+			result.Items[index].Drama.Cover = address
+			result.Items[index].Drama.CoverURL = address
+		}
+	}
 }
