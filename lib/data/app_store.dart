@@ -1,11 +1,27 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
+
 import '../domain/models.dart';
+import '../domain/playback_diagnostic.dart';
 import '../platform/provider_client.dart';
 import 'storage.dart';
 
 class AppStore extends ChangeNotifier {
-  AppStore({required this.storage, required this.provider});
+  AppStore({
+    required this.storage,
+    required this.provider,
+    DateTime Function()? now,
+  }) : now = now ?? DateTime.now;
+  final DateTime Function() now;
+  static const episodeFreshness = Duration(hours: 6);
+  final Map<String, DateTime> episodeUpdatedAt = {};
+  final Map<String, Set<String>> episodeSeenIds = {};
+  final Map<String, Future<List<Episode>>> _episodeRequests = {};
+  final Map<String, String> episodeErrors = {};
+  bool checkingUpdates = false;
+  final List<PlaybackDiagnostic> playbackDiagnostics = [];
+  static const maxPlaybackDiagnostics = 30;
   final LocalStorage storage;
   final ProviderClient provider;
   final Map<DramaSource, List<Drama>> catalogs = {};
@@ -64,6 +80,26 @@ class AppStore extends ChangeNotifier {
       hasMore[DramaSource.parse(entry.key)] = entry.value == true;
     }
     episodeCache.addAll(loadedEpisodes);
+    for (final entry in (state['episodeUpdatedAt'] as Map? ?? {}).entries) {
+      final date = DateTime.tryParse('${entry.value}');
+      if (date != null) episodeUpdatedAt[entry.key as String] = date;
+    }
+    for (final entry in (state['episodeSeenIds'] as Map? ?? {}).entries) {
+      episodeSeenIds[entry.key as String] = Set<String>.from(
+        entry.value as List,
+      );
+    }
+    for (final raw in (state['playbackDiagnostics'] as List? ?? []).take(
+      maxPlaybackDiagnostics,
+    )) {
+      try {
+        playbackDiagnostics.add(
+          PlaybackDiagnostic.fromJson(Map<String, dynamic>.from(raw as Map)),
+        );
+      } catch (_) {
+        /* Ignore obsolete diagnostic samples. */
+      }
+    }
     _merge(backup);
     notifyListeners();
   }
@@ -76,6 +112,7 @@ class AppStore extends ChangeNotifier {
       for (final entry in hasMore.entries) entry.key.name: entry.value,
     },
     'version': 1,
+    'playbackDiagnostics': playbackDiagnostics.map((d) => d.toJson()).toList(),
     'source': source.name,
     'theme': themeMode.name,
     'cellularDownloads': cellularDownloads,
@@ -88,6 +125,14 @@ class AppStore extends ChangeNotifier {
     'catalogs': {
       for (final entry in catalogs.entries)
         entry.key.name: entry.value.map((v) => v.toJson()).toList(),
+    },
+    'episodeUpdatedAt': {
+      for (final entry in episodeUpdatedAt.entries)
+        entry.key: entry.value.toIso8601String(),
+    },
+    'episodeSeenIds': {
+      for (final entry in episodeSeenIds.entries)
+        entry.key: entry.value.toList(),
     },
     'episodes': {
       for (final entry in episodeCache.entries)
@@ -104,6 +149,23 @@ class AppStore extends ChangeNotifier {
       notifyListeners();
       rethrow;
     }
+  }
+
+  Future<void> recordPlayback(PlaybackDiagnostic sample) async {
+    playbackDiagnostics.insert(0, sample);
+    if (playbackDiagnostics.length > maxPlaybackDiagnostics) {
+      playbackDiagnostics.removeRange(
+        maxPlaybackDiagnostics,
+        playbackDiagnostics.length,
+      );
+    }
+    await persist();
+  }
+
+  Future<void> clearPlaybackDiagnostics() async {
+    playbackDiagnostics.clear();
+    await persist();
+    notifyListeners();
   }
 
   Future<void> selectSource(DramaSource next) async {
@@ -223,15 +285,93 @@ class AppStore extends ChangeNotifier {
     catalogs[target] = merged.values.toList();
   }
 
-  Future<List<Episode>> episodes(Drama drama, {bool refresh = false}) async {
-    if (!refresh && episodeCache.containsKey(drama.key)) {
-      return episodeCache[drama.key]!;
-    }
-    final rows = await provider.chapters(drama);
-    if (rows.isEmpty) throw const ProviderException('暂未找到可播放分集');
-    episodeCache[drama.key] = rows;
+  int newEpisodeCount(Drama drama) {
+    final seen = episodeSeenIds[drama.key];
+    if (seen == null) return 0;
+    return (episodeCache[drama.key] ?? [])
+        .where((e) => !seen.contains(e.id))
+        .length;
+  }
+
+  Future<void> markEpisodesSeen(Drama drama, List<Episode> rows) async {
+    episodeSeenIds[drama.key] = rows.map((e) => e.id).toSet();
     await persist();
-    return rows;
+    notifyListeners();
+  }
+
+  Future<List<Episode>> episodes(Drama drama, {bool refresh = false}) async {
+    if (offline && refresh) throw const ProviderException('离线时无法刷新分集');
+    final cached = episodeCache[drama.key];
+    final updated = episodeUpdatedAt[drama.key];
+    if (cached != null &&
+        cached.isNotEmpty &&
+        (offline ||
+            (!refresh &&
+                updated != null &&
+                now().difference(updated) >= Duration.zero &&
+                now().difference(updated) < episodeFreshness))) {
+      return cached;
+    }
+    if (offline) throw const ProviderException('离线时没有可用的分集缓存');
+    final request =
+        _episodeRequests[drama.key] ?? _fetchEpisodes(drama, cached);
+    _episodeRequests[drama.key] = request;
+    try {
+      return await request;
+    } catch (_) {
+      if (!refresh && cached != null && cached.isNotEmpty) return cached;
+      rethrow;
+    } finally {
+      if (identical(_episodeRequests[drama.key], request)) {
+        _episodeRequests.remove(drama.key);
+      }
+    }
+  }
+
+  Future<List<Episode>> _fetchEpisodes(
+    Drama drama,
+    List<Episode>? cached,
+  ) async {
+    try {
+      final rows = await provider.chapters(drama);
+      if (rows.isEmpty) throw const ProviderException('暂未找到可播放分集');
+      final unique = {for (final row in rows) row.id: row}.values.toList();
+      episodeSeenIds.putIfAbsent(
+        drama.key,
+        () => (cached ?? unique).map((e) => e.id).toSet(),
+      );
+      episodeCache[drama.key] = unique;
+      episodeUpdatedAt[drama.key] = now();
+      episodeErrors.remove(drama.key);
+      await persist();
+      notifyListeners();
+      return unique;
+    } catch (_) {
+      episodeErrors[drama.key] = '分集更新失败，保留上次缓存';
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<void> checkFavoriteUpdates() async {
+    if (checkingUpdates) return;
+    if (offline) throw const ProviderException('请联网后检查更新');
+    checkingUpdates = true;
+    notifyListeners();
+    var failures = 0;
+    try {
+      for (final drama in favorites.values.toList()) {
+        try {
+          await episodes(drama, refresh: true);
+        } catch (_) {
+          failures++;
+        }
+      }
+    } finally {
+      checkingUpdates = false;
+      notifyListeners();
+    }
+    if (failures > 0) throw ProviderException('$failures 部剧更新失败，已保留原有分集');
   }
 
   Future<void> toggleFavorite(Drama drama) async {

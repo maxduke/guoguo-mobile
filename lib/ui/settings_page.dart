@@ -1,15 +1,18 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+
 import '../data/app_store.dart';
 import '../data/download_store.dart';
 import '../data/cover_cache.dart';
 import 'components.dart';
+import 'playback_diagnostics_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, required this.store, required this.downloads});
@@ -134,7 +137,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   children: [
                     SwitchListTile(
                       title: const Text('预缓冲下一集'),
-                      subtitle: const Text('临近结束时准备下一集，减少等待'),
+                      subtitle: const Text('开始播放后准备下一集，减少等待'),
                       value: store.prefetch,
                       onChanged: (v) =>
                           perform(context, () => store.setPrefetch(v)),
@@ -177,6 +180,22 @@ class _SettingsPageState extends State<SettingsPage> {
                       onTap: () => perform(context, () => _import(context)),
                     ),
                   ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              _heading(context, '播放体验'),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.speed_rounded),
+                  title: const Text('播放诊断'),
+                  subtitle: const Text('查看本地准备与开播耗时'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => PlaybackDiagnosticsPage(store: store),
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 24),

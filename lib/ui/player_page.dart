@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:better_player_plus/better_player_plus.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import '../data/app_store.dart';
 import '../data/download_store.dart';
 import '../domain/models.dart';
+import '../domain/playback_diagnostic.dart';
 import '../platform/episode_buffer.dart';
 import '../platform/media_preparer.dart';
 import '../platform/provider_client.dart';
@@ -39,7 +42,8 @@ class PlayerPage extends StatefulWidget {
 }
 
 class _Playable {
-  _Playable(this.controller, this.preparer, this.media, this.path);
+  _Playable(this.controller, this.preparer, this.media, this.path, this.timing);
+  final PreparationTiming timing;
   final BetterPlayerController controller;
   final MediaPreparer preparer;
   final ResolvedMedia? media;
@@ -61,6 +65,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   bool _loading = true, _foreground = true, _modal = false, _scrubbing = false;
   double _speed = 1;
   String? _error;
+  String _loadingPhase = '正在查找本地视频…';
+  PlaybackAttempt? _attempt;
+  final Map<int, PreparationTiming> _timings = {};
   DateTime _lastSaved = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
@@ -86,10 +93,27 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     unawaited(_activate(resume: true));
   }
 
+  void _phase(int index, String label) {
+    if (mounted && index == _index && _loading) {
+      setState(() => _loadingPhase = label);
+    }
+  }
+
+  void _finishAttempt(PlaybackResult result) {
+    final sample = _attempt?.finish(result);
+    if (sample != null) {
+      unawaited(widget.store.recordPlayback(sample).catchError((Object _) {}));
+    }
+  }
+
   Future<_Playable> _prepare(
     int index,
     EpisodeCancellation cancellation,
   ) async {
+    final timing = PreparationTiming();
+    _timings[index] = timing;
+    final stage = Stopwatch();
+    var stageName = 'local';
     final preparer = MediaPreparer();
     cancellation.onCancel = () => unawaited(preparer.cancel());
     BetterPlayerController? controller;
@@ -101,19 +125,36 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         widget.episodes[index],
       );
       cancellation.check();
+      timing.local = path != null;
       if (path == null) {
         if (widget.localOnly || widget.store.offline) {
           throw const ProviderException('此分集尚未下载，请联网后播放');
         }
+        stageName = 'resolve';
+        _phase(index, '正在获取播放资源…');
+        stage.start();
         media = await widget.store.provider.resolve(
           widget.drama,
           widget.episodes[index],
           quality: _qualities[index] ?? 0,
         );
+        timing.resolveMs = stage.elapsedMilliseconds;
+        stage.reset();
+        stageName = 'prepare';
+        _phase(
+          index,
+          media.contentKey.isEmpty ? '正在连接视频…' : '正在准备视频，首次播放可能稍久…',
+        );
         cancellation.check();
         path = await preparer.prepare(media);
+        timing.prepareMs = stage.elapsedMilliseconds;
         cancellation.check();
       }
+      stageName = 'setup';
+      stage
+        ..reset()
+        ..start();
+      _phase(index, '正在启动播放器…');
       controller = BetterPlayerController(
         BetterPlayerConfiguration(
           autoPlay: false,
@@ -143,8 +184,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         ),
       );
       cancellation.check();
-      return _Playable(controller, preparer, media, path);
+      timing.setupMs = stage.elapsedMilliseconds;
+      return _Playable(controller, preparer, media, path, timing);
     } catch (_) {
+      switch (stageName) {
+        case 'resolve':
+          timing.resolveMs = stage.elapsedMilliseconds;
+        case 'prepare':
+          timing.prepareMs = stage.elapsedMilliseconds;
+        case 'setup':
+          timing.setupMs = stage.elapsedMilliseconds;
+      }
       controller?.dispose(forceDispose: true);
       await preparer.dispose();
       await _releaseMedia(media);
@@ -192,6 +242,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   void _pageChanged(int index) {
+    _finishAttempt(PlaybackResult.cancelled);
+    _timings.removeWhere((key, _) => (key - index).abs() > 1);
     _save();
     _hideTimer?.cancel();
     _preloadTimer?.cancel();
@@ -204,6 +256,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _index = index;
       _active = null;
       _loading = true;
+      _loadingPhase = '正在准备这一集…';
       _error = null;
       _controls = false;
     });
@@ -218,8 +271,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _pendingPlay = false;
     final generation = ++_generation;
     final index = _index;
+    final attempt = PlaybackAttempt(
+      source: widget.drama.source,
+      episode: widget.episodes[index].number,
+      preloaded: _buffer.peek(index) != null,
+    );
+    _attempt = attempt;
     try {
-      final item = await _buffer.prepare(index);
+      final pending = _buffer.prepare(index);
+      attempt.timing = _timings[index] ?? PreparationTiming();
+      final item = await pending;
+      attempt.timing = item.timing;
+      attempt.waitMs = attempt.clock.elapsedMilliseconds;
       if (!mounted || generation != _generation) return;
       _active = item;
       item.controller.setBetterPlayerGlobalKey(item.key);
@@ -253,10 +316,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         _pendingPlay = true;
         return;
       }
+      attempt.initialPosition =
+          item.controller.videoPlayerController?.value.position;
       await item.controller.play();
       _schedulePrefetch();
     } catch (error) {
       if (mounted && generation == _generation) {
+        _finishAttempt(
+          error is EpisodeCancelled
+              ? PlaybackResult.cancelled
+              : PlaybackResult.failed,
+        );
         setState(() {
           _loading = false;
           _error = error is EpisodeCancelled ? '准备已取消，请重试' : '$error';
@@ -266,6 +336,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   void _retry({int? quality}) {
+    _finishAttempt(PlaybackResult.cancelled);
     _save();
     final position = _active?.controller.videoPlayerController?.value.position;
     _active?.controller.removeEventsListener(_event);
@@ -291,9 +362,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         }
         break;
       case BetterPlayerEventType.progress:
+        final value = _active?.controller.videoPlayerController?.value;
+        final initial = _attempt?.initialPosition;
+        if (initial != null &&
+            value != null &&
+            value.isPlaying &&
+            !value.isBuffering &&
+            value.position > initial) {
+          _finishAttempt(PlaybackResult.started);
+        }
         if (DateTime.now().difference(_lastSaved).inSeconds >= 10) _save();
         break;
       case BetterPlayerEventType.exception:
+        _finishAttempt(PlaybackResult.failed);
         setState(() {
           _error = '视频暂时无法播放，请重试或切换分集';
           _loading = false;
@@ -619,13 +700,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           else
             Opacity(opacity: .25, child: Poster(widget.drama, radius: 0)),
           if (selected && _loading)
-            const Center(
+            Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  CircularProgressIndicator(color: Colors.white),
-                  SizedBox(height: 16),
-                  Text('正在准备这一集…', style: TextStyle(color: Colors.white70)),
+                  const CircularProgressIndicator(color: Colors.white),
+                  const SizedBox(height: 16),
+                  Text(
+                    _loadingPhase,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
                 ],
               ),
             ),
@@ -842,6 +927,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   );
   @override
   void dispose() {
+    _finishAttempt(PlaybackResult.cancelled);
     ++_generation;
     _save();
     _hideTimer?.cancel();

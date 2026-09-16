@@ -1,14 +1,27 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:background_downloader/background_downloader.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
+
 import '../domain/models.dart';
 import '../platform/media_preparer.dart';
 import '../platform/provider_client.dart';
 import 'app_store.dart';
 import 'storage.dart';
+import 'download_driver.dart';
+
+String downloadFailure(TaskRecord record) => switch (record.exception) {
+  TaskFileSystemException() => '视频文件写入失败，请检查设备剩余空间后重试',
+  TaskConnectionException() => '网络连接中断或超时，请检查网络后重试',
+  TaskResumeException() => '断点已失效，请重试；已完成分片会保留',
+  TaskHttpException(:final httpResponseCode) =>
+    '资源请求失败（HTTP $httpResponseCode），请重试更新资源',
+  TaskUrlException() => '资源地址无效，请重试更新资源',
+  _ => record.status == TaskStatus.notFound ? '资源已失效，请重试更新资源' : '资源下载失败，请重试',
+};
 
 class DownloadEntry {
   DownloadEntry({
@@ -23,6 +36,7 @@ class DownloadEntry {
     required this.tasks,
     this.ready = false,
     this.userPaused = false,
+    this.failure,
   });
   final String id, directory, input, contentKey;
   final Drama drama;
@@ -62,6 +76,7 @@ class DownloadEntry {
     'tasks': tasks.map((t) => t.toJson()).toList(),
     'ready': ready,
     'userPaused': userPaused,
+    'failure': failure,
   };
   factory DownloadEntry.fromJson(Map<String, dynamic> json) => DownloadEntry(
     id: json['id'] as String,
@@ -80,13 +95,22 @@ class DownloadEntry {
         .toList(),
     ready: json['ready'] == true,
     userPaused: json['userPaused'] == true,
+    failure: json['failure'] as String?,
   );
 }
 
 class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
-  DownloadStore(this.app);
+  DownloadStore(
+    this.app, {
+    DownloadDriver? driver,
+    LocalStorage? storage,
+    Directory? root,
+  }) : driver = driver ?? DownloadDriver(),
+       _storage = storage,
+       _root = root;
+  final DownloadDriver driver;
   final AppStore app;
-  final FileDownloader downloader = FileDownloader();
+  FileDownloader get downloader => driver.downloader;
   List<DownloadEntry> entries = [];
   StreamSubscription<TaskUpdate>? _subscription;
   LocalStorage? _storage;
@@ -145,10 +169,13 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       app.cellularDownloads ? RequireWiFi.forNoTasks : RequireWiFi.forAllTasks,
     );
     await downloader.start();
-    for (final entry in entries.where((e) => !e.ready && !e.userPaused)) {
+    await cleanupOrphans();
+    for (final entry in entries.where(
+      (e) => !e.ready && !e.userPaused && e.failure == null,
+    )) {
       for (final task in entry.tasks) {
-        if (await downloader.database.recordForId(task.taskId) == null) {
-          await downloader.enqueue(task);
+        if (await driver.record(task.taskId) == null) {
+          await driver.enqueue(task);
         }
       }
     }
@@ -185,15 +212,13 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     _loading = true;
+    final previousFailures = {for (final e in entries) e.id: e.failure};
     try {
       do {
         _reloadAgain = false;
         final checkFiles = _verifyFiles;
         _verifyFiles = false;
-        final records = {
-          for (final r in await downloader.database.allRecords(group: group))
-            r.taskId: r,
-        };
+        final records = {for (final r in await driver.records()) r.taskId: r};
         for (final entry in entries.toList()) {
           if (_removing.contains(entry.id)) continue;
           if (entry.ready) {
@@ -228,6 +253,14 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
                 p?.status == TaskStatus.canceled,
           )) {
             entry.status = TaskStatus.failed;
+            entry.failure = downloadFailure(
+              parts.whereType<TaskRecord>().firstWhere(
+                (p) =>
+                    p.status == TaskStatus.failed ||
+                    p.status == TaskStatus.notFound ||
+                    p.status == TaskStatus.canceled,
+              ),
+            );
           } else if (parts.isNotEmpty &&
               parts.every((p) => p?.status == TaskStatus.complete)) {
             entry.status = TaskStatus.running;
@@ -254,6 +287,9 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
           if (ready != null) unawaited(_finalize(ready));
         }
       } while (_reloadAgain && !_disposed);
+      if (entries.any((e) => previousFailures[e.id] != e.failure)) {
+        await _save();
+      }
       error = null;
     } catch (_) {
       error = '暂时无法读取下载记录';
@@ -294,10 +330,15 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       }
     } catch (_) {
       if (_foreground) {
-        entry.failure = '视频整理失败，请重新下载';
+        entry.failure = '视频整理失败，请重试；如空间不足请先清理设备';
         entry.status = TaskStatus.failed;
       }
     } finally {
+      try {
+        await _save();
+      } catch (_) {
+        error = '下载记录保存失败，请检查设备空间';
+      }
       entry.processing = false;
       _finalizing = false;
       _processor = null;
@@ -312,7 +353,19 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     if (_root == null) throw const ProviderException('下载组件尚未就绪，请重新打开应用');
     final identity = '${drama.key}:${episode.id}';
     if (!_enqueuing.add(identity)) return;
+    Directory? staging;
+    DownloadEntry? created;
+    var registered = false;
     try {
+      final existing = entryFor(drama, episode);
+      if (existing != null &&
+          !existing.complete &&
+          (existing.failure != null ||
+              existing.status == TaskStatus.failed ||
+              existing.status == TaskStatus.canceled)) {
+        await retry(existing);
+        return;
+      }
       if (entries.any(
         (e) =>
             e.drama.key == drama.key &&
@@ -328,6 +381,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       });
       final id = '${DateTime.now().microsecondsSinceEpoch}';
       final directory = Directory('${_root!.path}/$id');
+      staging = directory;
       await directory.create(recursive: true);
       String safeName(Object? raw) {
         final name = raw as String;
@@ -378,19 +432,53 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         process: plan['process'] == true,
         tasks: tasks,
       );
+      created = entry;
       entries.add(entry);
-      await _save();
+      try {
+        await _save();
+        registered = true;
+      } catch (_) {
+        entries.remove(entry);
+        rethrow;
+      }
       notifyListeners();
       for (final task in tasks) {
-        if (!await downloader.enqueue(task)) {
+        if (!await driver.enqueue(task)) {
           entry.failure = '部分资源未能加入下载，请重试';
           entry.status = TaskStatus.failed;
-          break;
+          await _save();
+          notifyListeners();
+          throw const ProviderException('部分资源未能加入下载，已加入的任务会保留，请重试');
         }
       }
       await reload();
+    } catch (e) {
+      final message = e is FileSystemException
+          ? (e.osError?.errorCode == 28
+                ? '设备空间不足，请清理后重试'
+                : '下载文件写入失败，请检查设备空间后重试')
+          : e is ProviderException
+          ? e.message
+          : '下载未能完成，请检查网络和设备空间后重试';
+      if (registered && created != null) {
+        created.failure = message;
+        created.status = TaskStatus.failed;
+        try {
+          await _save();
+        } catch (_) {
+          error = '下载记录保存失败，请检查设备空间';
+        }
+        if (!_disposed) notifyListeners();
+      }
+      throw ProviderException(message);
     } finally {
-      _enqueuing.remove(identity);
+      try {
+        if (!registered && staging != null && await staging.exists()) {
+          await staging.delete(recursive: true);
+        }
+      } finally {
+        _enqueuing.remove(identity);
+      }
     }
   }
 
@@ -400,12 +488,12 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     entry.userPaused = true;
     await _save();
     for (final task in entry.tasks) {
-      final record = await downloader.database.recordForId(task.taskId);
+      final record = await driver.record(task.taskId);
       if (record?.status == TaskStatus.running) {
-        if (!await downloader.pause(task)) await downloader.cancel(task);
+        if (!await driver.pause(task)) await driver.cancel([task.taskId]);
       } else if (record?.status == TaskStatus.enqueued ||
           record?.status == TaskStatus.waitingToRetry) {
-        await downloader.cancel(task);
+        await driver.cancel([task.taskId]);
       }
     }
     await reload();
@@ -418,34 +506,158 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     entry.failure = null;
     await _save();
     for (final task in entry.tasks) {
-      final record = await downloader.database.recordForId(task.taskId);
+      final record = await driver.record(task.taskId);
       if (record?.status == TaskStatus.complete ||
           record?.status == TaskStatus.running) {
         continue;
       }
-      if (record?.status == TaskStatus.paused &&
-          await downloader.resume(task)) {
+      if (record?.status == TaskStatus.paused && await driver.resume(task)) {
         continue;
       }
-      if (!await downloader.enqueue(task)) {
+      if (!await driver.enqueue(task)) {
         throw const ProviderException('部分资源无法恢复，请重试');
       }
     }
     await reload();
   }
 
+  DownloadEntry? entryFor(Drama drama, Episode episode) => entries
+      .where((e) => e.drama.key == drama.key && e.episode.id == episode.id)
+      .firstOrNull;
+
+  /// Remove only this application's unregistered numeric task directories.
+  Future<void> cleanupOrphans() async {
+    if (_root == null || !await _root!.exists()) return;
+    final known = entries.map((e) => e.id).toSet();
+    final records = await driver.records();
+    for (final record in records) {
+      if (!known.contains(record.task.metaData)) {
+        if (!await driver.cancel([record.taskId])) {
+          throw const ProviderException('旧下载任务尚未停止，请稍后重试清理');
+        }
+        await driver.deleteRecord(record.taskId);
+      }
+    }
+    await for (final item in _root!.list(followLinks: false)) {
+      final name = item.uri.pathSegments.where((s) => s.isNotEmpty).last;
+      if (item is Directory &&
+          RegExp(r'^\d+$').hasMatch(name) &&
+          !known.contains(name)) {
+        await item.delete(recursive: true);
+      }
+    }
+  }
+
   Future<void> retry(DownloadEntry entry) async {
-    await remove(entry);
-    await enqueue(entry.drama, entry.episode, entry.index);
+    if (entry.ready || !entries.contains(entry)) return;
+    if (entry.processing || !_removing.add(entry.id)) {
+      throw const ProviderException('任务正在处理中，请稍候');
+    }
+    try {
+      final complete = <String>{};
+      for (final task in entry.tasks) {
+        final record = await driver.record(task.taskId);
+        final file = File('${entry.directory}/${task.filename}');
+        if (record?.status == TaskStatus.complete &&
+            await file.exists() &&
+            await file.length() > 0) {
+          complete.add(task.taskId);
+        }
+      }
+      if (complete.length != entry.tasks.length) {
+        // Resolve first: an expired URL or provider error never removes progress.
+        final plan = await app.provider.call('downloadPlan', {
+          'id': entry.drama.id,
+          'chapter': entry.episode.raw,
+        });
+        final assets = {
+          for (final asset in plan['assets'] as List)
+            asset['name'] as String: asset['url'] as String,
+        };
+        if (plan['input'] != entry.input ||
+            (plan['process'] == true) != entry.process ||
+            (plan['contentKey'] as String? ?? '') != entry.contentKey ||
+            assets.length != entry.tasks.length ||
+            entry.tasks.any((t) => !assets.containsKey(t.filename))) {
+          throw const ProviderException('资源结构已变化，旧文件已保留；请删除此任务后重新下载');
+        }
+        // Do not mix changed playlists, keys or segment ordering with old parts.
+        for (final inline in plan['inline'] as List) {
+          final name = inline['name'] as String;
+          if (!RegExp(r'^[a-zA-Z0-9_.-]+$').hasMatch(name) ||
+              name == '.' ||
+              name == '..') {
+            throw const ProviderException('资源文件名无效，旧任务已保留');
+          }
+          final file = File('${entry.directory}/$name');
+          if (!await file.exists() ||
+              base64Encode(await file.readAsBytes()) != inline['body']) {
+            throw const ProviderException('资源清单已变化，旧文件已保留；请删除此任务后重新下载');
+          }
+        }
+        for (final task in entry.tasks.where(
+          (t) => complete.contains(t.taskId),
+        )) {
+          if (assets[task.filename] != task.url) {
+            throw const ProviderException('已下载资源地址发生变化，旧文件已保留；请删除此任务后重新下载');
+          }
+        }
+        final headers = Map<String, String>.from(plan['headers'] as Map);
+        final replacements = entry.tasks
+            .map(
+              (task) => complete.contains(task.taskId)
+                  ? task
+                  : task.copyWith(url: assets[task.filename], headers: headers),
+            )
+            .toList();
+        if (!await driver.cancel(
+          entry.tasks
+              .where((t) => !complete.contains(t.taskId))
+              .map((t) => t.taskId),
+        )) {
+          throw const ProviderException('旧下载尚未停止，已保留进度，请稍后重试');
+        }
+        entry.tasks
+          ..clear()
+          ..addAll(replacements);
+        entry.failure = null;
+        entry.userPaused = false;
+        await _save();
+        for (final task in entry.tasks.where(
+          (t) => !complete.contains(t.taskId),
+        )) {
+          if (!await driver.enqueue(task)) {
+            throw const ProviderException('部分资源无法恢复，已完成分片会保留');
+          }
+        }
+      }
+      entry.failure = null;
+      entry.userPaused = false;
+      await _save();
+    } catch (e) {
+      entry.failure = e is ProviderException
+          ? e.message
+          : '重试失败，已下载文件已保留；请检查网络和设备空间';
+      entry.status = TaskStatus.failed;
+      try {
+        await _save();
+      } catch (_) {
+        error = '下载记录保存失败，请检查设备空间';
+      }
+      rethrow;
+    } finally {
+      _removing.remove(entry.id);
+      await reload();
+    }
   }
 
   Future<void> remove(DownloadEntry entry) async {
     if (entry.processing) throw const ProviderException('正在整理视频，请稍候再删除');
     if (!_removing.add(entry.id)) return;
     try {
-      await downloader.cancelTasksWithIds(entry.tasks.map((t) => t.taskId));
+      await driver.cancel(entry.tasks.map((t) => t.taskId));
       for (final task in entry.tasks) {
-        await downloader.database.deleteRecordWithId(task.taskId);
+        await driver.deleteRecord(task.taskId);
       }
       final directory = Directory(entry.directory);
       if (await directory.exists()) await directory.delete(recursive: true);

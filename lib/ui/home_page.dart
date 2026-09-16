@@ -1,5 +1,7 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
+
 import '../data/app_store.dart';
 import '../data/download_store.dart';
 import '../domain/models.dart';
@@ -25,6 +27,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _tab = 0;
+  bool _resuming = false;
   final _search = TextEditingController();
   String _query = '', _category = '全部';
   DramaSource? _personalSource;
@@ -502,10 +505,20 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Future<void> _continue(WatchRecord record) async {
+    if (_resuming) return;
+    setState(() => _resuming = true);
+    await perform(
+      context,
+      () => continueDrama(context, store, widget.downloads, record),
+    );
+    if (mounted) setState(() => _resuming = false);
+  }
+
   Widget _continueCard(WatchRecord record) => Card(
     margin: EdgeInsets.zero,
     child: InkWell(
-      onTap: () => _open(record.drama),
+      onTap: _resuming ? null : () => _continue(record),
       borderRadius: BorderRadius.circular(20),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -545,7 +558,14 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
             const SizedBox(width: 8),
-            const Icon(Icons.play_circle_fill_rounded, size: 36),
+            if (_resuming)
+              const SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              const Icon(Icons.play_circle_fill_rounded, size: 36),
           ],
         ),
       ),
@@ -598,6 +618,24 @@ class _HomePageState extends State<HomePage> {
           selected: {_favoritesOnly},
           onSelectionChanged: (v) => setState(() => _favoritesOnly = v.first),
         ),
+        if (_favoritesOnly)
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: store.checkingUpdates || favorites.isEmpty
+                  ? null
+                  : () => perform(context, () async {
+                      await store.checkFavoriteUpdates();
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('收藏分集已更新')),
+                        );
+                      }
+                    }),
+              icon: const Icon(Icons.refresh_rounded),
+              label: Text(store.checkingUpdates ? '正在检查更新…' : '检查新集'),
+            ),
+          ),
         const SizedBox(height: 18),
         if (_favoritesOnly && favorites.isEmpty ||
             !_favoritesOnly && records.isEmpty)
@@ -628,7 +666,7 @@ class _HomePageState extends State<HomePage> {
                   overflow: TextOverflow.ellipsis,
                 ),
                 subtitle: Text(
-                  '${drama.source.label}${record == null ? '' : ' · 第 ${record.episodeIndex + 1} 集'}',
+                  '${drama.source.label}${record == null ? '' : ' · 第 ${record.episodeIndex + 1} 集'}${store.newEpisodeCount(drama) > 0 ? ' · 新增 ${store.newEpisodeCount(drama)} 集' : ''}',
                 ),
                 onTap: () => _open(drama),
                 trailing: IconButton(
