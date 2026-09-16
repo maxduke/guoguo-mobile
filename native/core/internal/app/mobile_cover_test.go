@@ -71,3 +71,29 @@ func TestMobileSavedDramaCoverRecovery(t *testing.T) {
 		}
 	}
 }
+
+func TestHuangguoCoverHostValidation(t *testing.T) {
+	for _, address := range []string{
+		"https://pic.tuafjz.cn/upload/image.jpg?auth_key=fixture",
+		"https://pic.zdmhyg.cn/upload/image.jpg",
+	} {
+		if got, ok := buildImageURL(address); !ok || got != address {
+			t.Fatalf("supported cover rejected or modified: %q", got)
+		}
+		if imageReferer(address) != "https://huangguoai.com/" {
+			t.Fatal("incorrect Huangguo referer")
+		}
+	}
+	for _, address := range []string{
+		"https://pic.tuafjz.cn.evil.example/image.jpg",
+		"https://evilpic.tuafjz.cn/image.jpg",
+		"https://tuafjz.cn/image.jpg",
+		"http://pic.tuafjz.cn/image.jpg",
+		"https://pic.tuafjz.cn:8080/image.jpg",
+		"https://user@pic.tuafjz.cn/image.jpg",
+	} {
+		if _, ok := buildImageURL(address); ok {
+			t.Fatalf("unsupported cover accepted: %s", address)
+		}
+	}
+}

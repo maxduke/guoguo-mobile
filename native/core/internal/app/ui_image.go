@@ -14,6 +14,12 @@ import (
 	"time"
 )
 
+// The category API and HTML pages use different Huangguo image CDNs.
+func isHuangguoImageHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	return host == "pic.tuafjz.cn" || host == "pic.zdmhyg.cn" || strings.HasSuffix(host, ".zdmhyg.cn")
+}
+
 func isHongguoImageHost(host string) bool {
 	host = strings.ToLower(host)
 	return host == "hongguoduanju.com" || host == "www.hongguoduanju.com" ||

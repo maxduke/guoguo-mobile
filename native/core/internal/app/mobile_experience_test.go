@@ -91,40 +91,45 @@ func TestMobileEncryptedCoverUsesHeadersAndCachesDecodedBytes(t *testing.T) {
 	encrypted := make([]byte, len(padded))
 	block, _ := aes.NewCipher([]byte("f5d965df75336270"))
 	cipher.NewCBCEncrypter(block, []byte("97b60394abc2fbe1")).CryptBlocks(encrypted, padded)
-	c, err := NewMobileClient(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
+	for _, host := range []string{"pic.zdmhyg.cn", "pic.tuafjz.cn"} {
+		t.Run(host, func(t *testing.T) {
+			c, err := NewMobileClient(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			requests := 0
+			c.downloader.client.Transport = rankingTransport(func(request *http.Request) (*http.Response, error) {
+				requests++
+				if request.Header.Get("Referer") != "https://huangguoai.com/" || request.Header.Get("User-Agent") == "" {
+					t.Fatal("missing cover headers")
+				}
+				return rankingHTTPResponse(request, 200, string(encrypted)), nil
+			})
+			for range 2 {
+				raw, err := c.Call(fmt.Sprintf(`{"method":"cover","url":"https://%s/fixture"}`, host))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var result struct {
+					Data        string `json:"data"`
+					ContentType string `json:"contentType"`
+				}
+				if err := json.Unmarshal([]byte(raw), &result); err != nil {
+					t.Fatal(err)
+				}
+				decoded, err := base64.StdEncoding.DecodeString(result.Data)
+				if err != nil || !bytes.Equal(decoded, plain.Bytes()) || result.ContentType != "image/png" {
+					t.Fatal("cover not decoded")
+				}
+			}
+			if requests != 1 {
+				t.Fatalf("cover cache made %d requests", requests)
+			}
+			if _, err := c.Call(`{"method":"cover","url":"https://unknown.example/fixture"}`); err == nil {
+				t.Fatal("unrecognized image host accepted")
+			}
+		})
 	}
-	defer c.Close()
-	requests := 0
-	c.downloader.client.Transport = rankingTransport(func(request *http.Request) (*http.Response, error) {
-		requests++
-		if request.Header.Get("Referer") != "https://huangguoai.com/" || request.Header.Get("User-Agent") == "" {
-			t.Fatal("missing cover headers")
-		}
-		return rankingHTTPResponse(request, 200, string(encrypted)), nil
-	})
-	for range 2 {
-		raw, err := c.Call(`{"method":"cover","url":"https://pic.zdmhyg.cn/fixture"}`)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var result struct {
-			Data        string `json:"data"`
-			ContentType string `json:"contentType"`
-		}
-		if err := json.Unmarshal([]byte(raw), &result); err != nil {
-			t.Fatal(err)
-		}
-		decoded, err := base64.StdEncoding.DecodeString(result.Data)
-		if err != nil || !bytes.Equal(decoded, plain.Bytes()) || result.ContentType != "image/png" {
-			t.Fatal("cover not decoded")
-		}
-	}
-	if requests != 1 {
-		t.Fatalf("cover cache made %d requests", requests)
-	}
-	if _, err := c.Call(`{"method":"cover","url":"https://unknown.example/fixture"}`); err == nil {
-		t.Fatal("unrecognized image host accepted")
-	}
+
 }

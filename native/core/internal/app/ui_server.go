@@ -838,12 +838,15 @@ func allowedImageHost(host string) bool {
 	case "zzzznnn.lkkwip.cn", "pic.zdmhyg.cn", "huangguoai.com", "www.huangguoai.com", "huangguo.video", "cdn.huangguo.video", "tideember.cc", "xqjurgek.top", "d3rorc0p4i1kyz.cloudfront.net":
 		return true
 	default:
-		return strings.HasSuffix(host, ".zdmhyg.cn") || isHongguoImageHost(host)
+		return isHuangguoImageHost(host) || isHongguoImageHost(host)
 	}
 }
 
 func imageReferer(remoteURL string) string {
 	if u, err := url.Parse(remoteURL); err == nil {
+		if isHuangguoImageHost(u.Hostname()) {
+			return "https://huangguoai.com/"
+		}
 		switch u.Hostname() {
 		case "pic.zdmhyg.cn", "huangguoai.com", "www.huangguoai.com":
 			return "https://huangguoai.com/"
@@ -865,7 +868,7 @@ func decodeImageBytes(buf []byte, remoteURL string) []byte {
 	if isKnownImage(buf) {
 		return buf
 	}
-	if u, err := url.Parse(remoteURL); err == nil && (u.Hostname() == "pic.zdmhyg.cn" || strings.HasSuffix(u.Hostname(), ".zdmhyg.cn")) {
+	if u, err := url.Parse(remoteURL); err == nil && isHuangguoImageHost(u.Hostname()) {
 		if decoded := decryptHuangguoImage(buf); isKnownImage(decoded) {
 			return decoded
 		}
