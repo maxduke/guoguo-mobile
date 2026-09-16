@@ -9,14 +9,34 @@ import 'package:guoguo_mobile/main.dart';
 import 'package:guoguo_mobile/data/app_store.dart';
 import 'package:guoguo_mobile/data/download_store.dart';
 import 'package:guoguo_mobile/data/storage.dart';
+import 'package:guoguo_mobile/data/cover_cache.dart';
 import 'package:guoguo_mobile/domain/models.dart';
 import 'widget_test.dart' show NoNetwork;
+import 'package:guoguo_mobile/platform/provider_client.dart';
+import 'package:guoguo_mobile/ui/rankings_page.dart';
+import 'package:guoguo_mobile/ui/downloads_page.dart';
+import 'package:guoguo_mobile/ui/theme.dart';
 
 void main() {
   final font = Platform.environment['GUOGUO_PREVIEW_FONT'];
   testWidgets('capture designed phone and tablet previews with fixture content', (
     tester,
   ) async {
+    final cacheDirectory = await tester.runAsync(
+      () => Directory.systemTemp.createTemp('guoguo-preview-'),
+    );
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('plugins.flutter.io/path_provider'),
+          (_) async => cacheDirectory!.path,
+        );
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('plugins.flutter.io/path_provider'),
+            null,
+          );
+    });
     await tester.runAsync(() async {
       final fontLoader = FontLoader('sans-serif')
         ..addFont(
@@ -79,6 +99,67 @@ void main() {
         store.dispose();
       }
     }
+    for (final mode in [Brightness.light, Brightness.dark]) {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      final store = AppStore(
+        storage: MemoryStorage(),
+        provider: _PreviewRankings(),
+      );
+      final downloads = DownloadStore(store)
+        ..entries = [
+          for (var i = 0; i < 3; i++)
+            DownloadEntry(
+              id: '$i',
+              drama: _previewDrama(i < 2 ? 0 : 1),
+              episode: Episode.fromJson({'id': '$i'}, i),
+              index: i,
+              directory: '/preview',
+              input: 'video.mp4',
+              contentKey: '',
+              process: false,
+              tasks: [],
+              ready: true,
+            ),
+        ];
+      for (final name in ['rankings', 'downloads']) {
+        final key = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: key,
+            child: MaterialApp(
+              debugShowCheckedModeBanner: false,
+              theme: guoguoTheme(mode),
+              home: name == 'rankings'
+                  ? RankingsPage(store: store, onOpen: (_) {})
+                  : Scaffold(
+                      appBar: AppBar(title: const Text('果果')),
+                      body: DownloadsPage(
+                        store: store,
+                        downloads: downloads,
+                        onOpen: (_) {},
+                      ),
+                    ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        final boundary =
+            key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+        await tester.runAsync(() async {
+          final image = await boundary.toImage();
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          await File(
+            'screenshots/$name-${mode.name}.png',
+          ).writeAsBytes(bytes!.buffer.asUint8List());
+          image.dispose();
+        });
+        await tester.pumpWidget(const SizedBox());
+      }
+      downloads.dispose();
+      store.dispose();
+    }
     // Export the actual app mark at each platform-required size.
     final catalog =
         jsonDecode(
@@ -126,6 +207,12 @@ void main() {
         image.dispose();
       });
     }
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 11));
+    await tester.runAsync(() async {
+      await coverCache.dispose();
+      await cacheDirectory!.delete(recursive: true);
+    });
     tester.view.resetPhysicalSize();
     tester.view.resetDevicePixelRatio();
   }, skip: font == null);
@@ -148,4 +235,34 @@ class _MarkPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+Drama _previewDrama(int index) => Drama(
+  id: 'preview-$index',
+  source: DramaSource.hongguo,
+  title: ['山海有归期', '春风不负你', '重逢在雨季'][index % 3],
+  category: '都市情感',
+  episodes: 80,
+  description: '一次久别重逢，让未完的故事有了新的开始。',
+);
+
+class _PreviewRankings implements ProviderClient {
+  @override
+  Future<Map<String, dynamic>> call(
+    String method, [
+    Map<String, dynamic> arguments = const {},
+  ]) async => method == 'boards'
+      ? {
+          'items': [
+            {'id': 'hot', 'name': '热播榜'},
+            {'id': 'new', 'name': '新剧榜'},
+          ],
+        }
+      : {
+          'items': [
+            for (var i = 0; i < 5; i++)
+              {'rank': i + 1, 'drama': _previewDrama(i).toJson()},
+          ],
+          'hasMore': false,
+        };
 }

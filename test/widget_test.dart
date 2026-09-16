@@ -48,7 +48,7 @@ void main() {
         expect(tester.takeException(), isNull);
         await tester.tap(find.text('下载'));
         await tester.pumpAndSettle();
-        expect(find.text('把好剧带在身边'), findsOneWidget);
+        expect(find.text('下载管理'), findsOneWidget);
         expect(tester.takeException(), isNull);
         await tester.tap(find.byTooltip('设置'));
         await tester.pumpAndSettle();

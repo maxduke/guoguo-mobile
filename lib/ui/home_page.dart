@@ -295,7 +295,8 @@ class _HomePageState extends State<HomePage> {
                     onChanged: (v) {
                       ++_searchGeneration;
                       setState(() {
-                        _query = v;
+                        _query = v.trim();
+                        if (_query.isNotEmpty) _category = '全部';
                         _searchError = null;
                         _searching = false;
                       });
@@ -316,10 +317,26 @@ class _HomePageState extends State<HomePage> {
                                 ),
                               ),
                             )
-                          : IconButton(
-                              tooltip: '联网搜索',
-                              icon: const Icon(Icons.arrow_forward_rounded),
-                              onPressed: () => _submit(_search.text),
+                          : Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (_search.text.isNotEmpty)
+                                  IconButton(
+                                    tooltip: '清空搜索',
+                                    icon: const Icon(Icons.close_rounded),
+                                    onPressed: () => setState(() {
+                                      _search.clear();
+                                      _query = '';
+                                      _searchError = null;
+                                      ++_searchGeneration;
+                                    }),
+                                  ),
+                                IconButton(
+                                  tooltip: '联网搜索',
+                                  icon: const Icon(Icons.arrow_forward_rounded),
+                                  onPressed: () => _submit(_search.text),
+                                ),
+                              ],
                             ),
                     ),
                   ),
@@ -328,11 +345,7 @@ class _HomePageState extends State<HomePage> {
                       padding: const EdgeInsets.only(top: 12),
                       child: _Notice(_searchError!, Icons.info_outline_rounded),
                     ),
-                  if (_query.isEmpty) ...[
-                    const SizedBox(height: 22),
-                    _editorial(wide),
-                    const SizedBox(height: 22),
-                  ],
+                  if (_query.isEmpty) ...[const SizedBox(height: 16)],
                   if (_query.isEmpty && store.recent.isNotEmpty) ...[
                     _continueCard(store.recent.first),
                     const SizedBox(height: 22),
@@ -340,7 +353,7 @@ class _HomePageState extends State<HomePage> {
                   Row(
                     children: [
                       Text(
-                        _query.isEmpty ? '慢慢选，慢慢看' : '搜索结果',
+                        _query.isEmpty ? '全部短剧' : '搜索结果',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const Spacer(),
@@ -488,72 +501,6 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
-
-  Widget _editorial(bool wide) => Container(
-    padding: EdgeInsets.all(wide ? 20 : 23),
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(24),
-      gradient: const LinearGradient(
-        colors: [Color(0xFF264F43), Color(0xFF3C6C57)],
-        begin: Alignment.bottomLeft,
-        end: Alignment.topRight,
-      ),
-    ),
-    child: Row(
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                '给自己一段好时光',
-                style: TextStyle(
-                  color: Color(0xFFD5DEC9),
-                  fontSize: 11,
-                  letterSpacing: 2,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                wide ? '故事很短，余味很长' : '故事很短\n余味很长',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 28,
-                  fontWeight: FontWeight.w600,
-                  height: 1.35,
-                  letterSpacing: 2,
-                ),
-              ),
-              const SizedBox(height: 14),
-              Text(
-                store.source.subtitle,
-                style: const TextStyle(color: Color(0xFFD5DEC9), fontSize: 12),
-              ),
-            ],
-          ),
-        ),
-        ExcludeSemantics(
-          child: Transform.rotate(
-            angle: -.14,
-            child: Container(
-              width: wide ? 95 : 100,
-              height: wide ? 95 : 120,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: .09),
-                borderRadius: BorderRadius.circular(28),
-                border: Border.all(color: Colors.white.withValues(alpha: .15)),
-              ),
-              child: const Icon(
-                Icons.local_movies_outlined,
-                size: 62,
-                color: Color(0xFFD7D8BB),
-              ),
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
 
   Widget _continueCard(WatchRecord record) => Card(
     margin: EdgeInsets.zero,

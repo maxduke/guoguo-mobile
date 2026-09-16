@@ -35,7 +35,7 @@ class _RankingProvider implements ProviderClient {
 
 void main() {
   testWidgets(
-    'small ranking cover and long title fit; opening preserves identity',
+    'large ranking cover and long title fit; opening preserves identity',
     (tester) async {
       tester.view.physicalSize = const Size(320, 640);
       tester.view.devicePixelRatio = 1;
@@ -53,9 +53,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byType(Poster), findsOneWidget);
-      expect(tester.getSize(find.byType(Poster)), const Size(42, 56));
+      expect(tester.getSize(find.byType(Poster)), const Size(96, 132));
       expect(tester.takeException(), isNull);
-      await tester.tap(find.byType(ListTile));
+      await tester.tap(find.text('用于检查小屏幕榜单标题与封面的长剧名'));
       expect(opened?.id, 'huangdou:target');
       await tester.pumpWidget(const SizedBox());
       store.dispose();

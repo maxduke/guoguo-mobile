@@ -93,6 +93,8 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   Directory? _root;
   String? error;
   Timer? _refreshTimer;
+  bool _verifyFiles = false;
+  final Set<String> _removing = {};
   bool _loading = false,
       _reloadAgain = false,
       _disposed = false,
@@ -128,7 +130,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     _subscription = downloader.updates.listen((_) {
       _refreshTimer ??= Timer(const Duration(milliseconds: 300), () {
         _refreshTimer = null;
-        unawaited(reload());
+        unawaited(reload(verifyFiles: false));
       });
     });
     downloader.configureNotificationForGroup(
@@ -175,7 +177,8 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> reload() async {
+  Future<void> reload({bool verifyFiles = true}) async {
+    _verifyFiles = _verifyFiles || verifyFiles;
     if (_disposed || _storage == null) return;
     if (_loading) {
       _reloadAgain = true;
@@ -185,19 +188,26 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     try {
       do {
         _reloadAgain = false;
+        final checkFiles = _verifyFiles;
+        _verifyFiles = false;
         final records = {
           for (final r in await downloader.database.allRecords(group: group))
             r.taskId: r,
         };
-        for (final entry in entries) {
+        for (final entry in entries.toList()) {
+          if (_removing.contains(entry.id)) continue;
           if (entry.ready) {
-            if (await File(entry.output).exists()) {
+            if (!checkFiles || await File(entry.output).exists()) {
               entry.status = TaskStatus.complete;
               entry.progress = 1;
               continue;
             }
             entry.ready = false;
             entry.failure = '视频文件已不存在，请重新下载';
+            entry.status = TaskStatus.failed;
+            continue;
+          }
+          if (entry.failure != null) {
             entry.status = TaskStatus.failed;
             continue;
           }
@@ -231,6 +241,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
           final ready = entries
               .where(
                 (e) =>
+                    !_removing.contains(e.id) &&
                     !e.ready &&
                     !e.userPaused &&
                     e.failure == null &&
@@ -243,6 +254,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
           if (ready != null) unawaited(_finalize(ready));
         }
       } while (_reloadAgain && !_disposed);
+      error = null;
     } catch (_) {
       error = '暂时无法读取下载记录';
     } finally {
@@ -291,7 +303,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       _processor = null;
       if (!_disposed) {
         notifyListeners();
-        if (_foreground) unawaited(reload());
+        if (_foreground) unawaited(reload(verifyFiles: false));
       }
     }
   }
@@ -383,6 +395,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> pause(DownloadEntry entry) async {
+    if (entry.ready) return;
     if (entry.processing) throw const ProviderException('正在整理视频，请稍候');
     entry.userPaused = true;
     await _save();
@@ -399,6 +412,8 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> resume(DownloadEntry entry) async {
+    if (entry.ready) return;
+    if (entry.processing) throw const ProviderException('正在整理视频，请稍候');
     entry.userPaused = false;
     entry.failure = null;
     await _save();
@@ -426,15 +441,20 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> remove(DownloadEntry entry) async {
     if (entry.processing) throw const ProviderException('正在整理视频，请稍候再删除');
-    await downloader.cancelTasksWithIds(entry.tasks.map((t) => t.taskId));
-    entries.remove(entry);
-    await _save();
-    for (final task in entry.tasks) {
-      await downloader.database.deleteRecordWithId(task.taskId);
+    if (!_removing.add(entry.id)) return;
+    try {
+      await downloader.cancelTasksWithIds(entry.tasks.map((t) => t.taskId));
+      for (final task in entry.tasks) {
+        await downloader.database.deleteRecordWithId(task.taskId);
+      }
+      final directory = Directory(entry.directory);
+      if (await directory.exists()) await directory.delete(recursive: true);
+      entries.remove(entry);
+      await _save();
+    } finally {
+      _removing.remove(entry.id);
+      if (!_disposed) notifyListeners();
     }
-    final directory = Directory(entry.directory);
-    if (await directory.exists()) await directory.delete(recursive: true);
-    notifyListeners();
   }
 
   Future<String?> localFile(Drama drama, Episode episode) async {
@@ -450,10 +470,17 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<int> usedBytes() async {
-    if (_root == null) return 0;
+    if (_root == null || !await _root!.exists()) return 0;
     var bytes = 0;
-    await for (final file in _root!.list(recursive: true)) {
-      if (file is File) bytes += await file.length();
+    await for (final file in _root!.list(recursive: true, followLinks: false)) {
+      if (file is File) {
+        try {
+          bytes += await file.length();
+        } on FileSystemException {
+          // Downloads can be removed while space usage is being calculated.
+          if (await file.exists()) rethrow;
+        }
+      }
     }
     return bytes;
   }

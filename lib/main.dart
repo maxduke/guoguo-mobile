@@ -36,6 +36,15 @@ class _BootstrapState extends State<Bootstrap> {
   Future<void> _initialize() async {
     setState(() => _error = null);
     try {
+      // No player exists during bootstrap. Remove remux files left by a
+      // terminated process before creating new playback sessions.
+      try {
+        final temporary = await getTemporaryDirectory();
+        final playback = Directory('${temporary.path}/playback');
+        if (await playback.exists()) await playback.delete(recursive: true);
+      } on FileSystemException {
+        // Cache cleanup must not prevent access to records or downloads.
+      }
       final directory = await getApplicationSupportDirectory();
       final provider = NativeProviderClient();
       final store = AppStore(

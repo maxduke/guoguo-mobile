@@ -48,13 +48,17 @@ class _RankingsPageState extends State<RankingsPage> {
   }
 
   Future<void> _load(String board, {bool more = false}) async {
+    if (more && loading) return;
     final request = ++generation;
     final nextPage = more ? page + 1 : 1;
     setState(() {
       loading = true;
       error = null;
       selected = board;
-      if (!more) rows = [];
+      if (!more) {
+        rows = [];
+        hasMore = false;
+      }
     });
     try {
       final result = await widget.store.provider.call('ranking', {
@@ -123,70 +127,135 @@ class _RankingsPageState extends State<RankingsPage> {
                     child: const Text('重试'),
                   ),
                 )
-              : ListView.builder(
-                  padding: const EdgeInsets.all(22),
-                  itemCount: rows.length + (hasMore ? 1 : 0),
-                  itemBuilder: (context, index) {
-                    if (index == rows.length) {
-                      return TextButton(
-                        onPressed: loading
-                            ? null
-                            : () => _load(selected!, more: true),
-                        child: const Text('加载更多'),
+              : RefreshIndicator(
+                  onRefresh: () async {
+                    if (!loading && selected != null) await _load(selected!);
+                  },
+                  child: ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(16),
+                    itemCount: rows.length + (hasMore ? 1 : 0),
+                    itemBuilder: (context, index) {
+                      if (index == rows.length) {
+                        return TextButton(
+                          onPressed: loading
+                              ? null
+                              : () => _load(selected!, more: true),
+                          child: const Text('加载更多'),
+                        );
+                      }
+                      final row = rows[index];
+                      final drama = Drama.fromJson(
+                        Map<String, dynamic>.from(row['drama'] as Map),
                       );
-                    }
-                    final row = rows[index];
-                    final drama = Drama.fromJson(
-                      Map<String, dynamic>.from(row['drama'] as Map),
-                    );
-                    return Card(
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.all(14),
-                        onTap: () => widget.onOpen(drama),
-                        leading: SizedBox(
-                          width: 92,
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 30,
-                                child: Text(
-                                  '${row['rank']}',
-                                  style: TextStyle(
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.w700,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.secondary,
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        clipBehavior: Clip.antiAlias,
+                        child: InkWell(
+                          onTap: () => widget.onOpen(drama),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 96,
+                                  height: 132,
+                                  child: Stack(
+                                    fit: StackFit.expand,
+                                    children: [
+                                      Poster(drama, radius: 10),
+                                      Positioned(
+                                        top: 0,
+                                        left: 0,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 9,
+                                            vertical: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: index < 3
+                                                ? Theme.of(
+                                                    context,
+                                                  ).colorScheme.primary
+                                                : Colors.black87,
+                                            borderRadius:
+                                                const BorderRadius.only(
+                                                  topLeft: Radius.circular(10),
+                                                  bottomRight: Radius.circular(
+                                                    10,
+                                                  ),
+                                                ),
+                                          ),
+                                          child: Text(
+                                            '${row['rank']}',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                              ),
-                              const SizedBox(width: 10),
-                              SizedBox(
-                                width: 42,
-                                height: 56,
-                                child: Poster(drama, radius: 6),
-                              ),
-                            ],
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        drama.title,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.titleMedium,
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        [
+                                          drama.source.label,
+                                          if (drama.category.isNotEmpty)
+                                            drama.category,
+                                          if (drama.episodes > 0)
+                                            '${drama.episodes} 集',
+                                        ].join(' · '),
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.bodySmall,
+                                      ),
+                                      if (drama.description.isNotEmpty) ...[
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          drama.description,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodySmall,
+                                        ),
+                                      ],
+                                      const SizedBox(height: 10),
+                                      Text(
+                                        '查看分集 ›',
+                                        style: TextStyle(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.primary,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                        title: Text(
-                          drama.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: Text(
-                          [
-                            drama.source.label,
-                            if (drama.category.isNotEmpty) drama.category,
-                            if (drama.episodes > 0) '${drama.episodes} 集',
-                          ].join(' · '),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: const Icon(Icons.chevron_right),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
         ),
       ],

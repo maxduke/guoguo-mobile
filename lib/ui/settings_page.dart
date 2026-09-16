@@ -5,15 +5,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../data/app_store.dart';
 import '../data/download_store.dart';
 import '../data/cover_cache.dart';
 import 'components.dart';
 
-class SettingsPage extends StatelessWidget {
+class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, required this.store, required this.downloads});
   final AppStore store;
   final DownloadStore downloads;
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  AppStore get store => widget.store;
+  DownloadStore get downloads => widget.downloads;
+  late final Future<PackageInfo> _packageInfo = PackageInfo.fromPlatform();
+  late final Future<int> _usedBytes = downloads.usedBytes();
+  bool _clearing = false;
   Future<void> _export(BuildContext context) async {
     final box = context.findRenderObject() as RenderBox?;
     final origin = box == null
@@ -174,7 +185,7 @@ class SettingsPage extends StatelessWidget {
                 child: Column(
                   children: [
                     FutureBuilder<int>(
-                      future: downloads.usedBytes(),
+                      future: _usedBytes,
                       builder: (context, snapshot) => ListTile(
                         leading: const Icon(Icons.storage_outlined),
                         title: const Text('已下载视频'),
@@ -187,29 +198,46 @@ class SettingsPage extends StatelessWidget {
                     ),
                     ListTile(
                       leading: const Icon(Icons.cleaning_services_outlined),
-                      title: const Text('清理封面缓存'),
+                      title: Text(_clearing ? '正在清理…' : '清理封面缓存'),
                       subtitle: const Text('收藏、历史和已下载视频会保留'),
-                      onTap: () => perform(context, () async {
-                        await DefaultCacheManager().emptyCache();
-                        await coverCache.emptyCache();
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('封面缓存已清理')),
-                          );
-                        }
-                      }),
+                      onTap: _clearing
+                          ? null
+                          : () => perform(context, () async {
+                              setState(() => _clearing = true);
+                              try {
+                                await DefaultCacheManager().emptyCache();
+                                await coverCache.emptyCache();
+                                PaintingBinding.instance.imageCache.clear();
+                                PaintingBinding.instance.imageCache
+                                    .clearLiveImages();
+                              } finally {
+                                if (mounted) setState(() => _clearing = false);
+                              }
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('封面缓存已清理')),
+                                );
+                              }
+                            }),
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 32),
               Center(
-                child: Text(
-                  '果果 · 0.1.0\n好故事，接着看',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    height: 1.8,
+                child: FutureBuilder<PackageInfo>(
+                  future: _packageInfo,
+                  builder: (context, snapshot) => Text(
+                    snapshot.hasData
+                        ? '果果 · ${snapshot.data!.version} (${snapshot.data!.buildNumber})'
+                        : snapshot.hasError
+                        ? '果果 · 版本信息暂不可用'
+                        : '果果 · 正在读取版本',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      height: 1.8,
+                    ),
                   ),
                 ),
               ),

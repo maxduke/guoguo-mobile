@@ -71,7 +71,7 @@ class Poster extends StatelessWidget {
         borderRadius: BorderRadius.circular(radius),
         child: CachedNetworkImage(
           imageUrl: coverRequest(drama),
-          cacheKey: 'drama-cover-v2:${drama.key}',
+          cacheKey: coverRequest(drama),
           cacheManager: coverCache,
           fit: BoxFit.cover,
           memCacheWidth: bounds.maxWidth.isFinite

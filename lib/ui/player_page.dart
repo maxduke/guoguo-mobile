@@ -24,12 +24,16 @@ class PlayerPage extends StatefulWidget {
     required this.drama,
     required this.episodes,
     required this.initialIndex,
+    this.episodeIndices,
+    this.localOnly = false,
   });
   final AppStore store;
   final DownloadStore downloads;
   final Drama drama;
   final List<Episode> episodes;
   final int initialIndex;
+  final List<int>? episodeIndices;
+  final bool localOnly;
   @override
   State<PlayerPage> createState() => _PlayerPageState();
 }
@@ -98,7 +102,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       );
       cancellation.check();
       if (path == null) {
-        if (widget.store.offline) {
+        if (widget.localOnly || widget.store.offline) {
           throw const ProviderException('此分集尚未下载，请联网后播放');
         }
         media = await widget.store.provider.resolve(
@@ -177,7 +181,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             WatchRecord(
               drama: widget.drama,
               episodeId: widget.episodes[_index].id,
-              episodeIndex: _index,
+              episodeIndex: widget.episodeIndices?[_index] ?? _index,
               positionMs: value.position.inMilliseconds,
               durationMs: value.duration!.inMilliseconds,
               updatedAt: DateTime.now(),
@@ -558,7 +562,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                   () => widget.downloads.enqueue(
                     widget.drama,
                     widget.episodes[_index],
-                    _index,
+                    widget.episodeIndices?[_index] ?? _index,
                   ),
                 );
               },
