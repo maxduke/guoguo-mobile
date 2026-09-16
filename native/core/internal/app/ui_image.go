@@ -39,6 +39,12 @@ func (app *UIApp) loadCoverImage(ctx context.Context, remoteURL string, decode f
 
 // Mobile uses platform image decoding, never the desktop executable converter.
 func (downloader *Downloader) fetchCoverImage(ctx context.Context, remoteURL string, decode func([]byte, string) []byte, convertHEIC bool) ([]byte, error) {
+	// Legacy Huangguo catalogs (and saved mobile records) contain relative paths.
+	// Resolve them through the same CDN mapping used by the desktop image route.
+	remoteURL, ok := buildImageURL(remoteURL)
+	if !ok {
+		return nil, errors.New("封面地址不受支持")
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, remoteURL, nil)
 	if err != nil {
 		return nil, err

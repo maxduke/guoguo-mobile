@@ -27,8 +27,9 @@ class _Pages implements ProviderClient {
 }
 
 class _Cover implements ProviderClient {
-  _Cover({this.id});
+  _Cover({this.id, this.cover = ''});
   final String? id;
+  final String cover;
   @override
   Future<Map<String, dynamic>> call(
     String method, [
@@ -36,7 +37,7 @@ class _Cover implements ProviderClient {
   ]) async {
     expect(method, 'cover');
     if (id != null) {
-      expect(args, {'id': id, 'url': ''});
+      expect(args, {'id': id, 'url': cover});
     } else {
       expect(args['url'], 'https://pic.zdmhyg.cn/fixture');
     }
@@ -48,6 +49,28 @@ class _Cover implements ProviderClient {
 }
 
 void main() {
+  test('legacy cover paths and bare IDs survive the Flutter bridge', () async {
+    for (final path in [
+      'cf230705/image/original.jpg',
+      '/cf230705/image/comic.jpg',
+      'k12p/c92a/remix.jpg?key=a%2Bb&expires=123',
+      'k12p/c92a/drama.jpg',
+      'upload_01/upload/cover.jpg',
+      '',
+    ]) {
+      final drama = Drama(
+        id: '12345',
+        source: DramaSource.huangguo,
+        title: 'fixture',
+        cover: path,
+      );
+      final response = await ProviderCoverService(
+        _Cover(id: drama.id, cover: path),
+      ).get(coverRequest(drama));
+      expect(response.statusCode, 200);
+      expect(response.fileExtension, '.jpg');
+    }
+  });
   test(
     'saved records without a cover request artwork by provider identity',
     () async {

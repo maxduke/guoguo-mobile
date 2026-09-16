@@ -11,7 +11,22 @@ import (
 func (d *Downloader) mobileCoverAddress(ctx context.Context, dramaID string) (string, error) {
 	source, id, ok := splitProviderDramaID(dramaID)
 	if !ok {
-		return "", errors.New("无效的剧集 ID")
+		// The original Huangguo API uses bare IDs, including saved favorites.
+		if !rankingSourceID.MatchString(dramaID) {
+			return "", errors.New("无效的剧集 ID")
+		}
+		var detail Drama
+		if err := d.fetchAPI(ctx, "/api/app/playlet/detail/"+url.PathEscape(dramaID), nil, &detail); err != nil {
+			return "", err
+		}
+		if detail.ID != "" && detail.ID != dramaID {
+			return "", errors.New("详情与请求剧集不符")
+		}
+		address := bestDramaCover(detail)
+		if address == "" {
+			return "", errors.New("该剧暂未提供封面")
+		}
+		return address, nil
 	}
 	var address string
 	switch source {
