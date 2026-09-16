@@ -70,13 +70,43 @@ def package(root=ROOT, tag=None):
     print(archive)
 
 
+def verify(root=ROOT, tag=None, artifacts=Path("release-assets")):
+    name, build = validate(root, tag)
+    sha = os.environ.get("GITHUB_SHA", "")
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ValueError("GITHUB_SHA must identify the exact source commit")
+    expected = {f"Guoguo-{name}+{build}-ios-unsigned.ipa", "build-info.json"}
+    entries = (artifacts / "SHA256SUMS").read_text().splitlines()
+    seen = set()
+    for entry in entries:
+        digest, filename = entry.split("  ", 1)
+        if filename not in expected or filename in seen:
+            raise ValueError("Unexpected or duplicate release checksum entry")
+        seen.add(filename)
+        hasher = hashlib.sha256()
+        with (artifacts / filename).open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        if hasher.hexdigest() != digest:
+            raise ValueError(f"Checksum mismatch: {filename}")
+    if seen != expected or {p.name for p in artifacts.iterdir()} != expected | {"SHA256SUMS"}:
+        raise ValueError("Release artifact set is incomplete or contains unexpected files")
+    info = json.loads((artifacts / "build-info.json").read_text())
+    if (info.get("version"), info.get("build"), info.get("commit"), info.get("platform"), info.get("signed")) != (name, build, sha, "ios", False):
+        raise ValueError("Release artifact identity does not match the tagged source")
+    print(f"Verified {name}+{build} at {sha}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["validate", "package"])
+    parser.add_argument("command", choices=["validate", "package", "verify"])
+    parser.add_argument("--artifacts", type=Path, default=Path("release-assets"))
     args = parser.parse_args()
     tag = os.environ.get("GITHUB_REF_NAME") if os.environ.get("GITHUB_REF_TYPE") == "tag" else None
     if args.command == "package":
         package(tag=tag)
+    elif args.command == "verify":
+        verify(tag=tag, artifacts=args.artifacts)
     else:
         name, build = validate(tag=tag)
         print(f"Validated {name}+{build}")

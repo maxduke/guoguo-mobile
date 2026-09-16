@@ -58,6 +58,45 @@ class ReleaseTest(unittest.TestCase):
             checksum, name = line.split('  ')
             self.assertEqual(hashlib.sha256((output / name).read_bytes()).hexdigest(), checksum)
 
+    @patch.dict(os.environ, {'GITHUB_SHA': 'a' * 40})
+    def test_verify_promoted_artifact(self):
+        release.package(self.root)
+        output = self.root / 'build/release'
+        release.verify(self.root, 'v0.3.0', output)
+        with patch.dict(os.environ, {'GITHUB_SHA': 'b' * 40}):
+            with self.assertRaisesRegex(ValueError, 'identity'):
+                release.verify(self.root, 'v0.3.0', output)
+        (self.root / 'pubspec.yaml').write_text('version: 0.3.0+6\n')
+        with self.assertRaises(ValueError):
+            release.verify(self.root, 'v0.3.0', output)
+
+    @patch.dict(os.environ, {'GITHUB_SHA': 'a' * 40})
+    def test_verify_rejects_corruption_and_incomplete_checksums(self):
+        release.package(self.root)
+        output = self.root / 'build/release'
+        checksums = output / 'SHA256SUMS'
+        original = checksums.read_text()
+        checksums.write_text(original.splitlines()[0] + '\n')
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            release.verify(self.root, 'v0.3.0', output)
+        checksums.write_text(original)
+        (output / 'Guoguo-0.3.0+5-ios-unsigned.ipa').write_bytes(b'corrupt')
+        with self.assertRaisesRegex(ValueError, 'Checksum mismatch'):
+            release.verify(self.root, 'v0.3.0', output)
+
+    @patch.dict(os.environ, {'GITHUB_SHA': 'a' * 40})
+    def test_verify_rejects_unexpected_files_and_checksum_paths(self):
+        release.package(self.root)
+        output = self.root / 'build/release'
+        extra = output / 'unexpected.txt'
+        extra.write_text('unexpected')
+        with self.assertRaisesRegex(ValueError, 'unexpected files'):
+            release.verify(self.root, 'v0.3.0', output)
+        extra.unlink()
+        (output / 'SHA256SUMS').write_text('a' * 64 + '  ../outside\n')
+        with self.assertRaisesRegex(ValueError, 'Unexpected'):
+            release.verify(self.root, 'v0.3.0', output)
+
 
 if __name__ == '__main__':
     unittest.main()
