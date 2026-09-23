@@ -306,7 +306,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           .stream
           .listen(_nativeEvent);
       _active = item;
-      _player.setOverriddenFit(_fill ? BoxFit.cover : BoxFit.contain);
+      await _applyVideoFit();
       final record = widget.store.history[widget.drama.key];
       var start =
           position ??
@@ -348,6 +348,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         });
       }
     }
+  }
+
+  Future<void> _applyVideoFit() async {
+    _player.setOverriddenFit(_fill ? BoxFit.cover : BoxFit.contain);
+    // Reusing the player resets VideoPlayerValue on every source change, while
+    // the fit widget caches its last gravity. Explicitly restore the native
+    // mode even when the requested BoxFit has not changed.
+    await _player.videoPlayerController?.setAspectRatio(
+      _fill ? 'fill' : 'aspect',
+    );
   }
 
   void _retry({int? quality}) {
@@ -666,7 +676,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               onTap: () {
                 Navigator.pop(context);
                 setState(() => _fill = !_fill);
-                _player.setOverriddenFit(_fill ? BoxFit.cover : BoxFit.contain);
+                unawaited(_applyVideoFit());
               },
             ),
             ListTile(

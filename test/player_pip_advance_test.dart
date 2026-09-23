@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:better_player_plus/better_player_plus.dart';
+import 'package:guoguo_mobile/ui/episode_pager.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guoguo_mobile/data/app_store.dart';
@@ -93,6 +95,75 @@ class _NativePlayer {
 }
 
 void main() {
+  testWidgets('swiping episodes preserves contain and selected fill mode', (
+    tester,
+  ) async {
+    final platform = _NativePlayer()..install();
+    addTearDown(platform.uninstall);
+    final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
+      ..offline = true;
+    final directory = Directory.systemTemp.createTempSync('guoguo-fit-');
+    for (var i = 1; i <= 3; i++) {
+      File('${directory.path}/pip_episode_$i.mp4').createSync();
+    }
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final downloads = _LocalDownloads(store, directory.path);
+    addTearDown(() {
+      downloads.dispose();
+      store.dispose();
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlayerPage(
+          store: store,
+          downloads: downloads,
+          drama: const Drama(
+            id: '1',
+            source: DramaSource.hongguo,
+            title: '比例回归',
+          ),
+          episodes: [
+            for (var i = 1; i <= 3; i++) Episode.fromJson({'id': '$i'}, i - 1),
+          ],
+          initialIndex: 0,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final player = tester
+        .widget<BetterPlayer>(find.byType(BetterPlayer))
+        .controller;
+    void expectMode(String mode) {
+      expect(player.videoPlayerController!.value.aspectRatioIOS, mode);
+      expect(player.getFit(), mode == 'aspect' ? BoxFit.contain : BoxFit.cover);
+    }
+
+    Future<void> swipe(double dy) async {
+      await tester.drag(find.byType(EpisodePager), Offset(0, dy));
+      await tester.pumpAndSettle();
+    }
+
+    expectMode('aspect');
+    await swipe(-500);
+    expect(platform.sources.last, contains('pip_episode_2.mp4'));
+    expectMode('aspect');
+    await swipe(500);
+    expect(platform.sources.last, contains('pip_episode_1.mp4'));
+    expectMode('aspect');
+    await tester.tapAt(const Offset(400, 300));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('更多播放设置'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('等比例铺满（裁切边缘）'));
+    await tester.pumpAndSettle();
+    expectMode('fill');
+    await swipe(-500);
+    expectMode('fill');
+    expect(platform.sources.last, contains('pip_episode_2.mp4'));
+    expect(platform.ids.toSet(), {7});
+    await tester.pumpWidget(const SizedBox());
+  });
+
   for (final initiallyPaused in [false, true]) {
     testWidgets(
       'explicit PiP entry ${initiallyPaused ? 'keeps user pause' : 'restores playback after transition pause'}',
