@@ -8,6 +8,7 @@ import (
 )
 
 type Drama struct {
+	VIP               *bool              `json:"vip,omitempty"`
 	ID                string             `json:"id"`
 	Source            string             `json:"source,omitempty"`
 	SourceID          string             `json:"sourceId,omitempty"`
@@ -65,6 +66,7 @@ func (d Drama) DisplayTitle() string {
 }
 
 type Chapter struct {
+	VIP            bool            `json:"vip,omitempty"`
 	ID             string          `json:"id"`
 	Source         string          `json:"source,omitempty"`
 	Title          string          `json:"title"`

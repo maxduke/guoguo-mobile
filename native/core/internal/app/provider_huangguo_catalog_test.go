@@ -15,7 +15,7 @@ func TestHuangguoVideoStopsOnCloudflareBlock(t *testing.T) {
 		return rankingHTTPResponse(request, 403, "Cloudflare: Sorry, you have been blocked"), nil
 	})
 	items, err := d.fetchHuangguoVideoDramas(context.Background())
-	if len(items) != 0 || err == nil || !strings.Contains(err.Error(), "Cloudflare 已阻止当前网络访问") || calls.Load() != 1 {
+	if len(items) != 0 || err == nil || !strings.Contains(err.Error(), "Cloudflare 拒绝了当前请求") || calls.Load() != 1 {
 		t.Fatal("blocked catalog lost its cause or repeated requests", err)
 	}
 }

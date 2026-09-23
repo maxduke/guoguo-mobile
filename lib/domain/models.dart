@@ -21,10 +21,23 @@ class Drama {
     this.cover = '',
     this.category = '',
     this.episodes = 0,
+    this.heat = '',
+    this.date = '',
+    this.status = '',
+    this.vip,
+    this.tags = const [],
   });
   final String id, title, description, cover, category;
   final DramaSource source;
   final int episodes;
+  final String heat, date, status;
+  final bool? vip;
+  final List<String> tags;
+  String get statusLabel => switch (status) {
+    'finished' || 'completed' => '已完结',
+    'ongoing' => '连载中',
+    _ => '',
+  };
   String get key => '${source.name}:$id';
   factory Drama.fromJson(Map<String, dynamic> json) {
     final id = json['id'] as String;
@@ -38,8 +51,33 @@ class Drama {
       cover: json['cover'] as String? ?? '',
       category: json['category'] as String? ?? '',
       episodes: (json['episodes'] as num?)?.toInt() ?? 0,
+      heat: '${json['heat'] ?? ''}',
+      date: json['date'] as String? ?? '',
+      status: json['status'] as String? ?? '',
+      vip: json['vip'] as bool?,
+      tags: (json['tags'] as List? ?? []).cast<String>(),
     );
   }
+  Drama merge(Drama patch) {
+    if (patch.key != key) throw const FormatException('剧集资料不匹配');
+    return Drama(
+      id: id,
+      source: source,
+      title: patch.title.isEmpty || patch.title == id ? title : patch.title,
+      description: patch.description.isEmpty ? description : patch.description,
+      cover: patch.cover.isEmpty ? cover : patch.cover,
+      category: patch.category.isEmpty || patch.category == '未分类'
+          ? category
+          : patch.category,
+      episodes: patch.episodes > 0 ? patch.episodes : episodes,
+      heat: patch.heat.isEmpty ? heat : patch.heat,
+      date: patch.date.isEmpty ? date : patch.date,
+      status: patch.status.isEmpty ? status : patch.status,
+      vip: patch.vip ?? vip,
+      tags: patch.tags.isEmpty ? tags : patch.tags,
+    );
+  }
+
   Map<String, dynamic> toJson() => {
     'id': id,
     'source': source.name,
@@ -48,6 +86,11 @@ class Drama {
     'cover': cover,
     'category': category,
     'episodes': episodes,
+    'heat': heat,
+    'date': date,
+    'status': status,
+    'vip': vip,
+    'tags': tags,
   };
 }
 
@@ -61,6 +104,7 @@ class Episode {
   final String id, title;
   final int number;
   final Map<String, dynamic> raw;
+  bool get vip => raw['vip'] == true;
   factory Episode.fromJson(Map<String, dynamic> json, int index) => Episode(
     id: json['id'] as String,
     title: json['title'] as String? ?? '第 ${index + 1} 集',

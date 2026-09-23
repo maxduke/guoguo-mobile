@@ -135,6 +135,7 @@ func (a *UIApp) runSortMetadataQueue(ctx context.Context, done chan struct{}) {
 		if err == nil {
 			patch.SortMetadata.Version = dramaSortMetadataVersion(previous)
 			patch.SortMetadata.CoverChecked = dramaProvider(previous) == sourceHongguo
+			patch.SortMetadata.VIPChecked = dramaProvider(previous) == sourceHuangdou
 		}
 		normalizeDramaCover(&patch)
 		a.mu.Lock()

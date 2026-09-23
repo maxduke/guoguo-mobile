@@ -10,6 +10,12 @@
 
 <img src="screenshots/phone-light.png" width="260" alt="手机浅色界面" /> <img src="screenshots/tablet-dark.png" width="560" alt="平板深色界面" />
 
+[发现页预览](screenshots/recommendations-light.png) · [深色发现页](screenshots/recommendations-dark.png)
+
+## 0.5.0 更新
+
+同步新版解析、搜索补季与联想，新增红果发现页、剧库排序、黄豆 VIP 筛选、详情资料刷新和分集分页跳转。详见 [本轮同步范围与验证](docs/upstream-refresh-2026-09.md)。
+
 ## 使用方式
 
 - 剧库按红果、黄果、黄豆分别浏览；收藏、历史和下载跨站汇总。

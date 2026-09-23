@@ -7,6 +7,17 @@ import '../domain/playback_diagnostic.dart';
 import '../platform/provider_client.dart';
 import 'storage.dart';
 
+class CatalogSearchResult {
+  const CatalogSearchResult(
+    this.items, {
+    this.warning = '',
+    this.limited = false,
+  });
+  final List<Drama> items;
+  final String warning;
+  final bool limited;
+}
+
 class AppStore extends ChangeNotifier {
   AppStore({
     required this.storage,
@@ -20,6 +31,12 @@ class AppStore extends ChangeNotifier {
   final Map<String, Future<List<Episode>>> _episodeRequests = {};
   final Map<String, String> episodeErrors = {};
   bool checkingUpdates = false;
+  bool hideVip = true;
+  final List<String> recentSearches = [];
+  final Map<String, Future<Drama>> _detailRequests = {};
+  final Map<String, DateTime> _detailChecked = {};
+  final Map<String, Drama> details = {};
+  final Map<String, String> detailErrors = {};
   final List<PlaybackDiagnostic> playbackDiagnostics = [];
   static const maxPlaybackDiagnostics = 30;
   final LocalStorage storage;
@@ -72,6 +89,10 @@ class AppStore extends ChangeNotifier {
     cellularDownloads = state['cellularDownloads'] == true;
     cellularPrefetch = state['cellularPrefetch'] == true;
     prefetch = state['prefetch'] != false;
+    hideVip = state['hideVip'] != false;
+    recentSearches.addAll(
+      (state['recentSearches'] as List? ?? []).cast<String>().take(10),
+    );
     catalogs.addAll(loadedCatalogs);
     for (final entry in (state['pages'] as Map? ?? {}).entries) {
       catalogPages[DramaSource.parse(entry.key)] = entry.value as int;
@@ -118,6 +139,8 @@ class AppStore extends ChangeNotifier {
     'cellularDownloads': cellularDownloads,
     'cellularPrefetch': cellularPrefetch,
     'prefetch': prefetch,
+    'hideVip': hideVip,
+    'recentSearches': recentSearches,
     'records': RecordBackup(
       favorites.values.toList(),
       history.values.toList(),
@@ -252,17 +275,129 @@ class AppStore extends ChangeNotifier {
     }
   }
 
-  Future<List<Drama>> search(DramaSource target, String query) async {
-    if (query.trim().isEmpty) return catalogs[target] ?? [];
+  Future<List<Drama>> search(DramaSource target, String query) async =>
+      (await searchCatalog(target, query)).items;
+
+  Future<CatalogSearchResult> searchCatalog(
+    DramaSource target,
+    String query,
+  ) async {
+    if (query.trim().isEmpty) {
+      return CatalogSearchResult(catalogs[target] ?? []);
+    }
+    if (offline) throw const ProviderException('当前离线，可继续搜索已缓存的短剧');
     final response = await provider.call('search', {
       'source': target.name,
       'query': query.trim(),
     });
     final incoming = _parseRows(response, target);
+    final result = CatalogSearchResult(
+      incoming,
+      warning: response['warning'] as String? ?? '',
+      limited: response['limited'] == true,
+    );
+    recentSearches.remove(query.trim());
+    recentSearches.insert(0, query.trim());
+    if (recentSearches.length > 10) recentSearches.removeLast();
     _mergeCatalog(target, incoming);
     await persist();
     notifyListeners();
-    return incoming;
+    return result;
+  }
+
+  Future<void> saveRecommendations(List<Drama> incoming) async {
+    _mergeCatalog(DramaSource.hongguo, incoming);
+    await persist();
+    notifyListeners();
+  }
+
+  Future<void> setHideVip(bool value) async {
+    hideVip = value;
+    notifyListeners();
+    await persist();
+  }
+
+  Future<void> clearSearches() async {
+    recentSearches.clear();
+    notifyListeners();
+    await persist();
+  }
+
+  Future<List<String>> suggestions(String query) async {
+    if (offline || query.trim().isEmpty) return [];
+    final result = await provider.call('suggestions', {
+      'source': 'hongguo',
+      'query': query.trim(),
+    });
+    return (result['items'] as List? ?? [])
+        .map((row) => (row as Map)['name'] as String)
+        .take(10)
+        .toList();
+  }
+
+  Drama currentDrama(Drama drama) =>
+      (catalogs[drama.source] ?? [])
+          .where((d) => d.key == drama.key)
+          .firstOrNull ??
+      details[drama.key] ??
+      favorites[drama.key] ??
+      drama;
+
+  Future<Drama> refreshDetail(Drama drama, {bool force = false}) async {
+    final current = currentDrama(drama);
+    if (offline) return current;
+    final pending = _detailRequests[drama.key];
+    if (pending != null) return pending;
+    final checked = _detailChecked[drama.key];
+    if (!force &&
+        checked != null &&
+        now().difference(checked) <
+            (detailErrors.containsKey(drama.key)
+                ? const Duration(seconds: 30)
+                : const Duration(minutes: 5))) {
+      return current;
+    }
+    final request = _fetchDetail(current);
+    _detailRequests[drama.key] = request;
+    try {
+      return await request;
+    } finally {
+      _detailRequests.remove(drama.key);
+    }
+  }
+
+  Future<Drama> _fetchDetail(Drama drama) async {
+    try {
+      final result = await provider.call('detail', {'id': drama.id});
+      final patch = Drama.fromJson(
+        Map<String, dynamic>.from(result['item'] as Map),
+      );
+      final updated = currentDrama(drama).merge(patch);
+      details[drama.key] = updated;
+      _mergeCatalog(drama.source, [updated]);
+      if (favorites.containsKey(drama.key)) favorites[drama.key] = updated;
+      final record = history[drama.key];
+      if (record != null) {
+        history[drama.key] = WatchRecord(
+          drama: updated,
+          episodeId: record.episodeId,
+          episodeIndex: record.episodeIndex,
+          positionMs: record.positionMs,
+          durationMs: record.durationMs,
+          updatedAt: record.updatedAt,
+        );
+      }
+      _detailChecked[drama.key] = now();
+      detailErrors.remove(drama.key);
+      await persist();
+      notifyListeners();
+      return updated;
+    } catch (error) {
+      _detailChecked[drama.key] = now();
+      detailErrors[drama.key] = '资料暂未更新，已保留现有内容';
+      notifyListeners();
+      return currentDrama(drama);
+    }
   }
 
   List<Drama> _parseRows(Map<String, dynamic> result, DramaSource target) {
@@ -280,7 +415,7 @@ class AppStore extends ChangeNotifier {
       for (final row in catalogs[target] ?? <Drama>[]) row.key: row,
     };
     for (final row in incoming) {
-      merged[row.key] = row;
+      merged[row.key] = merged[row.key]?.merge(row) ?? row;
     }
     catalogs[target] = merged.values.toList();
   }

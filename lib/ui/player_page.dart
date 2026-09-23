@@ -1,3 +1,4 @@
+import 'episode_grid.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -530,15 +531,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 16),
             Expanded(
-              child: GridView.builder(
-                itemCount: widget.episodes.length,
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 75,
-                  mainAxisExtent: 48,
-                  mainAxisSpacing: 10,
-                  crossAxisSpacing: 10,
-                ),
-                itemBuilder: (context, index) => FilledButton.tonal(
+              child: EpisodeGrid(
+                episodes: widget.episodes,
+                initialIndex: _index,
+                onJump: (index) {
+                  Navigator.pop(context);
+                  _goTo(index);
+                },
+                builder: (context, index) => FilledButton.tonal(
                   onPressed: () {
                     Navigator.pop(context);
                     _goTo(index);
@@ -549,7 +549,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                         ? const Color(0xFF345D55)
                         : null,
                   ),
-                  child: Text('${widget.episodes[index].number}'),
+                  child: Text(
+                    '${widget.episodes[index].number}${widget.episodes[index].vip ? '\nVIP' : ''}',
+                    textAlign: TextAlign.center,
+                  ),
                 ),
               ),
             ),

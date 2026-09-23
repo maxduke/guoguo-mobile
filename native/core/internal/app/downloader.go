@@ -19,22 +19,24 @@ import (
 )
 
 type Downloader struct {
-	cfg             Config
-	client          *http.Client
-	providerMu      sync.Mutex
-	providerHosts   map[string]string
-	apiMu           sync.Mutex
-	apiBase         string
-	limiter         *requestLimiter
-	proxyRouter     *proxyRouter
-	ffmpegMu        sync.Mutex
-	ffmpegInstaller *ffmpegInstaller
-	hongguoOnce     sync.Once
-	hongguo         *hongguoAppClient
-	legacyOnce      sync.Once
-	legacy          *legacyAPIClient
-	rankings        rankingCache
-	diagnostics     *diagnosticLog
+	huangdouDetails       map[string]huangdouDetailEntry
+	huangdouDetailPending map[string]*huangdouDetailCall
+	cfg                   Config
+	client                *http.Client
+	providerMu            sync.Mutex
+	providerHosts         map[string]string
+	apiMu                 sync.Mutex
+	apiBase               string
+	limiter               *requestLimiter
+	proxyRouter           *proxyRouter
+	ffmpegMu              sync.Mutex
+	ffmpegInstaller       *ffmpegInstaller
+	hongguoOnce           sync.Once
+	hongguo               *hongguoAppClient
+	legacyOnce            sync.Once
+	legacy                *legacyAPIClient
+	rankings              rankingCache
+	diagnostics           *diagnosticLog
 }
 
 func NewDownloader(cfg Config) *Downloader {
@@ -71,7 +73,9 @@ func NewDownloader(cfg Config) *Downloader {
 	transport.Proxy = router.proxy
 	resolver := newSafeDNSDialer(transport)
 	transport.DialContext = resolver.DialContext
-	return &Downloader{cfg: cfg, client: &http.Client{Transport: newCDNTransport(transport, resolver), Timeout: 45 * time.Second}, providerHosts: map[string]string{}, limiter: newRequestLimiter(cfg.RequestConcurrency, time.Duration(cfg.RequestIntervalMS)*time.Millisecond), proxyRouter: router, diagnostics: newDiagnosticLog(cfg.dataDirectory())}
+	downloader := &Downloader{cfg: cfg, client: &http.Client{Transport: newCDNTransport(transport, resolver), Timeout: 45 * time.Second}, providerHosts: map[string]string{}, limiter: newRequestLimiter(cfg.RequestConcurrency, time.Duration(cfg.RequestIntervalMS)*time.Millisecond), proxyRouter: router, diagnostics: newDiagnosticLog(cfg.dataDirectory())}
+	downloader.client.Transport = newImageTransport(newHuangguoBrowserTransport(downloader.client.Transport, downloader), transport)
+	return downloader
 }
 
 func (d *Downloader) DownloadEpisode(ctx context.Context, task Task) error {

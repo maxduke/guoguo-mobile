@@ -50,7 +50,7 @@ func (c *MobileClient) planMobileMedia(ctx context.Context, media providerMedia,
 		}
 		if raw == "" {
 			var err error
-			raw, err = c.downloader.fetchProviderText(ctx, remote, media.Referer)
+			raw, remote, err = c.downloader.fetchProviderTextURL(ctx, remote, media.Referer)
 			if err != nil {
 				return err
 			}

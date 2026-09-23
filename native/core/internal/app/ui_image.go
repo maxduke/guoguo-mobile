@@ -8,7 +8,6 @@ import (
 	"image/jpeg"
 	"io"
 	"net/http"
-	"net/url"
 	"os/exec"
 	"strings"
 	"time"
@@ -26,11 +25,6 @@ func isHongguoImageHost(host string) bool {
 		strings.HasSuffix(host, ".byteimg.com") || strings.HasSuffix(host, ".fqnovelpic.com")
 }
 
-func validImageURL(remote *url.URL) bool {
-	return remote != nil && remote.Scheme == "https" && remote.Opaque == "" && remote.User == nil &&
-		(remote.Port() == "" || remote.Port() == "443") && allowedImageHost(remote.Hostname())
-}
-
 func (app *UIApp) loadCoverImage(ctx context.Context, remoteURL string, decode func([]byte, string) []byte) ([]byte, error) {
 	return app.coverImages.load(ctx, remoteURL, func(ctx context.Context) ([]byte, error) {
 		return app.downloader.fetchCoverImage(ctx, remoteURL, decode, true)
@@ -39,6 +33,7 @@ func (app *UIApp) loadCoverImage(ctx context.Context, remoteURL string, decode f
 
 // Mobile uses platform image decoding, never the desktop executable converter.
 func (downloader *Downloader) fetchCoverImage(ctx context.Context, remoteURL string, decode func([]byte, string) []byte, convertHEIC bool) ([]byte, error) {
+	ctx = context.WithValue(ctx, coverRequestKey{}, true)
 	// Legacy Huangguo catalogs (and saved mobile records) contain relative paths.
 	// Resolve them through the same CDN mapping used by the desktop image route.
 	remoteURL, ok := buildImageURL(remoteURL)
@@ -52,7 +47,18 @@ func (downloader *Downloader) fetchCoverImage(ctx context.Context, remoteURL str
 	if !validImageURL(request.URL) {
 		return nil, errors.New("封面地址不受支持")
 	}
-	request.Header.Set("Referer", imageReferer(remoteURL))
+	referer := imageReferer(remoteURL)
+	switch source, _ := ctx.Value(coverSourceKey{}).(string); source {
+	case sourceHuangdou:
+		referer = strings.TrimRight(downloader.huangdouRequestBaseURL(), "/") + "/"
+	case sourceHongguo:
+		referer = hongguoBaseURL + "/"
+	case sourceHuangguoAI:
+		referer = downloader.providerBaseURL(sourceHuangguoAI) + "/"
+	case sourceHuangguoVideo:
+		referer = downloader.providerBaseURL(sourceHuangguoVideo) + "/"
+	}
+	request.Header.Set("Referer", referer)
 	request.Header.Set("User-Agent", userAgent)
 	request.Header.Set("Accept", "image/webp,image/jpeg,image/png,image/gif,*/*;q=0.5")
 	client := *downloader.client
@@ -60,7 +66,7 @@ func (downloader *Downloader) fetchCoverImage(ctx context.Context, remoteURL str
 		if len(via) >= 5 || !validImageURL(request.URL) {
 			return errors.New("封面重定向地址不受支持")
 		}
-		request.Header.Set("Referer", imageReferer(request.URL.String()))
+		request.Header.Set("Referer", referer)
 		return nil
 	}
 	response, err := client.Do(request)
