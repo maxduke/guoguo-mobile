@@ -52,6 +52,8 @@ class AppStore extends ChangeNotifier {
   DramaSource source = DramaSource.hongguo;
   ThemeMode themeMode = ThemeMode.system;
   bool cellularDownloads = false, cellularPrefetch = false, prefetch = true;
+  bool autoAdvance = true;
+  double playbackSpeed = 1;
   bool offline = false;
   String? persistenceError;
   List<Drama> get library => catalogs[source] ?? [];
@@ -89,6 +91,11 @@ class AppStore extends ChangeNotifier {
     cellularDownloads = state['cellularDownloads'] == true;
     cellularPrefetch = state['cellularPrefetch'] == true;
     prefetch = state['prefetch'] != false;
+    autoAdvance = state['autoAdvance'] != false;
+    final speed = state['playbackSpeed'];
+    if (speed is num && const [.75, 1, 1.25, 1.5, 2].contains(speed)) {
+      playbackSpeed = speed.toDouble();
+    }
     hideVip = state['hideVip'] != false;
     recentSearches.addAll(
       (state['recentSearches'] as List? ?? []).cast<String>().take(10),
@@ -139,6 +146,8 @@ class AppStore extends ChangeNotifier {
     'cellularDownloads': cellularDownloads,
     'cellularPrefetch': cellularPrefetch,
     'prefetch': prefetch,
+    'autoAdvance': autoAdvance,
+    'playbackSpeed': playbackSpeed,
     'hideVip': hideVip,
     'recentSearches': recentSearches,
     'records': RecordBackup(
@@ -212,6 +221,16 @@ class AppStore extends ChangeNotifier {
 
   Future<void> setPrefetch(bool enabled) async {
     prefetch = enabled;
+    notifyListeners();
+    await persist();
+  }
+
+  Future<void> setPlayback({bool? advance, double? speed}) async {
+    if (speed != null && !const [.75, 1, 1.25, 1.5, 2].contains(speed)) {
+      throw ArgumentError.value(speed, 'speed');
+    }
+    autoAdvance = advance ?? autoAdvance;
+    playbackSpeed = speed ?? playbackSpeed;
     notifyListeners();
     await persist();
   }

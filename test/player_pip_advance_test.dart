@@ -11,6 +11,7 @@ import 'package:guoguo_mobile/data/download_store.dart';
 import 'package:guoguo_mobile/data/storage.dart';
 import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/ui/player_page.dart';
+import 'package:guoguo_mobile/platform/provider_client.dart';
 
 import 'widget_test.dart' show NoNetwork;
 
@@ -94,7 +95,166 @@ class _NativePlayer {
   }
 }
 
+class _OnlineDownloads extends DownloadStore {
+  _OnlineDownloads(super.store);
+  @override
+  Future<String?> localFile(Drama drama, Episode episode) async => null;
+}
+
+class _Routes implements ProviderClient {
+  int resolves = 0, fallbacks = 0;
+  final releases = <String>[];
+  Completer<Map<String, dynamic>>? pendingFallback;
+  @override
+  Future<Map<String, dynamic>> call(
+    String method, [
+    Map<String, dynamic> arguments = const {},
+  ]) async {
+    if (method == 'release') {
+      releases.add(arguments['id'] as String);
+      return {};
+    }
+    if (method == 'resolve') resolves++;
+    if (method == 'fallback') {
+      fallbacks++;
+      if (pendingFallback != null) return pendingFallback!.future;
+    }
+    return plan(method == 'fallback' ? 1 : 0);
+  }
+
+  Map<String, dynamic> plan(int index) => {
+    'url': 'https://example.test/route$index.mp4',
+    'remoteUrl': 'https://example.test/route$index.mp4',
+    'session': 'session-$resolves-$index',
+    'routeIndex': index,
+    'routeCount': 2,
+  };
+}
+
 void main() {
+  testWidgets(
+    'online recovery preserves position and speed, exhausts budget and releases sessions',
+    (tester) async {
+      final platform = _NativePlayer()..install();
+      addTearDown(platform.uninstall);
+      final provider = _Routes();
+      final store = AppStore(storage: MemoryStorage(), provider: provider)
+        ..playbackSpeed = 1.5
+        ..autoAdvance = false;
+      final downloads = _OnlineDownloads(store);
+      addTearDown(() {
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: 'fixture',
+              source: DramaSource.hongguo,
+              title: '播放恢复',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+              Episode.fromJson({'id': '2'}, 1),
+            ],
+            initialIndex: 0,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final player = tester
+          .widget<BetterPlayer>(find.byType(BetterPlayer))
+          .controller;
+      expect(find.byTooltip('返回').hitTestable(), findsNothing);
+      await player.seekTo(const Duration(seconds: 8));
+      player.postEvent(BetterPlayerEvent(BetterPlayerEventType.finished));
+      await tester.pumpAndSettle();
+      expect(platform.sources, hasLength(1));
+      void fail() =>
+          player.postEvent(BetterPlayerEvent(BetterPlayerEventType.exception));
+      fail();
+      await tester.pumpAndSettle();
+      expect(provider.fallbacks, 1);
+      expect(provider.resolves, 1);
+      expect(platform.sources.last, contains('route1.mp4'));
+      expect(
+        player.videoPlayerController!.value.position,
+        const Duration(seconds: 8),
+      );
+      expect(player.videoPlayerController!.value.speed, 1.5);
+      fail();
+      await tester.pumpAndSettle();
+      expect(provider.resolves, 2);
+      fail();
+      await tester.pumpAndSettle();
+      expect(provider.fallbacks, 2);
+      fail();
+      await tester.pumpAndSettle();
+      expect(find.text('自动恢复未成功，请重试或切换分集'), findsOneWidget);
+      expect(platform.sources, hasLength(4));
+      expect(find.byTooltip('返回').hitTestable(), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      expect(
+        provider.releases.toSet(),
+        containsAll([
+          'session-1-0',
+          'session-1-1',
+          'session-2-0',
+          'session-2-1',
+        ]),
+      );
+    },
+  );
+
+  testWidgets(
+    'leaving during fallback releases its late result without restarting playback',
+    (tester) async {
+      final platform = _NativePlayer()..install();
+      addTearDown(platform.uninstall);
+      final provider = _Routes()
+        ..pendingFallback = Completer<Map<String, dynamic>>();
+      final store = AppStore(storage: MemoryStorage(), provider: provider);
+      final downloads = _OnlineDownloads(store);
+      addTearDown(() {
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: 'fixture',
+              source: DramaSource.hongguo,
+              title: '播放恢复',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+            ],
+            initialIndex: 0,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final player = tester
+          .widget<BetterPlayer>(find.byType(BetterPlayer))
+          .controller;
+      player.postEvent(BetterPlayerEvent(BetterPlayerEventType.exception));
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox());
+      provider.pendingFallback!.complete(provider.plan(1));
+      await tester.pump();
+      await tester.pump();
+      expect(platform.sources, hasLength(1));
+      expect(provider.releases, contains('session-1-1'));
+    },
+  );
+
   testWidgets('swiping episodes preserves contain and selected fill mode', (
     tester,
   ) async {

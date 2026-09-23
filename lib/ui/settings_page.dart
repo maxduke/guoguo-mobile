@@ -142,8 +142,15 @@ class _SettingsPageState extends State<SettingsPage> {
                 child: Column(
                   children: [
                     SwitchListTile(
+                      title: const Text('自动播放下一集'),
+                      subtitle: const Text('关闭后，播完停在当前集'),
+                      value: store.autoAdvance,
+                      onChanged: (v) =>
+                          perform(context, () => store.setPlayback(advance: v)),
+                    ),
+                    SwitchListTile(
                       title: const Text('预缓冲下一集'),
-                      subtitle: const Text('开始播放后准备下一集，减少等待'),
+                      subtitle: const Text('当前集播放顺畅后再准备下一集'),
                       value: store.prefetch,
                       onChanged: (v) =>
                           perform(context, () => store.setPrefetch(v)),

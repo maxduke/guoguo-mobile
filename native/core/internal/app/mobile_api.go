@@ -5,7 +5,6 @@ package app
 import (
 	"context"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/url"
@@ -20,6 +19,7 @@ type MobileClient struct {
 	downloader *Downloader
 	mu         sync.Mutex
 	proxies    map[string]*hlsProxy
+	playbacks  map[string]mobilePlaybackChoice
 	covers     coverImageCache
 	catalogMu  sync.Mutex
 	known      []Drama
@@ -270,40 +270,32 @@ func (c *MobileClient) Call(raw string) (string, error) {
 		if err != nil {
 			return "", publicError(err)
 		}
-		qualities := make([]int, 0, len(media.Variants))
-		variants := media.Variants
-		for _, variant := range variants {
-			qualities = append(qualities, variant.Quality)
-			if request.Quality > 0 && variant.Quality == request.Quality {
-				media = variant
-			}
+		choice, err := mobilePlaybackChoices(media, key, request.Quality)
+		if err != nil {
+			return "", err
 		}
-		playURL := media.URL
-		session := ""
-		if media.Playlist != "" || len(key) > 0 || len(media.HLSKey) > 0 {
-			proxy, err := c.downloader.newHLSProxy(context.Background(), media, key)
-			if err != nil {
-				return "", err
-			}
-			session = randomHex(16)
-			c.mu.Lock()
-			if len(c.proxies) >= 4 {
-				c.mu.Unlock()
-				proxy.Close()
-				return "", errors.New("播放会话过多，请关闭已有播放器")
-			}
-			c.proxies[session] = proxy
-			c.mu.Unlock()
-			playURL = proxy.root
+		value, err = c.openMobilePlayback(choice)
+		if err != nil {
+			return "", publicError(err)
 		}
-		value = map[string]any{"url": playURL, "remoteUrl": media.URL, "session": session,
-			"headers": map[string]string{"Referer": media.Referer, "User-Agent": userAgent},
-			"quality": media.Quality, "qualities": qualities, "hls": media.Playlist != "", "castDirect": session == "" && len(media.CENCKey) == 0,
-			"contentKey": hex.EncodeToString(media.CENCKey)}
+	case "fallback":
+		c.mu.Lock()
+		choice, exists := c.playbacks[request.ID]
+		c.mu.Unlock()
+		if !exists || time.Since(choice.created) > 2*time.Minute {
+			return "", errors.New("播放线路已过期，请重新解析")
+		}
+		choice.index++
+		var err error
+		value, err = c.openMobilePlayback(choice)
+		if err != nil {
+			return "", publicError(err)
+		}
 	case "release":
 		c.mu.Lock()
 		proxy := c.proxies[request.ID]
 		delete(c.proxies, request.ID)
+		delete(c.playbacks, request.ID)
 		c.mu.Unlock()
 		if proxy != nil {
 			proxy.Close()
@@ -319,6 +311,7 @@ func (c *MobileClient) Call(raw string) (string, error) {
 func (c *MobileClient) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.playbacks = nil
 	for id, proxy := range c.proxies {
 		proxy.Close()
 		delete(c.proxies, id)

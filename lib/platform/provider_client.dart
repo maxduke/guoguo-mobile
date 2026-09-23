@@ -63,6 +63,9 @@ extension ProviderOperations on ProviderClient {
       'quality': quality,
     }),
   );
+  Future<ResolvedMedia> fallback(ResolvedMedia media) async =>
+      ResolvedMedia.fromJson(await call('fallback', {'id': media.session}));
+
   Future<void> release(ResolvedMedia? media) async {
     if (media == null || media.session.isEmpty) return;
     await call('release', {'id': media.session});
