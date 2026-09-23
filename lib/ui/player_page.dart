@@ -1,7 +1,14 @@
+import 'episode_grid.dart';
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:better_player_plus/better_player_plus.dart';
+// Native PiP stop is only exposed on this event stream; the public API emits a
+// second, synthetic stop when it resets its video value for a new data source.
+// ignore: implementation_imports
+import 'package:better_player_plus/src/video_player/video_player_platform_interface.dart'
+    show VideoEvent, VideoEventType;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -42,27 +49,31 @@ class PlayerPage extends StatefulWidget {
 }
 
 class _Playable {
-  _Playable(this.controller, this.preparer, this.media, this.path, this.timing);
+  _Playable(this.preparer, this.media, this.path, this.timing);
   final PreparationTiming timing;
-  final BetterPlayerController controller;
   final MediaPreparer preparer;
   final ResolvedMedia? media;
   final String path;
-  final key = GlobalKey();
 }
 
 class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   late final PageController _pages;
   late final EpisodeBuffer<_Playable> _buffer;
+  late final BetterPlayerController _player;
+  final GlobalKey _playerKey = GlobalKey();
   final Map<int, int> _qualities = {};
   _Playable? _active;
   Future<void> _paused = Future.value();
+  Future<void> _sourceSetup = Future.value();
   bool _pendingPlay = false;
+  bool? _pipEntryWasPlaying;
+  StreamSubscription<VideoEvent>? _nativeEvents;
   Timer? _hideTimer, _preloadTimer, _settleTimer;
   StreamSubscription<List<ConnectivityResult>>? _network;
   int _index = 0, _generation = 0;
   bool _controls = false, _locked = false, _fill = false;
-  bool _loading = true, _foreground = true, _modal = false, _scrubbing = false;
+  bool _loading = true, _foreground = true, _pipActive = false;
+  bool _modal = false, _scrubbing = false;
   double _speed = 1;
   String? _error;
   String _loadingPhase = '正在查找本地视频…';
@@ -76,6 +87,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _index = widget.initialIndex;
     _pages = PageController(initialPage: _index);
     _buffer = EpisodeBuffer(load: _prepare, release: _release);
+    _player = BetterPlayerController(
+      BetterPlayerConfiguration(
+        autoPlay: false,
+        autoDispose: false,
+        fit: _fill ? BoxFit.cover : BoxFit.contain,
+        allowedScreenSleep: false,
+        controlsConfiguration: const BetterPlayerControlsConfiguration(
+          showControls: false,
+        ),
+      ),
+    )..setBetterPlayerGlobalKey(_playerKey);
+    _player.addEventsListener(_event);
     WidgetsBinding.instance.addObserver(this);
     widget.store.addListener(_preferencesChanged);
     _network = Connectivity().onConnectivityChanged.listen((states) {
@@ -116,7 +139,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     var stageName = 'local';
     final preparer = MediaPreparer();
     cancellation.onCancel = () => unawaited(preparer.cancel());
-    BetterPlayerController? controller;
     ResolvedMedia? media;
     try {
       cancellation.check();
@@ -150,52 +172,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         timing.prepareMs = stage.elapsedMilliseconds;
         cancellation.check();
       }
-      stageName = 'setup';
-      stage
-        ..reset()
-        ..start();
-      _phase(index, '正在启动播放器…');
-      controller = BetterPlayerController(
-        BetterPlayerConfiguration(
-          autoPlay: false,
-          autoDispose: false,
-          fit: _fill ? BoxFit.cover : BoxFit.contain,
-          allowedScreenSleep: false,
-          controlsConfiguration: const BetterPlayerControlsConfiguration(
-            showControls: false,
-          ),
-        ),
-      );
-      await controller.setupDataSource(
-        BetterPlayerDataSource(
-          path.startsWith('http')
-              ? BetterPlayerDataSourceType.network
-              : BetterPlayerDataSourceType.file,
-          path,
-          headers: media?.headers,
-          videoFormat: media?.hls == true && path.startsWith('http')
-              ? BetterPlayerVideoFormat.hls
-              : null,
-          notificationConfiguration: BetterPlayerNotificationConfiguration(
-            showNotification: true,
-            title: widget.drama.title,
-            author: '果果 · 第 ${widget.episodes[index].number} 集',
-          ),
-        ),
-      );
-      cancellation.check();
-      timing.setupMs = stage.elapsedMilliseconds;
-      return _Playable(controller, preparer, media, path, timing);
+      return _Playable(preparer, media, path, timing);
     } catch (_) {
       switch (stageName) {
         case 'resolve':
           timing.resolveMs = stage.elapsedMilliseconds;
         case 'prepare':
           timing.prepareMs = stage.elapsedMilliseconds;
-        case 'setup':
-          timing.setupMs = stage.elapsedMilliseconds;
       }
-      controller?.dispose(forceDispose: true);
       await preparer.dispose();
       await _releaseMedia(media);
       rethrow;
@@ -211,14 +195,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<void> _release(_Playable item) async {
-    item.controller.removeEventsListener(_event);
-    item.controller.dispose(forceDispose: true);
     await item.preparer.dispose();
     await _releaseMedia(item.media);
   }
 
   void _save() {
-    final value = _active?.controller.videoPlayerController?.value;
+    final value = _active == null ? null : _player.videoPlayerController?.value;
     if (value == null ||
         value.duration == null ||
         value.duration == Duration.zero) {
@@ -242,6 +224,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   void _pageChanged(int index) {
+    if (index == _index) return;
     _finishAttempt(PlaybackResult.cancelled);
     _timings.removeWhere((key, _) => (key - index).abs() > 1);
     _save();
@@ -249,8 +232,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _preloadTimer?.cancel();
     _settleTimer?.cancel();
     ++_generation;
-    _active?.controller.removeEventsListener(_event);
-    _paused = _active?.controller.pause() ?? Future.value();
+    _paused = _active == null ? Future.value() : _player.pause();
     unawaited(_paused.catchError((Object _) {}));
     setState(() {
       _index = index;
@@ -261,10 +243,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _controls = false;
     });
     _buffer.retain({index - 1, index, index + 1});
-    _settleTimer = Timer(
-      const Duration(milliseconds: 120),
-      () => unawaited(_activate()),
-    );
+    if (_pipActive && !_foreground) {
+      unawaited(_activate());
+    } else {
+      _settleTimer = Timer(
+        const Duration(milliseconds: 120),
+        () => unawaited(_activate()),
+      );
+    }
   }
 
   Future<void> _activate({bool resume = false, Duration? position}) async {
@@ -284,41 +270,70 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       attempt.timing = item.timing;
       attempt.waitMs = attempt.clock.elapsedMilliseconds;
       if (!mounted || generation != _generation) return;
+      await _paused;
+      if (!mounted || generation != _generation) return;
+      _phase(index, '正在启动播放器…');
+      final setup = Stopwatch()..start();
+      final source = BetterPlayerDataSource(
+        item.path.startsWith('http')
+            ? BetterPlayerDataSourceType.network
+            : BetterPlayerDataSourceType.file,
+        item.path,
+        headers: item.media?.headers,
+        videoFormat: item.media?.hls == true && item.path.startsWith('http')
+            ? BetterPlayerVideoFormat.hls
+            : null,
+        notificationConfiguration: BetterPlayerNotificationConfiguration(
+          showNotification: true,
+          title: widget.drama.title,
+          author: '果果 · 第 ${widget.episodes[index].number} 集',
+        ),
+      );
+      // Native setDataSource operates on one texture. Serialize rapid swipes so
+      // an older request cannot finish after a newer episode starts loading.
+      final setupFuture = _sourceSetup.then((_) async {
+        if (mounted && generation == _generation) {
+          await _player.setupDataSource(source);
+        }
+      });
+      _sourceSetup = setupFuture.catchError((Object _) {});
+      await setupFuture;
+      item.timing.setupMs = setup.elapsedMilliseconds;
+      if (!mounted || generation != _generation) return;
+      _nativeEvents ??= _player
+          .videoPlayerController
+          ?.videoEventStreamController
+          .stream
+          .listen(_nativeEvent);
       _active = item;
-      item.controller.setBetterPlayerGlobalKey(item.key);
-      item.controller.setOverriddenFit(_fill ? BoxFit.cover : BoxFit.contain);
-      item.controller.addEventsListener(_event);
+      await _applyVideoFit();
       final record = widget.store.history[widget.drama.key];
       var start =
           position ??
           (resume && record?.episodeId == widget.episodes[index].id
               ? Duration(milliseconds: record!.positionMs)
               : null);
-      final value = item.controller.videoPlayerController?.value;
+      final value = _player.videoPlayerController?.value;
       final duration = value?.duration ?? Duration.zero;
       if (start == null &&
           duration > Duration.zero &&
           value!.position >= duration - const Duration(milliseconds: 300)) {
         start = Duration.zero;
       }
-      if (start != null) await item.controller.seekTo(start);
+      if (start != null) await _player.seekTo(start);
       if (!mounted || generation != _generation) return;
-      await item.controller.setSpeed(_speed);
+      await _player.setSpeed(_speed);
       if (!mounted || generation != _generation) return;
       setState(() {
         _loading = false;
         _error = null;
       });
-      await WidgetsBinding.instance.endOfFrame;
-      await _paused;
-      if (!mounted || generation != _generation) return;
-      if (!_foreground) {
+      if (!_foreground && !_pipActive) {
         _pendingPlay = true;
         return;
       }
-      attempt.initialPosition =
-          item.controller.videoPlayerController?.value.position;
-      await item.controller.play();
+      attempt.initialPosition = _player.videoPlayerController?.value.position;
+      await _player.play();
       _schedulePrefetch();
     } catch (error) {
       if (mounted && generation == _generation) {
@@ -335,11 +350,22 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _applyVideoFit() async {
+    _player.setOverriddenFit(_fill ? BoxFit.cover : BoxFit.contain);
+    // Reusing the player resets VideoPlayerValue on every source change, while
+    // the fit widget caches its last gravity. Explicitly restore the native
+    // mode even when the requested BoxFit has not changed.
+    await _player.videoPlayerController?.setAspectRatio(
+      _fill ? 'fill' : 'aspect',
+    );
+  }
+
   void _retry({int? quality}) {
     _finishAttempt(PlaybackResult.cancelled);
     _save();
-    final position = _active?.controller.videoPlayerController?.value.position;
-    _active?.controller.removeEventsListener(_event);
+    final position = _active == null
+        ? null
+        : _player.videoPlayerController?.value.position;
     _active = null;
     if (quality != null) _qualities[_index] = quality;
     _buffer.evict(_index);
@@ -354,7 +380,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (!mounted) return;
     switch (event.betterPlayerEventType) {
       case BetterPlayerEventType.finished:
+        if (_loading || _active == null) break;
         _save();
+        if (!_foreground && !_pipActive) break;
         if (_index + 1 < widget.episodes.length) {
           _goTo(_index + 1);
         } else {
@@ -362,7 +390,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         }
         break;
       case BetterPlayerEventType.progress:
-        final value = _active?.controller.videoPlayerController?.value;
+        final value = _player.videoPlayerController?.value;
         final initial = _attempt?.initialPosition;
         if (initial != null &&
             value != null &&
@@ -387,8 +415,50 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       case BetterPlayerEventType.pause:
         _hideTimer?.cancel();
         break;
+      case BetterPlayerEventType.pipStart:
+        _setPipActive(true);
+        break;
+      case BetterPlayerEventType.pipStop:
+        // Changing source clears better_player_plus's Dart isPip flag and
+        // produces a synthetic pipStop. The native event stream below reports
+        // the actual PiP window closing.
+        break;
       default:
         break;
+    }
+  }
+
+  void _nativeEvent(VideoEvent event) {
+    if (!mounted) return;
+    switch (event.eventType) {
+      case VideoEventType.pipStart:
+        _setPipActive(true);
+        final wasPlaying = _pipEntryWasPlaying;
+        _pipEntryWasPlaying = null;
+        if (wasPlaying == true && _active != null) {
+          unawaited(_player.play());
+        }
+      case VideoEventType.pipStop:
+        _pipEntryWasPlaying = null;
+        _setPipActive(false);
+      default:
+        break;
+    }
+  }
+
+  void _setPipActive(bool active) {
+    if (_pipActive == active) return;
+    _pipActive = active;
+    if (active) {
+      if (_pendingPlay && _active != null) {
+        _pendingPlay = false;
+        unawaited(_player.play());
+      }
+      _schedulePrefetch();
+    } else if (!_foreground) {
+      _preloadTimer?.cancel();
+      _buffer.retain({_index});
+      if (_active != null) unawaited(_player.pause());
     }
   }
 
@@ -401,7 +471,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   void _schedulePrefetch() {
     if (!widget.store.prefetch ||
-        !_foreground ||
+        (!_foreground && !_pipActive) ||
         _active == null ||
         _loading ||
         _index + 1 >= widget.episodes.length ||
@@ -415,7 +485,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         final states = await Connectivity().checkConnectivity();
         if (!mounted ||
             index != _index ||
-            !_foreground ||
+            (!_foreground && !_pipActive) ||
             !widget.store.prefetch ||
             states.contains(ConnectivityResult.none) ||
             (!states.contains(ConnectivityResult.wifi) &&
@@ -438,14 +508,21 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     } else {
       if (_pendingPlay) {
         _pendingPlay = false;
-        unawaited(_active?.controller.play());
+        if (_active != null) unawaited(_player.play());
       }
+      if (_pages.hasClients) _pages.jumpToPage(_index);
       _schedulePrefetch();
     }
   }
 
   void _goTo(int index) {
     if (index == _index || index < 0 || index >= widget.episodes.length) return;
+    if (_pipActive && !_foreground) {
+      // A backgrounded PageView may not animate or report onPageChanged. Keep
+      // the native player and PiP layer alive while changing its media source.
+      _pageChanged(index);
+      return;
+    }
     if ((index - _index).abs() > 1) {
       _pages.jumpToPage(index);
       return;
@@ -464,7 +541,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (!_controls ||
         _modal ||
         _scrubbing ||
-        _active?.controller.isPlaying() != true) {
+        _active == null ||
+        _player.isPlaying() != true) {
       return;
     }
     _hideTimer = Timer(const Duration(seconds: 3), () {
@@ -484,11 +562,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<void> _togglePlay() async {
-    final controller = _active?.controller;
-    if (controller == null) return;
+    if (_active == null) return;
+    final controller = _player;
     if (controller.isPlaying() == true) {
+      if (_pipEntryWasPlaying != null) _pipEntryWasPlaying = false;
       await controller.pause();
     } else {
+      if (_pipEntryWasPlaying != null) _pipEntryWasPlaying = true;
       final value = controller.videoPlayerController?.value;
       final duration = value?.duration ?? Duration.zero;
       if (duration > Duration.zero &&
@@ -498,6 +578,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       await controller.play();
     }
     if (mounted) _showControls();
+  }
+
+  Future<void> _enterPictureInPicture(bool wasPlaying) async {
+    // AVKit can pause the player while moving its layer into PiP. Capture the
+    // viewer's intent before that transition; a deliberately paused episode
+    // must remain paused in the window.
+    _pipEntryWasPlaying = wasPlaying;
+    try {
+      await _player.enablePictureInPicture(_playerKey);
+    } catch (_) {
+      _pipEntryWasPlaying = null;
+      rethrow;
+    }
   }
 
   Future<void> _sheet(Widget child) async {
@@ -530,15 +623,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 16),
             Expanded(
-              child: GridView.builder(
-                itemCount: widget.episodes.length,
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 75,
-                  mainAxisExtent: 48,
-                  mainAxisSpacing: 10,
-                  crossAxisSpacing: 10,
-                ),
-                itemBuilder: (context, index) => FilledButton.tonal(
+              child: EpisodeGrid(
+                episodes: widget.episodes,
+                initialIndex: _index,
+                onJump: (index) {
+                  Navigator.pop(context);
+                  _goTo(index);
+                },
+                builder: (context, index) => FilledButton.tonal(
                   onPressed: () {
                     Navigator.pop(context);
                     _goTo(index);
@@ -549,7 +641,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                         ? const Color(0xFF345D55)
                         : null,
                   ),
-                  child: Text('${widget.episodes[index].number}'),
+                  child: Text(
+                    '${widget.episodes[index].number}${widget.episodes[index].vip ? '\nVIP' : ''}',
+                    textAlign: TextAlign.center,
+                  ),
                 ),
               ),
             ),
@@ -581,9 +676,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               onTap: () {
                 Navigator.pop(context);
                 setState(() => _fill = !_fill);
-                _active?.controller.setOverriddenFit(
-                  _fill ? BoxFit.cover : BoxFit.contain,
-                );
+                unawaited(_applyVideoFit());
               },
             ),
             ListTile(
@@ -608,11 +701,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               title: const Text('画中画'),
               enabled: item != null,
               onTap: () {
+                final wasPlaying =
+                    _player.videoPlayerController?.value.isPlaying == true;
                 Navigator.pop(context);
                 if (item != null) {
-                  perform(context, () async {
-                    await item.controller.enablePictureInPicture(item.key);
-                  });
+                  perform(context, () => _enterPictureInPicture(wasPlaying));
                 }
               },
             ),
@@ -628,7 +721,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                     item!.media!,
                     widget.drama.title,
                     item.path.startsWith('http') ? null : item.path,
-                    onConnected: item.controller.pause,
+                    onConnected: _player.pause,
                   );
                 }
               },
@@ -690,14 +783,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (item != null)
-            IgnorePointer(
-              child: PlayerViewport(
-                playerKey: item.key,
-                controller: item.controller,
-              ),
-            )
-          else
+          if (!selected || _active == null)
             Opacity(opacity: .25, child: Poster(widget.drama, radius: 0)),
           if (selected && _loading)
             Center(
@@ -745,7 +831,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Widget _transport() {
-    final controller = _active?.controller.videoPlayerController;
+    final controller = _active == null ? null : _player.videoPlayerController;
     Widget build() {
       final value = controller?.value;
       return PlayerTransport(
@@ -758,7 +844,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         onEpisodes: _showEpisodes,
         onSpeed: (speed) {
           setState(() => _speed = speed);
-          unawaited(_active?.controller.setSpeed(speed));
+          if (_active != null) unawaited(_player.setSpeed(speed));
           _armHide();
         },
         onScrub: (scrubbing) {
@@ -766,11 +852,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           _armHide();
         },
         onSeek: (position) {
-          unawaited(
-            _active?.controller.seekTo(
-              Duration(milliseconds: position.round()),
-            ),
-          );
+          if (_active != null) {
+            unawaited(_player.seekTo(Duration(milliseconds: position.round())));
+          }
           _armHide();
         },
       );
@@ -792,29 +876,36 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       child: Stack(
         fit: StackFit.expand,
         children: [
+          IgnorePointer(
+            child: PlayerViewport(playerKey: _playerKey, controller: _player),
+          ),
           PlayerGestures(
             onTap: _tap,
             enabled: !_locked && !_loading && _active != null,
             position: () =>
-                _active
-                    ?.controller
-                    .videoPlayerController
-                    ?.value
-                    .position
-                    .inMilliseconds
-                    .toDouble() ??
+                (_active == null
+                    ? null
+                    : _player
+                          .videoPlayerController
+                          ?.value
+                          .position
+                          .inMilliseconds
+                          .toDouble()) ??
                 0,
             duration: () =>
-                _active
-                    ?.controller
-                    .videoPlayerController
-                    ?.value
-                    .duration
-                    ?.inMilliseconds
-                    .toDouble() ??
+                (_active == null
+                    ? null
+                    : _player
+                          .videoPlayerController
+                          ?.value
+                          .duration
+                          ?.inMilliseconds
+                          .toDouble()) ??
                 0,
             onBoost: (boost) {
-              unawaited(_active?.controller.setSpeed(boost ? 2 : _speed));
+              if (_active != null) {
+                unawaited(_player.setSpeed(boost ? 2 : _speed));
+              }
               _scrubbing = boost;
               _armHide();
             },
@@ -823,11 +914,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               _armHide();
             },
             onSeek: (value) {
-              unawaited(
-                _active?.controller.seekTo(
-                  Duration(milliseconds: value.round()),
-                ),
-              );
+              if (_active != null) {
+                unawaited(
+                  _player.seekTo(Duration(milliseconds: value.round())),
+                );
+              }
             },
             child: EpisodePager(
               controller: _pages,
@@ -835,6 +926,22 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               onChanged: _pageChanged,
               builder: _page,
               locked: _locked,
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: math.max(
+              28,
+              math.max(
+                MediaQuery.systemGestureInsetsOf(context).bottom,
+                MediaQuery.viewPaddingOf(context).bottom,
+              ),
+            ),
+            child: const AbsorbPointer(
+              key: Key('playerHomeGestureGuard'),
+              child: SizedBox.expand(),
             ),
           ),
           if (_locked)
@@ -856,17 +963,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             child: AnimatedOpacity(
               opacity: _controls && !_locked ? 1 : 0,
               duration: const Duration(milliseconds: 180),
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    DecoratedBox(
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [Colors.black87, Colors.transparent],
-                        ),
+              child: Column(
+                children: [
+                  DecoratedBox(
+                    key: const Key('playerTopChrome'),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.black87, Colors.transparent],
                       ),
+                    ),
+                    child: SafeArea(
+                      bottom: false,
                       child: Row(
                         children: [
                           IconButton(
@@ -905,19 +1014,24 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                         ],
                       ),
                     ),
-                    const Spacer(),
-                    DecoratedBox(
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [Colors.transparent, Colors.black87],
-                        ),
+                  ),
+                  const Spacer(),
+                  DecoratedBox(
+                    key: const Key('playerBottomChrome'),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, Colors.black87],
                       ),
+                    ),
+                    child: SafeArea(
+                      top: false,
+                      minimum: const EdgeInsets.only(bottom: 4),
                       child: _transport(),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -936,8 +1050,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     widget.store.removeListener(_preferencesChanged);
     _network?.cancel();
-    _active?.controller.removeEventsListener(_event);
+    _player.removeEventsListener(_event);
+    if (_nativeEvents case final events?) unawaited(events.cancel());
     _buffer.close();
+    _player.dispose(forceDispose: true);
     _pages.dispose();
     unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
@@ -978,7 +1094,7 @@ class _PlayerTransportState extends State<PlayerTransport> {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
+    padding: const EdgeInsets.symmetric(horizontal: 8),
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [

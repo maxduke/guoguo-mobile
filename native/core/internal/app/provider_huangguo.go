@@ -222,6 +222,10 @@ func (d *Downloader) fetchHuangguoAIDramas(ctx context.Context) ([]Drama, error)
 }
 
 func mergeDramaMetadata(base, extra Drama) Drama {
+	if base.VIP == nil && extra.VIP != nil {
+		value := *extra.VIP
+		base.VIP = &value
+	}
 	if extra.SortMetadata != nil && (base.SortMetadata == nil || extra.SortMetadata.CheckedAt.After(base.SortMetadata.CheckedAt)) {
 		base.SortMetadata = extra.SortMetadata
 	}
@@ -354,7 +358,12 @@ func (d *Downloader) fetchHuangguoVideoDramas(ctx context.Context) ([]Drama, err
 			}
 			continue
 		}
-		add(parseHuangguoVideoCards(body, pageURL))
+		items := parseHuangguoVideoCards(body, pageURL)
+		if len(items) == 0 && len(out) == 0 {
+			lastErr = errors.New("黄果视频页面没有可识别的剧集内容，请检查站点是否返回验证页或页面结构已变化")
+			break
+		}
+		add(items)
 	}
 	if len(out) == 0 && lastErr != nil {
 		return nil, lastErr
@@ -469,6 +478,11 @@ func (d *Downloader) fetchHuangguoVideoChapters(ctx context.Context, sourceID st
 	return title, uniqueChapters(chapters), nil
 }
 func (d *Downloader) fetchProviderText(ctx context.Context, rawURL, referer string) (string, error) {
+	body, _, err := d.fetchProviderTextURL(ctx, rawURL, referer)
+	return body, err
+}
+
+func (d *Downloader) fetchProviderTextURL(ctx context.Context, rawURL, referer string) (string, string, error) {
 	retries := d.cfg.Retries
 	if retries <= 0 {
 		retries = 3
@@ -481,7 +495,7 @@ func (d *Downloader) fetchProviderText(ctx context.Context, rawURL, referer stri
 	tried := 0
 	for _, candidate := range candidates {
 		if err := ctx.Err(); err != nil {
-			return "", err
+			return "", "", err
 		}
 		attempts := retries
 		if len(candidates) > 1 {
@@ -493,7 +507,7 @@ func (d *Downloader) fetchProviderText(ctx context.Context, rawURL, referer stri
 				select {
 				case <-time.After(time.Duration(attempt) * time.Second):
 				case <-ctx.Done():
-					return "", ctx.Err()
+					return "", "", ctx.Err()
 				}
 			}
 			timeout := providerTimeout
@@ -502,7 +516,7 @@ func (d *Downloader) fetchProviderText(ctx context.Context, rawURL, referer stri
 			}
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, candidate, nil)
 			if err != nil {
-				return "", err
+				return "", "", err
 			}
 			req.Header.Set("User-Agent", userAgent)
 			if providerSourceForURL(rawURL) != "" {
@@ -534,29 +548,29 @@ func (d *Downloader) fetchProviderText(ctx context.Context, rawURL, referer stri
 				lastErr = fmt.Errorf("response exceeds %d bytes", providerMaxBodyBytes)
 				continue
 			}
-			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 || catalogResponseBlockReason(resp, body) != "" {
 				lastErr = d.catalogResponseError(req, resp, body)
-				if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 408 {
+				if catalogResponseBlockReason(resp, body) != "" || resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 408 {
 					break
 				}
 				continue
 			}
+			effectiveURL := req.URL
+			if resp.Request != nil && resp.Request.URL != nil {
+				effectiveURL = resp.Request.URL
+			}
 			if source := providerSourceForURL(rawURL); source != "" {
-				effectiveURL := req.URL
-				if resp.Request != nil {
-					effectiveURL = resp.Request.URL
-				}
 				d.providerMu.Lock()
 				d.providerHosts[source] = effectiveURL.Scheme + "://" + effectiveURL.Host
 				d.providerMu.Unlock()
 			}
-			return string(body), nil
+			return string(body), effectiveURL.String(), nil
 		}
 	}
 	if len(candidates) > 1 && lastErr != nil {
-		return "", fmt.Errorf("黄果来源请求失败：已尝试 %d 个域名，最后错误：%w", tried, lastErr)
+		return "", "", fmt.Errorf("黄果来源请求失败：已尝试 %d 个域名，最后错误：%w", tried, lastErr)
 	}
-	return "", lastErr
+	return "", "", lastErr
 }
 
 func providerURLCandidates(rawURL string) []string {
@@ -989,14 +1003,14 @@ func (d *Downloader) resolveHuangguoVideoHLS(ctx context.Context, hlsURL, refere
 	if strings.HasSuffix(strings.ToLower(strings.SplitN(hlsURL, "?", 2)[0]), ".mp4") {
 		return hlsURL
 	}
-	body, err := d.fetchProviderText(ctx, hlsURL, referer)
+	body, finalURL, err := d.fetchProviderTextURL(ctx, hlsURL, referer)
 	if err != nil {
 		return hlsURL
 	}
-	if best := selectBestM3U8Variant(body, hlsURL); best != "" {
+	if best := selectBestM3U8Variant(body, finalURL); best != "" {
 		return best
 	}
-	return hlsURL
+	return finalURL
 }
 
 func selectBestM3U8Variant(master, masterURL string) string {
@@ -1243,6 +1257,8 @@ func firstMatchText(re *regexp.Regexp, raw string) string {
 	return ""
 }
 
+var tagAccessibilitySuffix = regexp.MustCompile(`(?is)<span\b[^>]*class=["'][^"']*\bsr-only\b[^"']*["'][^>]*>.*?(?:</span>|$)`)
+
 func extractTags(raw string) []string {
 	re := regexp.MustCompile(`(?is)<[^>]+class=["'][^"']*hg-tag[^"']*["'][^>]*>(.*?)</[^>]+>`)
 	seen := map[string]bool{}
@@ -1251,7 +1267,10 @@ func extractTags(raw string) []string {
 		if len(m) < 2 {
 			continue
 		}
-		v := cleanText(m[1])
+		label := m[1]
+		// Accessibility suffixes describe the linked drama, not the tag.
+		label = tagAccessibilitySuffix.ReplaceAllString(label, "")
+		v := cleanText(label)
 		if v != "" && !seen[v] {
 			seen[v] = true
 			out = append(out, v)

@@ -14,6 +14,7 @@ import 'package:guoguo_mobile/domain/models.dart';
 import 'widget_test.dart' show NoNetwork;
 import 'package:guoguo_mobile/platform/provider_client.dart';
 import 'package:guoguo_mobile/ui/rankings_page.dart';
+import 'package:guoguo_mobile/ui/recommendations_page.dart';
 import 'package:guoguo_mobile/ui/downloads_page.dart';
 import 'package:guoguo_mobile/ui/theme.dart';
 
@@ -69,7 +70,7 @@ void main() {
             episodes: 80,
           ),
         );
-        final downloads = DownloadStore(store);
+        final downloads = _PreviewDownloads(store);
         final key = GlobalKey();
         await tester.pumpWidget(
           RepaintBoundary(
@@ -106,7 +107,7 @@ void main() {
         storage: MemoryStorage(),
         provider: _PreviewRankings(),
       );
-      final downloads = DownloadStore(store)
+      final downloads = _PreviewDownloads(store)
         ..entries = [
           for (var i = 0; i < 3; i++)
             DownloadEntry(
@@ -122,7 +123,7 @@ void main() {
               ready: true,
             ),
         ];
-      for (final name in ['rankings', 'downloads']) {
+      for (final name in ['rankings', 'downloads', 'recommendations']) {
         final key = GlobalKey();
         await tester.pumpWidget(
           RepaintBoundary(
@@ -132,6 +133,8 @@ void main() {
               theme: guoguoTheme(mode),
               home: name == 'rankings'
                   ? RankingsPage(store: store, onOpen: (_) {})
+                  : name == 'recommendations'
+                  ? RecommendationsPage(store: store, onOpen: (_) {})
                   : Scaffold(
                       appBar: AppBar(title: const Text('果果')),
                       body: DownloadsPage(
@@ -258,6 +261,13 @@ class _PreviewRankings implements ProviderClient {
             {'id': 'new', 'name': '新剧榜'},
           ],
         }
+      : method == 'recommendations'
+      ? {
+          'items': [for (var i = 0; i < 5; i++) _previewDrama(i).toJson()],
+          'hasMore': true,
+          'nextOffset': 18,
+          'sessionId': 'preview',
+        }
       : {
           'items': [
             for (var i = 0; i < 5; i++)
@@ -265,4 +275,10 @@ class _PreviewRankings implements ProviderClient {
           ],
           'hasMore': false,
         };
+}
+
+class _PreviewDownloads extends DownloadStore {
+  _PreviewDownloads(super.app);
+  @override
+  Future<void> refreshUsage() async {}
 }

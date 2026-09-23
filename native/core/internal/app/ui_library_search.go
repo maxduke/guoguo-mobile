@@ -70,5 +70,5 @@ func (app *UIApp) handleLibrarySearch(writer http.ResponseWriter, request *http.
 	app.mu.Lock()
 	saved := app.librarySaved && !app.libraryDirty
 	app.mu.Unlock()
-	writeJSON(writer, http.StatusOK, map[string]any{"query": keyword, "data": dramas, "total": result.Total, "saved": saved})
+	writeJSON(writer, http.StatusOK, map[string]any{"query": keyword, "data": dramas, "total": result.Total, "limited": result.Limited, "warning": result.Warning, "saved": saved})
 }

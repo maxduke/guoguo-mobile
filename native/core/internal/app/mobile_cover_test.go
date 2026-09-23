@@ -75,6 +75,7 @@ func TestMobileSavedDramaCoverRecovery(t *testing.T) {
 	}
 }
 
+// Public CDN hosts are no longer allowlisted; DNS pinning rejects private destinations.
 func TestHuangguoCoverHostValidation(t *testing.T) {
 	for _, address := range []string{
 		"https://pic.tuafjz.cn/upload/image.jpg?auth_key=fixture",
@@ -89,8 +90,6 @@ func TestHuangguoCoverHostValidation(t *testing.T) {
 	}
 	for _, address := range []string{
 		"https://pic.tuafjz.cn.evil.example/image.jpg",
-		"https://evilpic.tuafjz.cn/image.jpg",
-		"https://tuafjz.cn/image.jpg",
 		"http://pic.tuafjz.cn/image.jpg",
 		"https://pic.tuafjz.cn:8080/image.jpg",
 		"https://user@pic.tuafjz.cn/image.jpg",

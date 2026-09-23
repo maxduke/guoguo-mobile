@@ -91,14 +91,14 @@ func (downloader *Downloader) resolvePlaybackMedia(ctx context.Context, task Tas
 		return providerMedia{}, nil, err
 	}
 	mediaURL := fmt.Sprintf("%s/api/app/vid/h5/m3u8/%s?token=%s&c=%s", base, strings.TrimLeft(task.Chapter.VideoURL, "/"), url.QueryEscape(access.Token), url.QueryEscape(downloader.cfg.CDNURL))
-	playlist, err := downloader.fetchRaw(ctx, mediaURL)
+	playlist, finalURL, err := downloader.fetchRaw(ctx, mediaURL)
 	if err != nil {
 		return providerMedia{}, nil, err
 	}
 	if !strings.HasPrefix(strings.TrimSpace(playlist), "#EXTM3U") {
 		return providerMedia{}, nil, errors.New("站点未返回有效的播放列表")
 	}
-	return providerMedia{URL: mediaURL, Playlist: playlist, Duration: m3u8Duration(playlist), Referer: legacyFrontendURL + "/"}, key, nil
+	return providerMedia{URL: finalURL, Playlist: playlist, Duration: m3u8Duration(playlist), Referer: legacyFrontendURL + "/"}, key, nil
 }
 
 func playbackEncodingArgs(media providerMedia, input string, offset float64) []string {

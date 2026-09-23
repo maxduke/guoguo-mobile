@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -47,15 +48,16 @@ func NewMobileClient(directory string) (*MobileClient, error) {
 }
 
 type mobileRequest struct {
-	Method  string  `json:"method"`
-	Source  string  `json:"source"`
-	ID      string  `json:"id"`
-	Query   string  `json:"query"`
-	URL     string  `json:"url"`
-	Board   string  `json:"board"`
-	Page    int     `json:"page"`
-	Quality int     `json:"quality"`
-	Chapter Chapter `json:"chapter"`
+	Recommendation hongguoRecommendationQuery `json:"recommendation"`
+	Method         string                     `json:"method"`
+	Source         string                     `json:"source"`
+	ID             string                     `json:"id"`
+	Query          string                     `json:"query"`
+	URL            string                     `json:"url"`
+	Board          string                     `json:"board"`
+	Page           int                        `json:"page"`
+	Quality        int                        `json:"quality"`
+	Chapter        Chapter                    `json:"chapter"`
 }
 
 func mobileDramas(rows []Drama) []map[string]any {
@@ -67,8 +69,9 @@ func mobileDramas(rows []Drama) []map[string]any {
 		}
 		result = append(result, map[string]any{"id": row.ID, "source": source,
 			"title": row.DisplayTitle(), "description": firstNonEmpty(row.Intro, row.Desc),
-			"cover": bestDramaCover(row), "category": firstNonEmpty(row.Category, row.ChannelName, row.CategoryName),
-			"episodes": followingEpisodeCount(row), "heat": row.Heat, "date": row.OnlineDate})
+			"cover": bestDramaCover(row), "category": firstNonEmpty(row.Category, row.CategoryName, row.ChannelName),
+			"episodes": followingEpisodeCount(row), "heat": row.Heat, "date": row.OnlineDate,
+			"vip": row.VIP, "status": row.ReleaseStatus, "tags": row.Tags})
 	}
 	return result
 }
@@ -86,11 +89,13 @@ func (c *MobileClient) Call(raw string) (string, error) {
 	var value any
 	switch request.Method {
 	case "cover":
+		source, _, _ := splitProviderDramaID(request.ID)
 		cacheKey := request.URL
 		if request.ID != "" {
-			cacheKey = "drama:" + request.ID
+			cacheKey = "drama:" + request.ID + "\x00" + request.URL
 		}
 		data, err := c.covers.load(ctx, cacheKey, func(ctx context.Context) ([]byte, error) {
+			ctx = context.WithValue(ctx, coverSourceKey{}, source)
 			if request.URL != "" {
 				data, err := c.downloader.fetchCoverImage(ctx, request.URL, decodeImageBytes, false)
 				if err == nil || request.ID == "" {
@@ -175,6 +180,41 @@ func (c *MobileClient) Call(raw string) (string, error) {
 			warning = publicError(err).Error()
 		}
 		value = map[string]any{"items": mobileDramas(rows), "warning": warning, "hasMore": hasMore, "catalogScope": "available"}
+	case "recommendations":
+		page, err := c.downloader.fetchHongguoRecommendations(ctx, request.Recommendation)
+		if err != nil {
+			return "", publicError(err)
+		}
+		value = map[string]any{"items": mobileDramas(page.Dramas), "hasMore": page.HasMore, "nextOffset": page.NextOffset, "sessionId": page.SessionID}
+	case "detail":
+		if request.ID == "" {
+			return "", errors.New("缺少短剧 ID")
+		}
+		var detail Drama
+		var err error
+		if _, _, valid := splitProviderDramaID(request.ID); valid {
+			detail, err = c.downloader.fetchDramaMetadata(ctx, Drama{ID: request.ID})
+		} else if rankingSourceID.MatchString(request.ID) {
+			err = c.downloader.fetchAPI(ctx, "/api/app/playlet/detail/"+url.PathEscape(request.ID), nil, &detail)
+		} else {
+			return "", errors.New("无效的剧集 ID")
+		}
+		if err != nil {
+			return "", publicError(err)
+		}
+		if detail.ID != request.ID {
+			return "", errors.New("详情与请求剧集不符")
+		}
+		value = map[string]any{"item": mobileDramas([]Drama{detail})[0]}
+	case "suggestions":
+		if request.Source != sourceHongguo {
+			return "", errors.New("当前站源暂无搜索联想")
+		}
+		items, err := c.downloader.hongguoSearchSuggestions(ctx, request.Query)
+		if err != nil {
+			return "", publicError(err)
+		}
+		value = map[string]any{"items": items}
 	case "search":
 		if request.Source != "hongguo" {
 			return "", errors.New("当前站源尚未接入联网搜索，可继续使用本地筛选")
@@ -183,7 +223,7 @@ func (c *MobileClient) Call(raw string) (string, error) {
 		if err != nil {
 			return "", publicError(err)
 		}
-		value = map[string]any{"items": mobileDramas(rows.Dramas)}
+		value = map[string]any{"items": mobileDramas(rows.Dramas), "warning": rows.Warning, "limited": rows.Limited, "total": rows.Total}
 	case "chapters":
 		if request.ID == "" {
 			return "", errors.New("缺少短剧 ID")

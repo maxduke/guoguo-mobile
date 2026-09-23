@@ -136,6 +136,28 @@ class DramaCard extends StatelessWidget {
                 ),
               ),
             ),
+            if (drama.vip == true)
+              Positioned(
+                top: 10,
+                left: 10,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFDBC399),
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    child: Text(
+                      'VIP',
+                      style: TextStyle(
+                        color: Color(0xFF3A2B16),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             if (drama.episodes > 0)
               Positioned(
                 bottom: 9,

@@ -17,6 +17,8 @@ import (
 )
 
 func main() {
+	query := flag.String("query", "", "inspect Hongguo search")
+	genre := flag.String("genre", "", "inspect Hongguo recommendations: short_play, comic_series, ai_series")
 	source := flag.String("source", "hongguo", "hongguo, huangdou or huangguo")
 	mediaProbe := flag.Bool("media", false, "resolve one episode and fetch only its first 1024 bytes")
 	decodeProbe := flag.Bool("decode", false, "prepare and decode one full episode using a locally installed ffmpeg")
@@ -24,6 +26,10 @@ func main() {
 	covers := flag.Bool("covers", false, "fetch and decode up to three cover images through the mobile facade")
 	board := flag.String("board", "", "inspect a ranking board instead of the catalog")
 	flag.Parse()
+	if (*query != "" || *genre != "") && (*source != "hongguo" || *board != "" || *pages != 1 || (*query != "" && *genre != "")) {
+		fmt.Fprintln(os.Stderr, "query/genre requires hongguo, one page, and no board; use only one of query or genre")
+		os.Exit(2)
+	}
 	dir, err := os.MkdirTemp("", "guoguo-probe-")
 	if err != nil {
 		panic(err)
@@ -37,6 +43,12 @@ func main() {
 	request, _ := json.Marshal(map[string]string{"method": "catalog", "source": *source})
 	if *board != "" {
 		request, _ = json.Marshal(map[string]string{"method": "ranking", "board": *board})
+	}
+	if *query != "" {
+		request, _ = json.Marshal(map[string]string{"method": "search", "source": "hongguo", "query": *query})
+	}
+	if *genre != "" {
+		request, _ = json.Marshal(map[string]any{"method": "recommendations", "recommendation": map[string]string{"genre": *genre}})
 	}
 	result, err := c.Call(string(request))
 	if err != nil {

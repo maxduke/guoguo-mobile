@@ -5,11 +5,13 @@ import 'package:flutter/material.dart';
 import '../data/app_store.dart';
 import '../data/download_store.dart';
 import '../domain/models.dart';
+import '../domain/catalog_query.dart';
 import 'components.dart';
 import 'detail_page.dart';
 import 'downloads_page.dart';
 import 'settings_page.dart';
 import 'rankings_page.dart';
+import 'recommendations_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({
@@ -33,31 +35,92 @@ class _HomePageState extends State<HomePage> {
   DramaSource? _personalSource;
   bool _favoritesOnly = true, _searching = false;
   int _searchGeneration = 0;
-  String? _searchError;
+  String? _searchError, _searchNotice;
+  Timer? _suggestionTimer;
+  List<String> _suggestions = [];
+  List<Drama>? _remoteResults;
+  CatalogSort _sort = CatalogSort.recommended;
   AppStore get store => widget.store;
   @override
   void initState() {
     super.initState();
+    _search.addListener(_queryChanged);
     if (widget.autoLoad && store.library.isEmpty) unawaited(store.refresh());
   }
 
   @override
   void dispose() {
+    _suggestionTimer?.cancel();
+    _search.removeListener(_queryChanged);
     _search.dispose();
     super.dispose();
   }
 
   void _open(Drama drama) => openDrama(context, store, widget.downloads, drama);
+  void _queryChanged() {
+    _suggestionTimer?.cancel();
+    final generation = ++_searchGeneration;
+    setState(() {
+      _query = _search.text.trim();
+      _remoteResults = null;
+      _suggestions = [];
+      _searchNotice = null;
+      _searchError = null;
+      _searching = false;
+      if (_query.isNotEmpty) _category = '全部';
+    });
+    if (_query.isEmpty ||
+        store.source != DramaSource.hongguo ||
+        store.offline ||
+        !_search.value.composing.isCollapsed) {
+      return;
+    }
+    _suggestionTimer = Timer(const Duration(milliseconds: 300), () async {
+      try {
+        final items = await store.suggestions(_query);
+        if (mounted && generation == _searchGeneration) {
+          setState(() => _suggestions = items);
+        }
+      } catch (_) {
+        /* Explicit search remains available. */
+      }
+    });
+  }
+
   Future<void> _submit(String text) async {
-    if (text.trim().isEmpty) return;
+    if (text.trim().isEmpty || !_search.value.composing.isCollapsed) return;
+    if (_search.text != text) {
+      _search.value = TextEditingValue(
+        text: text,
+        selection: TextSelection.collapsed(offset: text.length),
+      );
+    }
+    _suggestionTimer?.cancel();
     final generation = ++_searchGeneration;
     final source = store.source;
+    FocusScope.of(context).unfocus();
     setState(() {
-      _searching = true;
+      _query = text.trim();
+      _suggestions = [];
+      _searching = source == DramaSource.hongguo && !store.offline;
       _searchError = null;
+      _searchNotice = null;
     });
+    if (source != DramaSource.hongguo || store.offline) return;
     try {
-      await store.search(source, text);
+      final result = await store.searchCatalog(source, text);
+      if (mounted &&
+          generation == _searchGeneration &&
+          source == store.source) {
+        setState(() {
+          _remoteResults = result.items;
+          _searchNotice = result.warning.isNotEmpty
+              ? result.warning
+              : result.limited
+              ? '已合并名称检索与官网结果；上游未提供完整分页，可用完整剧名继续查找。'
+              : null;
+        });
+      }
     } catch (error) {
       if (mounted && generation == _searchGeneration) {
         setState(() => _searchError = '$error');
@@ -175,19 +238,39 @@ class _HomePageState extends State<HomePage> {
     },
   );
 
+  Widget _sortMenu() => PopupMenuButton<CatalogSort>(
+    initialValue: _sort,
+    tooltip: '排序短剧',
+    onSelected: (sort) => setState(() => _sort = sort),
+    itemBuilder: (_) => [
+      for (final sort in CatalogSort.values)
+        PopupMenuItem(value: sort, child: Text(sort.label)),
+    ],
+    child: Chip(
+      avatar: const Icon(Icons.sort, size: 18),
+      label: Text(_sort.label),
+    ),
+  );
+
+  void _discover() => Navigator.push(
+    context,
+    MaterialPageRoute<void>(
+      builder: (_) => RecommendationsPage(store: store, onOpen: _open),
+    ),
+  );
+
   Widget _library(bool wide) {
-    final rows = store.library
-        .where(
-          (d) =>
-              (_query.isEmpty ||
-                  d.title.toLowerCase().contains(_query.toLowerCase())) &&
-              (_category == '全部' || d.category == _category),
-        )
-        .toList();
+    final rows = queryCatalog(
+      _remoteResults ?? store.library,
+      query: _remoteResults == null ? _query : '',
+      category: _category,
+      hideVip: store.source == DramaSource.huangdou && store.hideVip,
+      sort: _sort,
+    );
     final categories = {
       '全部',
       ...store.library.map((d) => d.category).where((s) => s.isNotEmpty),
-    }.take(12).toList();
+    }.toList();
     final loading = store.loadingSources.contains(store.source);
     final horizontal = wide ? 40.0 : 22.0;
     return RefreshIndicator(
@@ -218,6 +301,15 @@ class _HomePageState extends State<HomePage> {
                         style: Theme.of(context).textTheme.headlineLarge,
                       ),
                       const Spacer(),
+                      if (wide && store.source == DramaSource.hongguo)
+                        TextButton.icon(
+                          onPressed: _discover,
+                          icon: const Icon(
+                            Icons.auto_awesome_outlined,
+                            size: 19,
+                          ),
+                          label: const Text('发现推荐'),
+                        ),
                       TextButton.icon(
                         onPressed: () => Navigator.push(
                           context,
@@ -246,6 +338,7 @@ class _HomePageState extends State<HomePage> {
                                 borderRadius: BorderRadius.circular(15),
                                 onTap: () => perform(context, () async {
                                   _search.clear();
+                                  _suggestionTimer?.cancel();
                                   ++_searchGeneration;
                                   setState(() {
                                     _query = '';
@@ -295,15 +388,6 @@ class _HomePageState extends State<HomePage> {
                   const SizedBox(height: 18),
                   TextField(
                     controller: _search,
-                    onChanged: (v) {
-                      ++_searchGeneration;
-                      setState(() {
-                        _query = v.trim();
-                        if (_query.isNotEmpty) _category = '全部';
-                        _searchError = null;
-                        _searching = false;
-                      });
-                    },
                     onSubmitted: _submit,
                     textInputAction: TextInputAction.search,
                     decoration: InputDecoration(
@@ -331,11 +415,15 @@ class _HomePageState extends State<HomePage> {
                                       _search.clear();
                                       _query = '';
                                       _searchError = null;
+                                      _remoteResults = null;
+                                      _searching = false;
                                       ++_searchGeneration;
                                     }),
                                   ),
                                 IconButton(
-                                  tooltip: '联网搜索',
+                                  tooltip: store.source == DramaSource.hongguo
+                                      ? '联网搜索'
+                                      : '筛选缓存',
                                   icon: const Icon(Icons.arrow_forward_rounded),
                                   onPressed: () => _submit(_search.text),
                                 ),
@@ -343,12 +431,123 @@ class _HomePageState extends State<HomePage> {
                             ),
                     ),
                   ),
+                  if (_query.isNotEmpty &&
+                      (store.source != DramaSource.hongguo || store.offline))
+                    Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Text(
+                        store.offline
+                            ? '离线搜索 · 仅显示已缓存的短剧'
+                            : '${store.source.label}暂不支持联网搜索，当前筛选已加载内容',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                  if (_suggestions.isNotEmpty)
+                    Card(
+                      margin: const EdgeInsets.only(top: 8),
+                      child: Column(
+                        children: [
+                          for (final suggestion in _suggestions.take(6))
+                            ListTile(
+                              dense: true,
+                              leading: const Icon(Icons.search, size: 18),
+                              title: Text(
+                                suggestion,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              trailing: const Icon(Icons.north_west, size: 16),
+                              onTap: () => _submit(suggestion),
+                            ),
+                        ],
+                      ),
+                    ),
+                  if (_query.isEmpty &&
+                      store.source == DramaSource.hongguo &&
+                      store.recentSearches.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Wrap(
+                        spacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          for (final query in store.recentSearches.take(5))
+                            ActionChip(
+                              label: Text(query),
+                              onPressed: () => _submit(query),
+                            ),
+                          IconButton(
+                            tooltip: '清除搜索记录',
+                            onPressed: () =>
+                                perform(context, store.clearSearches),
+                            icon: const Icon(Icons.delete_outline, size: 18),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (_searchNotice != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: _Notice(_searchNotice!, Icons.info_outline),
+                    ),
                   if (_searchError != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 12),
                       child: _Notice(_searchError!, Icons.info_outline_rounded),
                     ),
                   if (_query.isEmpty) ...[const SizedBox(height: 16)],
+                  if (!wide &&
+                      _query.isEmpty &&
+                      store.source == DramaSource.hongguo) ...[
+                    Card(
+                      margin: const EdgeInsets.only(bottom: 18),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => RecommendationsPage(
+                              store: store,
+                              onOpen: _open,
+                            ),
+                          ),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(18),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.auto_awesome_outlined,
+                                color: Theme.of(context).colorScheme.primary,
+                                size: 28,
+                              ),
+                              const SizedBox(width: 14),
+                              const Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '今天，看点什么',
+                                      style: TextStyle(
+                                        fontSize: 17,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    SizedBox(height: 4),
+                                    Text(
+                                      '真人剧 · 漫剧 · AI 剧',
+                                      style: TextStyle(fontSize: 12),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const Icon(Icons.arrow_forward_rounded),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                   if (_query.isEmpty && store.recent.isNotEmpty) ...[
                     _continueCard(store.recent.first),
                     const SizedBox(height: 22),
@@ -356,7 +555,11 @@ class _HomePageState extends State<HomePage> {
                   Row(
                     children: [
                       Text(
-                        _query.isEmpty ? '全部短剧' : '搜索结果',
+                        _query.isEmpty
+                            ? '全部短剧'
+                            : _remoteResults == null
+                            ? '本地匹配'
+                            : '联网结果',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const Spacer(),
@@ -381,11 +584,37 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ],
                   ),
+                  Wrap(
+                    spacing: 10,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      if (!wide || categories.length <= 1) _sortMenu(),
+                      if (store.source == DramaSource.huangdou)
+                        FilterChip(
+                          label: Text(store.hideVip ? '隐藏 VIP' : '显示 VIP'),
+                          selected: store.hideVip,
+                          onSelected: (value) =>
+                              perform(context, () => store.setHideVip(value)),
+                        ),
+                      if (_category != '全部' && _query.isNotEmpty)
+                        TextButton(
+                          onPressed: () => setState(() => _category = '全部'),
+                          child: const Text('清除分类筛选'),
+                        ),
+                    ],
+                  ),
+                  if (store.source == DramaSource.huangdou &&
+                      store.library.any((d) => d.vip == null))
+                    Text(
+                      '部分剧集会员状态待识别，打开详情后更新',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                   if (categories.length > 1)
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: Row(
                         children: [
+                          if (wide) ...[_sortMenu(), const SizedBox(width: 12)],
                           for (final category in categories)
                             Padding(
                               padding: const EdgeInsets.only(right: 8),

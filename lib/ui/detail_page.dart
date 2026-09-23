@@ -7,6 +7,7 @@ import '../data/app_store.dart';
 import '../data/download_store.dart';
 import '../domain/models.dart';
 import 'components.dart';
+import 'episode_grid.dart';
 import 'player_page.dart';
 import 'download_range_sheet.dart';
 
@@ -80,11 +81,13 @@ class DetailPage extends StatefulWidget {
 class _DetailPageState extends State<DetailPage> {
   late Future<List<Episode>> _episodes;
   List<Episode> _loaded = [];
-  bool _enqueueing = false, _refreshing = false;
+  bool _enqueueing = false, _refreshing = false, _expanded = false;
+  Drama get drama => widget.store.currentDrama(widget.drama);
   @override
   void initState() {
     super.initState();
     _episodes = _fetch();
+    unawaited(widget.store.refreshDetail(widget.drama));
   }
 
   void _play(int index) => Navigator.push(
@@ -93,19 +96,17 @@ class _DetailPageState extends State<DetailPage> {
       builder: (_) => PlayerPage(
         store: widget.store,
         downloads: widget.downloads,
-        drama: widget.drama,
+        drama: drama,
         episodes: _loaded,
         initialIndex: index,
       ),
     ),
   );
   Future<List<Episode>> _fetch({bool refresh = false}) async {
-    final rows = await widget.store.episodes(widget.drama, refresh: refresh);
+    final rows = await widget.store.episodes(drama, refresh: refresh);
     if (mounted) {
       unawaited(
-        widget.store
-            .markEpisodesSeen(widget.drama, rows)
-            .catchError((Object _) {}),
+        widget.store.markEpisodesSeen(drama, rows).catchError((Object _) {}),
       );
     }
     return rows;
@@ -115,6 +116,7 @@ class _DetailPageState extends State<DetailPage> {
     if (_refreshing || _enqueueing) return;
     setState(() => _refreshing = true);
     await perform(context, () async {
+      unawaited(widget.store.refreshDetail(drama, force: true));
       final rows = await _fetch(refresh: true);
       if (mounted) setState(() => _episodes = Future.value(rows));
     });
@@ -135,7 +137,7 @@ class _DetailPageState extends State<DetailPage> {
     var failed = 0;
     for (var i = range.$1; i <= range.$2; i++) {
       try {
-        await widget.downloads.enqueue(widget.drama, rows[i], i);
+        await widget.downloads.enqueue(drama, rows[i], i);
       } catch (_) {
         failed++;
       }
@@ -157,7 +159,7 @@ class _DetailPageState extends State<DetailPage> {
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 800;
     return Scaffold(
-      appBar: AppBar(title: Text(widget.drama.source.label)),
+      appBar: AppBar(title: Text(drama.source.label)),
       body: SafeArea(
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: wide ? 40 : 22),
@@ -190,27 +192,35 @@ class _DetailPageState extends State<DetailPage> {
   Widget _summary(bool wide) => ListenableBuilder(
     listenable: widget.store,
     builder: (context, _) {
-      final favorite = widget.store.favorites.containsKey(widget.drama.key);
+      final favorite = widget.store.favorites.containsKey(drama.key);
       final description = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            widget.drama.title,
-            style: Theme.of(context).textTheme.headlineMedium,
-          ),
+          Text(drama.title, style: Theme.of(context).textTheme.headlineMedium),
           const SizedBox(height: 12),
           Text(
-            '${widget.drama.source.label} · ${widget.drama.category.isEmpty ? '短剧' : widget.drama.category}',
+            '${drama.source.label} · ${drama.category.isEmpty ? '短剧' : drama.category}',
             style: TextStyle(color: Theme.of(context).colorScheme.primary),
           ),
           const SizedBox(height: 8),
-          if (widget.drama.episodes > 0) Text('${widget.drama.episodes} 集'),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              if (drama.episodes > 0) Chip(label: Text('${drama.episodes} 集')),
+              if (drama.statusLabel.isNotEmpty)
+                Chip(label: Text(drama.statusLabel)),
+              if (drama.vip == true) const Chip(label: Text('VIP')),
+            ],
+          ),
+          if (drama.vip == true)
+            const Text('部分分集需要站源授权，试看不作为完整正片', style: TextStyle(fontSize: 12)),
+          if (drama.date.isNotEmpty)
+            Text('上线 ${drama.date}', style: const TextStyle(fontSize: 12)),
           const SizedBox(height: 12),
           OutlinedButton.icon(
-            onPressed: () => perform(
-              context,
-              () => widget.store.toggleFavorite(widget.drama),
-            ),
+            onPressed: () =>
+                perform(context, () => widget.store.toggleFavorite(drama)),
             icon: Icon(favorite ? Icons.bookmark : Icons.bookmark_add_outlined),
             label: Text(favorite ? '已收藏' : '收藏这部剧'),
           ),
@@ -220,33 +230,49 @@ class _DetailPageState extends State<DetailPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (wide) ...[
-            AspectRatio(
-              aspectRatio: 3 / 4,
-              child: Poster(widget.drama, radius: 22),
-            ),
+            AspectRatio(aspectRatio: 3 / 4, child: Poster(drama, radius: 22)),
             const SizedBox(height: 22),
             description,
           ] else
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SizedBox(width: 125, height: 168, child: Poster(widget.drama)),
+                SizedBox(width: 125, height: 168, child: Poster(drama)),
                 const SizedBox(width: 20),
                 Expanded(child: description),
               ],
             ),
           const SizedBox(height: 24),
           Text(
-            widget.drama.description.isEmpty
-                ? '好故事，从第一集开始。'
-                : widget.drama.description,
-            maxLines: wide ? 12 : 4,
+            drama.description.isEmpty ? '好故事，从第一集开始。' : drama.description,
+            maxLines: _expanded
+                ? null
+                : wide
+                ? 12
+                : 4,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
               height: 1.7,
             ),
           ),
+          if (drama.description.isNotEmpty)
+            TextButton(
+              onPressed: () => setState(() => _expanded = !_expanded),
+              child: Text(_expanded ? '收起简介' : '展开简介'),
+            ),
+          if (drama.tags.isNotEmpty)
+            Wrap(
+              spacing: 6,
+              children: [
+                for (final tag in drama.tags.take(8)) Chip(label: Text(tag)),
+              ],
+            ),
+          if (widget.store.detailErrors[drama.key] != null)
+            Text(
+              widget.store.detailErrors[drama.key]!,
+              style: const TextStyle(fontSize: 12),
+            ),
           const SizedBox(height: 24),
         ],
       );
@@ -263,10 +289,7 @@ class _DetailPageState extends State<DetailPage> {
             message: '${snapshot.error}',
             action: FilledButton(
               onPressed: () => setState(
-                () => _episodes = widget.store.episodes(
-                  widget.drama,
-                  refresh: true,
-                ),
+                () => _episodes = widget.store.episodes(drama, refresh: true),
               ),
               child: const Text('重新加载'),
             ),
@@ -277,7 +300,8 @@ class _DetailPageState extends State<DetailPage> {
         return const Center(child: CircularProgressIndicator());
       }
       _loaded = snapshot.data!;
-      final record = widget.store.history[widget.drama.key];
+      if (_loaded.isEmpty) return const Center(child: Text('暂无可播放分集'));
+      final record = widget.store.history[drama.key];
       var resumeIndex = record == null
           ? 0
           : _loaded.indexWhere((e) => e.id == record.episodeId);
@@ -315,7 +339,7 @@ class _DetailPageState extends State<DetailPage> {
             ],
           ),
           const SizedBox(height: 24),
-          if (widget.store.episodeErrors[widget.drama.key] != null)
+          if (widget.store.episodeErrors[drama.key] != null)
             const Text('暂未更新成功，正在显示缓存分集', style: TextStyle(fontSize: 12)),
           Row(
             children: [
@@ -339,24 +363,16 @@ class _DetailPageState extends State<DetailPage> {
           Expanded(
             child: ListenableBuilder(
               listenable: widget.downloads,
-              builder: (context, _) => GridView.builder(
-                padding: const EdgeInsets.only(bottom: 24),
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 80,
-                  mainAxisExtent: 60,
-                  mainAxisSpacing: 10,
-                  crossAxisSpacing: 10,
-                ),
-                itemCount: _loaded.length,
-                itemBuilder: (context, index) => OutlinedButton(
+              builder: (context, _) => EpisodeGrid(
+                episodes: _loaded,
+                initialIndex: resumeIndex,
+                onJump: _play,
+                builder: (context, index) => OutlinedButton(
                   onPressed: () => _play(index),
                   onLongPress: () => perform(
                     context,
-                    () => widget.downloads.enqueue(
-                      widget.drama,
-                      _loaded[index],
-                      index,
-                    ),
+                    () =>
+                        widget.downloads.enqueue(drama, _loaded[index], index),
                   ),
                   style: OutlinedButton.styleFrom(
                     backgroundColor: record?.episodeId == _loaded[index].id
@@ -371,10 +387,9 @@ class _DetailPageState extends State<DetailPage> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text('${_loaded[index].number}'),
-                      if (widget.downloads.entryFor(
-                            widget.drama,
-                            _loaded[index],
-                          )
+                      if (_loaded[index].vip)
+                        const Text('VIP', style: TextStyle(fontSize: 10)),
+                      if (widget.downloads.entryFor(drama, _loaded[index])
                           case final entry?)
                         Text(
                           entry.complete

@@ -13,6 +13,7 @@ import (
 var rankingScriptTags = regexp.MustCompile(`(?is)<script\b[^>]*>`)
 var rankingJSONLD = regexp.MustCompile(`(?is)<script\b[^>]*type=["']application/ld\+json["'][^>]*>(.*?)</script>`)
 var rankingSourceID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,100}$`)
+
 var huangguoRankingCardStart = regexp.MustCompile(`(?is)<div\b[^>]*class=["'][^"']*\bhg-rank-item\b[^"']*["'][^>]*>`)
 
 type hongguoRankingContent struct {
@@ -48,8 +49,9 @@ func parseHongguoRanking(body string, board rankingBoard, page int) (rankingPage
 		if err != nil || json.Unmarshal(raw, &content) != nil {
 			return rankingPage{}, failure
 		}
+	} else if merged, found := parseHongguoMergeLoader(body, loaderKey); found {
+		content = merged
 	} else {
-
 		for _, tag := range rankingScriptTags.FindAllString(body, -1) {
 			if extractAttr(tag, "data-fn-name") != "r" || extractAttr(tag, "data-script-src") != "modern-run-router-data-fn" {
 				continue
@@ -118,9 +120,7 @@ func parseHuangdouRanking(decoded any, page int) (rankingPage, error) {
 		}
 		seen[id] = true
 		remark := firstNonEmpty(mapString(row, "update_label"), mapString(row, "corner"))
-		drama := Drama{ID: providerDramaID(sourceHuangdou, id), Source: sourceHuangdou, SourceID: id, Title: title, Name: title, ChannelName: "黄豆", CategoryName: mapString(row, "category"), TotalEpisode: mapString(row, "episode_count"), Remark: remark, ReleaseStatus: releaseStatusFromRemark(remark), Heat: mapString(row, "hot_rate"), Views: normalizeViews(mapString(row, "click")), OnlineDate: providerReleaseDate(mapString(row, "issue_date"))}
-		artwork := huangdouDramaFromMap(row)
-		drama.Cover, drama.CoverURL = artwork.Cover, artwork.CoverURL
+		drama := Drama{VIP: huangdouVIPFlag(row), ID: providerDramaID(sourceHuangdou, id), Source: sourceHuangdou, SourceID: id, Title: title, Name: title, ChannelName: "黄豆", CategoryName: mapString(row, "category"), TotalEpisode: mapString(row, "episode_count"), Remark: remark, ReleaseStatus: releaseStatusFromRemark(remark), Heat: mapString(row, "hot_rate"), Views: normalizeViews(mapString(row, "click")), OnlineDate: providerReleaseDate(mapString(row, "issue_date"))}
 		metric := ""
 		if drama.Heat != "" {
 			metric = drama.Heat + "热度"
