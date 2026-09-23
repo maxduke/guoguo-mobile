@@ -1,6 +1,7 @@
 import 'episode_grid.dart';
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:better_player_plus/better_player_plus.dart';
 // Native PiP stop is only exposed on this event stream; the public API emits a
@@ -65,6 +66,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   Future<void> _paused = Future.value();
   Future<void> _sourceSetup = Future.value();
   bool _pendingPlay = false;
+  bool? _pipEntryWasPlaying;
   StreamSubscription<VideoEvent>? _nativeEvents;
   Timer? _hideTimer, _preloadTimer, _settleTimer;
   StreamSubscription<List<ConnectivityResult>>? _network;
@@ -421,7 +423,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     switch (event.eventType) {
       case VideoEventType.pipStart:
         _setPipActive(true);
+        final wasPlaying = _pipEntryWasPlaying;
+        _pipEntryWasPlaying = null;
+        if (wasPlaying == true && _active != null) {
+          unawaited(_player.play());
+        }
       case VideoEventType.pipStop:
+        _pipEntryWasPlaying = null;
         _setPipActive(false);
       default:
         break;
@@ -547,8 +555,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (_active == null) return;
     final controller = _player;
     if (controller.isPlaying() == true) {
+      if (_pipEntryWasPlaying != null) _pipEntryWasPlaying = false;
       await controller.pause();
     } else {
+      if (_pipEntryWasPlaying != null) _pipEntryWasPlaying = true;
       final value = controller.videoPlayerController?.value;
       final duration = value?.duration ?? Duration.zero;
       if (duration > Duration.zero &&
@@ -558,6 +568,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       await controller.play();
     }
     if (mounted) _showControls();
+  }
+
+  Future<void> _enterPictureInPicture(bool wasPlaying) async {
+    // AVKit can pause the player while moving its layer into PiP. Capture the
+    // viewer's intent before that transition; a deliberately paused episode
+    // must remain paused in the window.
+    _pipEntryWasPlaying = wasPlaying;
+    try {
+      await _player.enablePictureInPicture(_playerKey);
+    } catch (_) {
+      _pipEntryWasPlaying = null;
+      rethrow;
+    }
   }
 
   Future<void> _sheet(Widget child) async {
@@ -668,11 +691,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               title: const Text('画中画'),
               enabled: item != null,
               onTap: () {
+                final wasPlaying =
+                    _player.videoPlayerController?.value.isPlaying == true;
                 Navigator.pop(context);
                 if (item != null) {
-                  perform(context, () async {
-                    await _player.enablePictureInPicture(_playerKey);
-                  });
+                  perform(context, () => _enterPictureInPicture(wasPlaying));
                 }
               },
             ),
@@ -895,6 +918,22 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               locked: _locked,
             ),
           ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: math.max(
+              28,
+              math.max(
+                MediaQuery.systemGestureInsetsOf(context).bottom,
+                MediaQuery.viewPaddingOf(context).bottom,
+              ),
+            ),
+            child: const AbsorbPointer(
+              key: Key('playerHomeGestureGuard'),
+              child: SizedBox.expand(),
+            ),
+          ),
           if (_locked)
             SafeArea(
               child: Align(
@@ -914,17 +953,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             child: AnimatedOpacity(
               opacity: _controls && !_locked ? 1 : 0,
               duration: const Duration(milliseconds: 180),
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    DecoratedBox(
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [Colors.black87, Colors.transparent],
-                        ),
+              child: Column(
+                children: [
+                  DecoratedBox(
+                    key: const Key('playerTopChrome'),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.black87, Colors.transparent],
                       ),
+                    ),
+                    child: SafeArea(
+                      bottom: false,
                       child: Row(
                         children: [
                           IconButton(
@@ -963,19 +1004,24 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                         ],
                       ),
                     ),
-                    const Spacer(),
-                    DecoratedBox(
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [Colors.transparent, Colors.black87],
-                        ),
+                  ),
+                  const Spacer(),
+                  DecoratedBox(
+                    key: const Key('playerBottomChrome'),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, Colors.black87],
                       ),
+                    ),
+                    child: SafeArea(
+                      top: false,
+                      minimum: const EdgeInsets.only(bottom: 4),
                       child: _transport(),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -1038,7 +1084,7 @@ class _PlayerTransportState extends State<PlayerTransport> {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
+    padding: const EdgeInsets.symmetric(horizontal: 8),
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [

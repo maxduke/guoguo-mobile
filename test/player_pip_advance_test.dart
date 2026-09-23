@@ -60,6 +60,7 @@ class _NativePlayer {
       }
       if (call.method == 'play') plays.add(args?['textureId']);
       if (call.method == 'pause') pauses.add(args?['textureId']);
+      if (call.method == 'isPictureInPictureSupported') return true;
       if (call.method == 'position') return 0;
       return null;
     });
@@ -92,6 +93,66 @@ class _NativePlayer {
 }
 
 void main() {
+  for (final initiallyPaused in [false, true]) {
+    testWidgets(
+      'explicit PiP entry ${initiallyPaused ? 'keeps user pause' : 'restores playback after transition pause'}',
+      (tester) async {
+        final platform = _NativePlayer()..install();
+        addTearDown(platform.uninstall);
+        final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
+          ..offline = true;
+        final directory = Directory.systemTemp.createTempSync('guoguo-pip-');
+        File('${directory.path}/pip_episode_1.mp4').createSync();
+        addTearDown(() => directory.deleteSync(recursive: true));
+        final downloads = _LocalDownloads(store, directory.path);
+        addTearDown(() {
+          downloads.dispose();
+          store.dispose();
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            home: PlayerPage(
+              store: store,
+              downloads: downloads,
+              drama: const Drama(
+                id: '1',
+                source: DramaSource.hongguo,
+                title: '画中画',
+              ),
+              episodes: [
+                Episode.fromJson({'id': '1'}, 0),
+              ],
+              initialIndex: 0,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(platform.plays, hasLength(1));
+        await tester.tapAt(const Offset(400, 300));
+        await tester.pump();
+        if (initiallyPaused) {
+          await tester.tap(find.byTooltip('暂停'));
+          await tester.pump();
+        }
+        await tester.tap(find.byTooltip('更多播放设置'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('画中画').last);
+        await tester.pumpAndSettle();
+        platform.emit('pause'); // Simulate AVKit pausing while opening PiP.
+        await tester.pump();
+        final playsBeforePip = platform.plays.length;
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        platform.emit('pipStart');
+        await tester.pump();
+        expect(
+          platform.plays.length,
+          initiallyPaused ? playsBeforePip : playsBeforePip + 1,
+        );
+        platform.emit('pipStop');
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
   testWidgets(
     'PiP keeps one texture across episodes and stops advancing when closed',
     (tester) async {

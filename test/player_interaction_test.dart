@@ -75,6 +75,11 @@ void main() {
         tester.getTopLeft(find.byTooltip('返回')).dy,
         greaterThanOrEqualTo(44),
       );
+      expect(tester.getTopLeft(find.byKey(const Key('playerTopChrome'))).dy, 0);
+      expect(
+        tester.getBottomRight(find.byKey(const Key('playerBottomChrome'))).dy,
+        844,
+      );
       expect(
         tester.getBottomRight(find.byType(PlayerTransport)).dy,
         lessThanOrEqualTo(810),
@@ -91,6 +96,145 @@ void main() {
       store.dispose();
     },
   );
+  testWidgets('landscape chrome fills edges while controls respect insets', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(844, 390);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const status = MethodChannel(
+      'dev.fluttercommunity.plus/connectivity_status',
+    );
+    messenger.setMockMethodCallHandler(status, (_) async => null);
+    addTearDown(() => messenger.setMockMethodCallHandler(status, null));
+    final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
+      ..offline = true;
+    final downloads = DownloadStore(store);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(
+            size: Size(844, 390),
+            padding: EdgeInsets.only(left: 44, right: 44, bottom: 21),
+            viewPadding: EdgeInsets.only(left: 44, right: 44, bottom: 21),
+          ),
+          child: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: '1',
+              source: DramaSource.hongguo,
+              title: '横屏',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+            ],
+            initialIndex: 0,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(420, 180));
+    await tester.pump();
+    expect(tester.getRect(find.byKey(const Key('playerTopChrome'))).top, 0);
+    expect(
+      tester.getRect(find.byKey(const Key('playerBottomChrome'))).bottom,
+      390,
+    );
+    expect(tester.getRect(find.byKey(const Key('playerBottomChrome'))).left, 0);
+    expect(
+      tester.getTopLeft(find.byTooltip('返回')).dx,
+      greaterThanOrEqualTo(44),
+    );
+    expect(
+      tester.getBottomRight(find.byType(PlayerTransport)).dy,
+      lessThanOrEqualTo(369),
+    );
+    expect(
+      tester.getBottomRight(find.byType(PlayerTransport)).dx,
+      lessThanOrEqualTo(800),
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    downloads.dispose();
+    store.dispose();
+  });
+  testWidgets('home gesture origin cannot turn an episode', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const status = MethodChannel(
+      'dev.fluttercommunity.plus/connectivity_status',
+    );
+    messenger.setMockMethodCallHandler(status, (_) async => null);
+    addTearDown(() => messenger.setMockMethodCallHandler(status, null));
+    final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
+      ..offline = true;
+    final downloads = DownloadStore(store);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(
+            size: Size(390, 844),
+            padding: EdgeInsets.only(bottom: 34),
+            viewPadding: EdgeInsets.only(bottom: 34),
+            systemGestureInsets: EdgeInsets.only(bottom: 34),
+          ),
+          child: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: '1',
+              source: DramaSource.hongguo,
+              title: '滑动',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+              Episode.fromJson({'id': '2'}, 1),
+            ],
+            initialIndex: 0,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final pager = tester
+        .widget<EpisodePager>(find.byType(EpisodePager))
+        .controller;
+    expect(
+      tester.getRect(find.byKey(const Key('playerHomeGestureGuard'))),
+      const Rect.fromLTWH(0, 810, 390, 34),
+    );
+    final homeSwipe = await tester.startGesture(const Offset(195, 830));
+    await homeSwipe.moveBy(const Offset(0, -500));
+    await homeSwipe.up();
+    await tester.pumpAndSettle();
+    expect(pager.page, 0);
+    expect(
+      tester.widget<AnimatedOpacity>(find.byType(AnimatedOpacity)).opacity,
+      0,
+    );
+    final normalSwipe = await tester.startGesture(const Offset(350, 600));
+    await normalSwipe.moveBy(const Offset(0, -220));
+    await tester.pump();
+    await normalSwipe.moveBy(const Offset(0, -220));
+    await tester.pump();
+    expect(pager.page, greaterThan(0));
+    await normalSwipe.moveBy(const Offset(0, -300));
+    await normalSwipe.up();
+    await tester.pumpAndSettle();
+    expect(pager.page, 1);
+    await tester.pumpWidget(const SizedBox());
+    downloads.dispose();
+    store.dispose();
+  });
   testWidgets(
     'hold boosts, sliding previews, release seeks once; cancel restores speed',
     (tester) async {
