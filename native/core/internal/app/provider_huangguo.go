@@ -1257,6 +1257,8 @@ func firstMatchText(re *regexp.Regexp, raw string) string {
 	return ""
 }
 
+var tagAccessibilitySuffix = regexp.MustCompile(`(?is)<span\b[^>]*class=["'][^"']*\bsr-only\b[^"']*["'][^>]*>.*?(?:</span>|$)`)
+
 func extractTags(raw string) []string {
 	re := regexp.MustCompile(`(?is)<[^>]+class=["'][^"']*hg-tag[^"']*["'][^>]*>(.*?)</[^>]+>`)
 	seen := map[string]bool{}
@@ -1265,7 +1267,10 @@ func extractTags(raw string) []string {
 		if len(m) < 2 {
 			continue
 		}
-		v := cleanText(m[1])
+		label := m[1]
+		// Accessibility suffixes describe the linked drama, not the tag.
+		label = tagAccessibilitySuffix.ReplaceAllString(label, "")
+		v := cleanText(label)
 		if v != "" && !seen[v] {
 			seen[v] = true
 			out = append(out, v)

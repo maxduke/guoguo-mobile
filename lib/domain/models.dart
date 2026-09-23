@@ -58,7 +58,7 @@ class Drama {
       tags: (json['tags'] as List? ?? []).cast<String>(),
     );
   }
-  Drama merge(Drama patch) {
+  Drama merge(Drama patch, {bool replaceTags = false}) {
     if (patch.key != key) throw const FormatException('剧集资料不匹配');
     return Drama(
       id: id,
@@ -74,7 +74,7 @@ class Drama {
       date: patch.date.isEmpty ? date : patch.date,
       status: patch.status.isEmpty ? status : patch.status,
       vip: patch.vip ?? vip,
-      tags: patch.tags.isEmpty ? tags : patch.tags,
+      tags: replaceTags || patch.tags.isNotEmpty ? patch.tags : tags,
     );
   }
 

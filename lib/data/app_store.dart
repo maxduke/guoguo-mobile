@@ -372,9 +372,12 @@ class AppStore extends ChangeNotifier {
       final patch = Drama.fromJson(
         Map<String, dynamic>.from(result['item'] as Map),
       );
-      final updated = currentDrama(drama).merge(patch);
+      final replaceTags = drama.source == DramaSource.huangguo;
+      final updated = currentDrama(
+        drama,
+      ).merge(patch, replaceTags: replaceTags);
       details[drama.key] = updated;
-      _mergeCatalog(drama.source, [updated]);
+      _mergeCatalog(drama.source, [updated], replaceTags: replaceTags);
       if (favorites.containsKey(drama.key)) favorites[drama.key] = updated;
       final record = history[drama.key];
       if (record != null) {
@@ -410,12 +413,17 @@ class AppStore extends ChangeNotifier {
     return rows;
   }
 
-  void _mergeCatalog(DramaSource target, List<Drama> incoming) {
+  void _mergeCatalog(
+    DramaSource target,
+    List<Drama> incoming, {
+    bool replaceTags = false,
+  }) {
     final merged = {
       for (final row in catalogs[target] ?? <Drama>[]) row.key: row,
     };
     for (final row in incoming) {
-      merged[row.key] = merged[row.key]?.merge(row) ?? row;
+      merged[row.key] =
+          merged[row.key]?.merge(row, replaceTags: replaceTags) ?? row;
     }
     catalogs[target] = merged.values.toList();
   }

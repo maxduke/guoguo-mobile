@@ -38,7 +38,7 @@ func (d *Downloader) fetchDramaMetadata(ctx context.Context, drama Drama) (Drama
 		if err == nil {
 			patch.Desc = extractDescription(body)
 			patch.Intro = patch.Desc
-			patch.Tags = extractTags(body)
+			patch.Tags = extractTags(huangguoClassBlock(huangguoNonContent.ReplaceAllString(body, ""), "hg-web-detail__tags"))
 		}
 		return patch, err
 	}

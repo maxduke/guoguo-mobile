@@ -113,6 +113,31 @@ void main() {
     },
   );
 
+  test('empty Huangguo detail tags clear polluted saved metadata', () async {
+    const old = Drama(
+      id: 'huangguoai:453',
+      source: DramaSource.huangguo,
+      title: '示例',
+      tags: ['其他剧标签'],
+    );
+    final provider = UpgradeProvider()
+      ..result = {
+        'item': {...old.toJson(), 'tags': <String>[]},
+      };
+    final storage = MemoryStorage();
+    final store = AppStore(storage: storage, provider: provider);
+    store.catalogs[old.source] = [old];
+    store.favorites[old.key] = old;
+    await store.refreshDetail(old);
+    expect(store.currentDrama(old).tags, isEmpty);
+    expect(store.favorites[old.key]!.tags, isEmpty);
+    final restored = AppStore(storage: storage, provider: provider);
+    await restored.load();
+    expect(restored.currentDrama(old).tags, isEmpty);
+    restored.dispose();
+    store.dispose();
+  });
+
   test('wrong identity never replaces detail or saved records', () async {
     final provider = UpgradeProvider()
       ..result = {
