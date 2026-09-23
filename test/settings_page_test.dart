@@ -10,10 +10,17 @@ import 'widget_test.dart' show NoNetwork;
 class _CountingDownloads extends DownloadStore {
   _CountingDownloads(super.app);
   int scans = 0;
+  int bytes = 1024;
   @override
-  Future<int> usedBytes() async {
+  Future<void> refreshUsage() async {
     scans++;
-    return 1024;
+  }
+
+  @override
+  int? bytesFor(Iterable<DownloadEntry> entries) => bytes;
+  void updateUsage(int value) {
+    bytes = value;
+    notifyListeners();
   }
 }
 
@@ -40,6 +47,11 @@ void main() {
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(find.text('果果 · 2.3.4 (99)'), 300);
       expect(find.text('果果 · 2.3.4 (99)'), findsOneWidget);
+      expect(downloads.scans, 1);
+      await tester.scrollUntilVisible(find.textContaining('1.0 KB'), -200);
+      downloads.updateUsage(0);
+      await tester.pumpAndSettle();
+      expect(find.text('0 B · 在下载页按剧管理'), findsOneWidget);
       expect(downloads.scans, 1);
       await tester.pumpWidget(const SizedBox());
       downloads.dispose();

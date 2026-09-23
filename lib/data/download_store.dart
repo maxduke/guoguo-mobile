@@ -23,6 +23,29 @@ String downloadFailure(TaskRecord record) => switch (record.exception) {
   _ => record.status == TaskStatus.notFound ? '资源已失效，请重试更新资源' : '资源下载失败，请重试',
 };
 
+enum DownloadPhase {
+  queued('排队中'),
+  downloading('下载中'),
+  paused('已暂停'),
+  retrying('等待自动重试'),
+  failed('下载失败'),
+  waitingProcessing('等待整理'),
+  processing('正在整理视频'),
+  complete('已完成');
+
+  const DownloadPhase(this.label);
+  final String label;
+}
+
+String formatDownloadBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  if (bytes < 1024 * 1024 * 1024) {
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+  return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+}
+
 class DownloadEntry {
   DownloadEntry({
     required this.id,
@@ -47,23 +70,41 @@ class DownloadEntry {
   bool ready, userPaused, processing = false;
   TaskStatus status = TaskStatus.enqueued;
   double progress = 0;
+  int downloadedBytes = 0;
+  int? totalBytes;
+  bool awaitingProcessing = false;
   String? failure;
   bool get complete => ready;
   String get output => '$directory/${process ? 'video.mp4' : input}';
-  String get label =>
-      failure ??
-      (processing
-          ? '正在整理视频'
-          : switch (status) {
-              TaskStatus.enqueued => '等待下载',
-              TaskStatus.running => '下载中',
-              TaskStatus.complete => '已完成',
-              TaskStatus.paused => '已暂停',
-              TaskStatus.waitingToRetry => '等待重试',
-              TaskStatus.failed => '下载失败',
-              TaskStatus.canceled => '已取消',
-              TaskStatus.notFound => '资源已失效',
-            });
+  DownloadPhase get phase {
+    if (ready) return DownloadPhase.complete;
+    if (processing) return DownloadPhase.processing;
+    if (failure != null) return DownloadPhase.failed;
+    if (userPaused) return DownloadPhase.paused;
+    if (awaitingProcessing) return DownloadPhase.waitingProcessing;
+    return switch (status) {
+      TaskStatus.running => DownloadPhase.downloading,
+      TaskStatus.paused => DownloadPhase.paused,
+      TaskStatus.waitingToRetry => DownloadPhase.retrying,
+      TaskStatus.failed ||
+      TaskStatus.canceled ||
+      TaskStatus.notFound => DownloadPhase.failed,
+      _ => DownloadPhase.queued,
+    };
+  }
+
+  String get label => failure ?? phase.label;
+  bool get canPause =>
+      !processing &&
+      !ready &&
+      {
+        DownloadPhase.queued,
+        DownloadPhase.downloading,
+        DownloadPhase.retrying,
+        DownloadPhase.waitingProcessing,
+      }.contains(phase);
+  bool get canResume => phase == DownloadPhase.paused;
+  bool get canRetry => phase == DownloadPhase.failed;
   Map<String, dynamic> toJson() => {
     'id': id,
     'drama': drama.toJson(),
@@ -126,6 +167,11 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       _finalizing = false;
   MediaPreparer? _processor;
   final Set<String> _enqueuing = {};
+  final Map<String, int> bytesByEntry = {};
+  Future<void>? _usageRefresh;
+  bool _usageAgain = false;
+  bool get measuringUsage => _usageRefresh != null;
+  String? usageError;
   static const group = 'guoguo';
 
   Future<void> initialize() async {
@@ -232,18 +278,38 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
             entry.status = TaskStatus.failed;
             continue;
           }
+          final parts = entry.tasks.map((t) => records[t.taskId]).toList();
+          double partProgress(TaskRecord? part) =>
+              part?.status == TaskStatus.complete
+              ? 1
+              : (part?.progress ?? 0).clamp(0, 1);
+          entry.totalBytes =
+              parts.isNotEmpty &&
+                  parts.every((p) => p != null && p.expectedFileSize > 0)
+              ? parts.fold<int>(0, (total, p) => total + p!.expectedFileSize)
+              : null;
+          entry.downloadedBytes = parts.fold<int>(
+            0,
+            (total, p) =>
+                total +
+                (p != null && p.expectedFileSize > 0
+                    ? (p.expectedFileSize * partProgress(p)).round()
+                    : 0),
+          );
+          entry.progress = parts.isEmpty
+              ? 0
+              : parts.fold<double>(0, (total, p) => total + partProgress(p)) /
+                    parts.length;
+          if (entry.totalBytes != null) {
+            entry.progress = entry.downloadedBytes / entry.totalBytes!;
+          }
+          entry.awaitingProcessing =
+              parts.isNotEmpty &&
+              parts.every((p) => p?.status == TaskStatus.complete);
           if (entry.failure != null) {
             entry.status = TaskStatus.failed;
             continue;
           }
-          final parts = entry.tasks.map((t) => records[t.taskId]).toList();
-          entry.progress = parts.isEmpty
-              ? 0
-              : parts.fold<double>(
-                      0,
-                      (total, p) => total + (p?.progress ?? 0).clamp(0, 1),
-                    ) /
-                    parts.length;
           if (entry.userPaused) {
             entry.status = TaskStatus.paused;
           } else if (parts.any(
@@ -266,10 +332,15 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
             entry.status = TaskStatus.running;
           } else if (parts.any((p) => p?.status == TaskStatus.running)) {
             entry.status = TaskStatus.running;
+          } else if (parts.any((p) => p?.status == TaskStatus.waitingToRetry)) {
+            entry.status = TaskStatus.waitingToRetry;
+          } else if (parts.any((p) => p?.status == TaskStatus.paused)) {
+            entry.status = TaskStatus.paused;
           } else {
             entry.status = TaskStatus.enqueued;
           }
         }
+        if (checkFiles) await refreshUsage();
         if (!_finalizing && _foreground) {
           final ready = entries
               .where(
@@ -339,6 +410,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       } catch (_) {
         error = '下载记录保存失败，请检查设备空间';
       }
+      await _measureEntryUsage(entry);
       entry.processing = false;
       _finalizing = false;
       _processor = null;
@@ -482,43 +554,59 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> pause(DownloadEntry entry) async {
-    if (entry.ready) return;
-    if (entry.processing) throw const ProviderException('正在整理视频，请稍候');
-    entry.userPaused = true;
-    await _save();
-    for (final task in entry.tasks) {
-      final record = await driver.record(task.taskId);
-      if (record?.status == TaskStatus.running) {
-        if (!await driver.pause(task)) await driver.cancel([task.taskId]);
-      } else if (record?.status == TaskStatus.enqueued ||
-          record?.status == TaskStatus.waitingToRetry) {
-        await driver.cancel([task.taskId]);
-      }
-    }
-    await reload();
-  }
+  Future<void> pause(DownloadEntry entry) => _setPaused(entry, true);
 
-  Future<void> resume(DownloadEntry entry) async {
-    if (entry.ready) return;
-    if (entry.processing) throw const ProviderException('正在整理视频，请稍候');
-    entry.userPaused = false;
-    entry.failure = null;
-    await _save();
-    for (final task in entry.tasks) {
-      final record = await driver.record(task.taskId);
-      if (record?.status == TaskStatus.complete ||
-          record?.status == TaskStatus.running) {
-        continue;
-      }
-      if (record?.status == TaskStatus.paused && await driver.resume(task)) {
-        continue;
-      }
-      if (!await driver.enqueue(task)) {
-        throw const ProviderException('部分资源无法恢复，请重试');
-      }
+  Future<void> resume(DownloadEntry entry) => _setPaused(entry, false);
+
+  Future<void> _setPaused(DownloadEntry entry, bool paused) async {
+    if (entry.ready || !entries.contains(entry)) return;
+    if (entry.processing || !_removing.add(entry.id)) {
+      throw const ProviderException('任务正在处理中，请稍候');
     }
-    await reload();
+    try {
+      entry.userPaused = paused;
+      entry.failure = null;
+      await _save();
+      for (final task in entry.tasks) {
+        final record = await driver.record(task.taskId);
+        if (paused) {
+          if (record?.status == TaskStatus.running) {
+            if (!await driver.pause(task) &&
+                !await driver.cancel([task.taskId])) {
+              throw const ProviderException('任务未能暂停，请稍后重试');
+            }
+          } else if (record?.status == TaskStatus.enqueued ||
+              record?.status == TaskStatus.waitingToRetry) {
+            if (!await driver.cancel([task.taskId])) {
+              throw const ProviderException('排队任务未能停止，请稍后重试');
+            }
+          }
+        } else {
+          if (record?.status == TaskStatus.complete ||
+              record?.status == TaskStatus.running ||
+              record?.status == TaskStatus.enqueued) {
+            continue;
+          }
+          if (record?.status == TaskStatus.paused &&
+              await driver.resume(task)) {
+            continue;
+          }
+          if (!await driver.enqueue(task)) {
+            throw const ProviderException('部分资源无法恢复，请重试');
+          }
+        }
+      }
+    } catch (e) {
+      entry.failure = e is ProviderException
+          ? e.message
+          : '下载操作失败，请检查网络和设备空间后重试';
+      entry.status = TaskStatus.failed;
+      await _save();
+      rethrow;
+    } finally {
+      _removing.remove(entry.id);
+      await reload(verifyFiles: false);
+    }
   }
 
   DownloadEntry? entryFor(Drama drama, Episode episode) => entries
@@ -653,20 +741,120 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> remove(DownloadEntry entry) async {
     if (entry.processing) throw const ProviderException('正在整理视频，请稍候再删除');
-    if (!_removing.add(entry.id)) return;
+    if (!entries.contains(entry)) return;
+    if (!_removing.add(entry.id)) {
+      throw const ProviderException('任务正在处理中，请稍后再删除');
+    }
+    var deletingFiles = false;
+    var filesRemoved = false;
     try {
-      await driver.cancel(entry.tasks.map((t) => t.taskId));
+      if (entry.tasks.isNotEmpty &&
+          !await driver.cancel(entry.tasks.map((t) => t.taskId))) {
+        throw const ProviderException('后台下载尚未停止，文件与记录已保留，请稍后再删除');
+      }
+      final directory = Directory(entry.directory);
+      deletingFiles = true;
+      if (await directory.exists()) await directory.delete(recursive: true);
+      filesRemoved = true;
       for (final task in entry.tasks) {
         await driver.deleteRecord(task.taskId);
       }
-      final directory = Directory(entry.directory);
-      if (await directory.exists()) await directory.delete(recursive: true);
       entries.remove(entry);
-      await _save();
+      try {
+        await _save();
+      } catch (_) {
+        entries.add(entry);
+        entry.ready = false;
+        entry.failure = '文件已清理，但记录保存失败，请重试删除';
+        entry.status = TaskStatus.failed;
+        rethrow;
+      }
+      bytesByEntry.remove(entry.id);
+    } catch (_) {
+      if (deletingFiles && entries.contains(entry)) {
+        entry.ready = false;
+        entry.failure = filesRemoved
+            ? '文件已清理，但记录未能移除，请重试删除'
+            : '删除未完成，部分文件可能已清理，请重试删除';
+        entry.status = TaskStatus.failed;
+        try {
+          await _save();
+        } catch (_) {
+          error = '下载记录保存失败，请检查设备空间';
+        }
+      }
+      rethrow;
     } finally {
       _removing.remove(entry.id);
+      if (entries.contains(entry)) await _measureEntryUsage(entry);
       if (!_disposed) notifyListeners();
     }
+  }
+
+  /// Explicit refreshes scan saved files; progress events only read task records.
+  Future<void> refreshUsage() {
+    if (_disposed) return Future.value();
+    if (_usageRefresh != null) {
+      _usageAgain = true;
+      return _usageRefresh!;
+    }
+    final future = _measureUsage();
+    _usageRefresh = future;
+    return future;
+  }
+
+  Future<void> _measureUsage() async {
+    // Start after refreshUsage has registered the shared future.
+    await Future<void>.delayed(Duration.zero);
+    if (!_disposed) notifyListeners();
+    try {
+      do {
+        _usageAgain = false;
+        usageError = null;
+        for (final entry in entries.toList()) {
+          await _measureEntryUsage(entry);
+        }
+        bytesByEntry.removeWhere((id, _) => !entries.any((e) => e.id == id));
+      } while (_usageAgain && !_disposed);
+    } finally {
+      _usageRefresh = null;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  Future<void> _measureEntryUsage(DownloadEntry entry) async {
+    try {
+      var bytes = 0;
+      final directory = Directory(entry.directory);
+      if (await directory.exists()) {
+        await for (final file in directory.list(
+          recursive: true,
+          followLinks: false,
+        )) {
+          if (file is File) {
+            try {
+              bytes += await file.length();
+            } on FileSystemException {
+              if (await file.exists()) rethrow;
+            }
+          }
+        }
+      }
+      if (entries.contains(entry)) bytesByEntry[entry.id] = bytes;
+    } on FileSystemException {
+      bytesByEntry.remove(entry.id);
+      usageError = '部分文件占用暂时无法统计，下拉可重新统计';
+    }
+  }
+
+  int? bytesFor(Iterable<DownloadEntry> items) {
+    var total = 0;
+    for (final entry in items) {
+      final bytes = bytesByEntry[entry.id];
+      if (bytes == null) return null;
+      total += bytes;
+    }
+    return total;
   }
 
   Future<String?> localFile(Drama drama, Episode episode) async {
@@ -679,22 +867,6 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     return found != null && await File(found.output).exists()
         ? found.output
         : null;
-  }
-
-  Future<int> usedBytes() async {
-    if (_root == null || !await _root!.exists()) return 0;
-    var bytes = 0;
-    await for (final file in _root!.list(recursive: true, followLinks: false)) {
-      if (file is File) {
-        try {
-          bytes += await file.length();
-        } on FileSystemException {
-          // Downloads can be removed while space usage is being calculated.
-          if (await file.exists()) rethrow;
-        }
-      }
-    }
-    return bytes;
   }
 
   @override

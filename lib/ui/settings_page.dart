@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -26,7 +27,12 @@ class _SettingsPageState extends State<SettingsPage> {
   AppStore get store => widget.store;
   DownloadStore get downloads => widget.downloads;
   late final Future<PackageInfo> _packageInfo = PackageInfo.fromPlatform();
-  late final Future<int> _usedBytes = downloads.usedBytes();
+  @override
+  void initState() {
+    super.initState();
+    unawaited(downloads.refreshUsage());
+  }
+
   bool _clearing = false;
   Future<void> _export(BuildContext context) async {
     final box = context.findRenderObject() as RenderBox?;
@@ -203,17 +209,20 @@ class _SettingsPageState extends State<SettingsPage> {
               Card(
                 child: Column(
                   children: [
-                    FutureBuilder<int>(
-                      future: _usedBytes,
-                      builder: (context, snapshot) => ListTile(
-                        leading: const Icon(Icons.storage_outlined),
-                        title: const Text('已下载视频'),
-                        subtitle: Text(
-                          snapshot.hasData
-                              ? '${(snapshot.data! / 1024 / 1024).toStringAsFixed(1)} MB · 在下载页管理'
-                              : '正在统计',
-                        ),
-                      ),
+                    ListenableBuilder(
+                      listenable: downloads,
+                      builder: (context, _) {
+                        final bytes = downloads.bytesFor(downloads.entries);
+                        return ListTile(
+                          leading: const Icon(Icons.storage_outlined),
+                          title: const Text('下载文件占用'),
+                          subtitle: Text(
+                            bytes == null
+                                ? '暂未完成统计 · 在下载页下拉更新'
+                                : '${formatDownloadBytes(bytes)} · 在下载页按剧管理',
+                          ),
+                        );
+                      },
                     ),
                     ListTile(
                       leading: const Icon(Icons.cleaning_services_outlined),
