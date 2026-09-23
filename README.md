@@ -10,7 +10,13 @@
 
 <img src="screenshots/phone-light.png" width="260" alt="手机浅色界面" /> <img src="screenshots/tablet-dark.png" width="560" alt="平板深色界面" />
 
-[发现页预览](screenshots/recommendations-light.png) · [深色发现页](screenshots/recommendations-dark.png)
+[发现页预览](screenshots/recommendations-light.png) · [深色发现页](screenshots/recommendations-dark.png) · [新版详情页](screenshots/detail-phone-light.png) · [平板详情页](screenshots/detail-tablet-dark.png)
+
+## 0.6.0 更新
+
+吸收 guoapp 的播放恢复与详情交互设计：详情底部常驻播放和下载入口，选集支持定位当前；播放失败优先尝试备用线路，再有限次重新解析，保留位置与倍速。新增自动连播开关和倍速记忆，预加载等待当前播放缓冲充足后启动。iOS 继续使用现有原生播放器及后台下载路径。
+
+本轮范围、验证与后续融合计划见 [融合实施记录](docs/app-fusion.md)。流式解密内核替换、Android TV、更多站源和设备同步尚未在本轮接入。
 
 ## 0.5.0 更新
 

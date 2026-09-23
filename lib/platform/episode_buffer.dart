@@ -23,7 +23,8 @@ class _Entry<T> {
 
 /// Shares preparation between preload and playback; releases evicted results.
 class EpisodeBuffer<T> {
-  EpisodeBuffer({required this.load, required this.release});
+  EpisodeBuffer({required this.load, required this.release, this.isReusable});
+  final bool Function(T)? isReusable;
   final Future<T> Function(int, EpisodeCancellation) load;
   final Future<void> Function(T) release;
   final Map<int, _Entry<T>> _entries = {};
@@ -32,7 +33,13 @@ class EpisodeBuffer<T> {
   bool contains(int index) => _entries.containsKey(index);
   Future<T> prepare(int index) {
     if (_closed) return Future.error(EpisodeCancelled());
-    final existing = _entries[index];
+    var existing = _entries[index];
+    if (existing?.value case final value?) {
+      if (isReusable?.call(value) == false) {
+        evict(index);
+        existing = null;
+      }
+    }
     if (existing != null) return existing.future;
     final entry = _Entry<T>();
     _entries[index] = entry;

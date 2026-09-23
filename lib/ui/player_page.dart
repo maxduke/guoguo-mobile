@@ -17,6 +17,7 @@ import '../data/app_store.dart';
 import '../data/download_store.dart';
 import '../domain/models.dart';
 import '../domain/playback_diagnostic.dart';
+import '../domain/playback_policy.dart';
 import '../platform/episode_buffer.dart';
 import '../platform/media_preparer.dart';
 import '../platform/provider_client.dart';
@@ -50,6 +51,7 @@ class PlayerPage extends StatefulWidget {
 
 class _Playable {
   _Playable(this.preparer, this.media, this.path, this.timing);
+  final DateTime created = DateTime.now();
   final PreparationTiming timing;
   final MediaPreparer preparer;
   final ResolvedMedia? media;
@@ -62,6 +64,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   late final BetterPlayerController _player;
   final GlobalKey _playerKey = GlobalKey();
   final Map<int, int> _qualities = {};
+  final Map<int, ResolvedMedia> _resolved = {};
+  final PlaybackRecovery _recovery = PlaybackRecovery();
+  final PlaybackHealth _health = PlaybackHealth();
+  int? _recoveryGeneration;
+  bool get _recovering => _recoveryGeneration == _generation;
+  DateTime _prefetchRetryAt = DateTime(2000);
+  Timer? _healthTimer;
   _Playable? _active;
   Future<void> _paused = Future.value();
   Future<void> _sourceSetup = Future.value();
@@ -85,8 +94,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     _index = widget.initialIndex;
+    _speed = widget.store.playbackSpeed;
     _pages = PageController(initialPage: _index);
-    _buffer = EpisodeBuffer(load: _prepare, release: _release);
+    _buffer = EpisodeBuffer(
+      load: _prepare,
+      release: _release,
+      isReusable: (item) =>
+          !item.path.startsWith('http') ||
+          DateTime.now().difference(item.created) < const Duration(minutes: 2),
+    );
     _player = BetterPlayerController(
       BetterPlayerConfiguration(
         autoPlay: false,
@@ -99,6 +115,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       ),
     )..setBetterPlayerGlobalKey(_playerKey);
     _player.addEventsListener(_event);
+    _healthTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => _checkHealth(),
+    );
     WidgetsBinding.instance.addObserver(this);
     widget.store.addListener(_preferencesChanged);
     _network = Connectivity().onConnectivityChanged.listen((states) {
@@ -139,7 +159,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     var stageName = 'local';
     final preparer = MediaPreparer();
     cancellation.onCancel = () => unawaited(preparer.cancel());
-    ResolvedMedia? media;
+    ResolvedMedia? media = _resolved.remove(index);
     try {
       cancellation.check();
       var path = await widget.downloads.localFile(
@@ -155,7 +175,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         stageName = 'resolve';
         _phase(index, '正在获取播放资源…');
         stage.start();
-        media = await widget.store.provider.resolve(
+        media ??= await widget.store.provider.resolve(
           widget.drama,
           widget.episodes[index],
           quality: _qualities[index] ?? 0,
@@ -171,6 +191,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         path = await preparer.prepare(media);
         timing.prepareMs = stage.elapsedMilliseconds;
         cancellation.check();
+      }
+      if (timing.local && media != null) {
+        await _releaseMedia(media);
+        media = null;
       }
       return _Playable(preparer, media, path, timing);
     } catch (_) {
@@ -225,6 +249,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   void _pageChanged(int index) {
     if (index == _index) return;
+    _recovery.reset();
+    _health.reset();
+    _prefetchRetryAt = DateTime(2000);
     _finishAttempt(PlaybackResult.cancelled);
     _timings.removeWhere((key, _) => (key - index).abs() > 1);
     _save();
@@ -306,6 +333,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           .stream
           .listen(_nativeEvent);
       _active = item;
+      _health.reset();
       await _applyVideoFit();
       final record = widget.store.history[widget.drama.key];
       var start =
@@ -346,6 +374,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           _loading = false;
           _error = error is EpisodeCancelled ? '准备已取消，请重试' : '$error';
         });
+        if (error is! EpisodeCancelled) unawaited(_recover());
       }
     }
   }
@@ -360,20 +389,114 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     );
   }
 
-  void _retry({int? quality}) {
+  void _retry({int? quality, bool automatic = false, ResolvedMedia? resolved}) {
+    if (_recovering && !automatic) return;
+    if (!automatic) _recovery.reset();
+    _health.reset();
     _finishAttempt(PlaybackResult.cancelled);
     _save();
     final position = _active == null
         ? null
         : _player.videoPlayerController?.value.position;
+    _paused = _active == null ? Future.value() : _player.pause();
+    unawaited(_paused.catchError((Object _) {}));
     _active = null;
     if (quality != null) _qualities[_index] = quality;
     _buffer.evict(_index);
+    if (resolved != null) _resolved[_index] = resolved;
     setState(() {
       _loading = true;
       _error = null;
     });
     unawaited(_activate(resume: position == null, position: position));
+  }
+
+  void _checkHealth() {
+    if (!mounted) return;
+    final value = _player.videoPlayerController?.value;
+    final stalled = _health.stalled(
+      value?.position ?? Duration.zero,
+      DateTime.now(),
+      watching:
+          _foreground &&
+          !_loading &&
+          !_recovering &&
+          _error == null &&
+          !_scrubbing &&
+          !_modal &&
+          _active != null &&
+          value?.isPlaying == true,
+    );
+    if (stalled) unawaited(_recover());
+    _schedulePrefetch();
+  }
+
+  Future<void> _recover() async {
+    if (_recovering ||
+        !mounted ||
+        !_foreground ||
+        widget.localOnly ||
+        widget.store.offline ||
+        _active?.timing.local == true) {
+      return;
+    }
+    var media = _active?.media ?? _buffer.peek(_index)?.media;
+    var action = _recovery.next(alternative: media?.hasAlternative == true);
+    if (action == RecoveryAction.stop) {
+      if (_active != null) unawaited(_player.pause());
+      setState(() {
+        _error = '自动恢复未成功，请重试或切换分集';
+        _loading = false;
+      });
+      return;
+    }
+    final generation = _generation;
+    _recoveryGeneration = generation;
+    _preloadTimer?.cancel();
+    _buffer.retain({_index});
+    setState(() {
+      _error = null;
+      _loading = true;
+      _loadingPhase = action == RecoveryAction.alternative
+          ? '正在切换备用线路…'
+          : '正在重新获取播放资源…';
+    });
+    ResolvedMedia? replacement;
+    try {
+      if (_active != null) await _player.pause();
+      if (!mounted || generation != _generation) return;
+      if (action == RecoveryAction.alternative) {
+        try {
+          replacement = await widget.store.provider.fallback(media!);
+        } catch (_) {
+          if (!mounted || generation != _generation) return;
+          action = _recovery.next(alternative: false);
+        }
+      }
+      if (!mounted || generation != _generation) return;
+      if (action == RecoveryAction.stop) {
+        setState(() {
+          _error = '自动恢复未成功，请重试或切换分集';
+          _loading = false;
+        });
+      } else {
+        _finishAttempt(PlaybackResult.failed);
+        final next = replacement;
+        replacement = null;
+        _retry(automatic: true, resolved: next);
+      }
+    } catch (_) {
+      if (mounted && generation == _generation) {
+        setState(() {
+          _error = '自动恢复未成功，请重试或切换分集';
+          _loading = false;
+        });
+      }
+    } finally {
+      if (replacement != null) await _releaseMedia(replacement);
+      if (_recoveryGeneration == generation) _recoveryGeneration = null;
+      if (generation == _generation) _health.reset();
+    }
   }
 
   void _event(BetterPlayerEvent event) {
@@ -383,7 +506,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         if (_loading || _active == null) break;
         _save();
         if (!_foreground && !_pipActive) break;
-        if (_index + 1 < widget.episodes.length) {
+        if (widget.store.autoAdvance && _index + 1 < widget.episodes.length) {
           _goTo(_index + 1);
         } else {
           _showControls();
@@ -402,17 +525,21 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         if (DateTime.now().difference(_lastSaved).inSeconds >= 10) _save();
         break;
       case BetterPlayerEventType.exception:
+        if (_loading || _recovering || _active == null) break;
         _finishAttempt(PlaybackResult.failed);
         setState(() {
           _error = '视频暂时无法播放，请重试或切换分集';
           _loading = false;
         });
+        unawaited(_recover());
         break;
       case BetterPlayerEventType.play:
         _armHide();
         _schedulePrefetch();
         break;
       case BetterPlayerEventType.pause:
+        _health.reset();
+        _preloadTimer?.cancel();
         _hideTimer?.cancel();
         break;
       case BetterPlayerEventType.pipStart:
@@ -469,8 +596,34 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
   }
 
+  bool get _prefetchReady {
+    final value = _player.videoPlayerController?.value;
+    if (value == null) return false;
+    var ahead = Duration.zero;
+    for (final range in value.buffered) {
+      if (range.start <= value.position &&
+          range.end > value.position &&
+          range.end - value.position > ahead) {
+        ahead = range.end - value.position;
+      }
+    }
+    return shouldPrefetch(
+      position: value.position,
+      duration: value.duration ?? Duration.zero,
+      bufferedAhead: ahead,
+      playing: value.isPlaying,
+      buffering: value.isBuffering,
+      local: _active?.timing.local == true,
+    );
+  }
+
   void _schedulePrefetch() {
-    if (!widget.store.prefetch ||
+    if (_error != null ||
+        _recovering ||
+        !_prefetchReady ||
+        _preloadTimer?.isActive == true ||
+        DateTime.now().isBefore(_prefetchRetryAt) ||
+        !widget.store.prefetch ||
         (!_foreground && !_pipActive) ||
         _active == null ||
         _loading ||
@@ -484,6 +637,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       try {
         final states = await Connectivity().checkConnectivity();
         if (!mounted ||
+            _loading ||
+            _recovering ||
+            !_prefetchReady ||
             index != _index ||
             (!_foreground && !_pipActive) ||
             !widget.store.prefetch ||
@@ -494,16 +650,20 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         }
         await _buffer.prepare(index + 1);
       } catch (_) {
-        /* Speculative failure must not interrupt this episode. */
+        if (mounted && index == _index) {
+          _prefetchRetryAt = DateTime.now().add(const Duration(seconds: 30));
+        }
       }
     });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _health.reset();
     _foreground = state == AppLifecycleState.resumed;
     if (!_foreground) {
       _preloadTimer?.cancel();
+      if (!_pipActive) _buffer.retain({_index});
       _save();
     } else {
       if (_pendingPlay) {
@@ -612,7 +772,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   Future<void> _showEpisodes() => _sheet(
     SizedBox(
-      height: MediaQuery.sizeOf(context).height * .55,
+      height: math.min(600, MediaQuery.sizeOf(context).height * .85),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -663,6 +823,20 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         child: ListView(
           shrinkWrap: true,
           children: [
+            StatefulBuilder(
+              builder: (context, update) => SwitchListTile(
+                title: const Text('自动播放下一集'),
+                subtitle: const Text('关闭后，播完停在当前集'),
+                value: widget.store.autoAdvance,
+                onChanged: (value) async {
+                  await perform(
+                    context,
+                    () => widget.store.setPlayback(advance: value),
+                  );
+                  if (context.mounted) update(() {});
+                },
+              ),
+            ),
             const ListTile(
               leading: Icon(Icons.touch_app_outlined),
               title: Text('播放手势'),
@@ -844,6 +1018,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         onEpisodes: _showEpisodes,
         onSpeed: (speed) {
           setState(() => _speed = speed);
+          unawaited(
+            perform(context, () => widget.store.setPlayback(speed: speed)),
+          );
           if (_active != null) unawaited(_player.setSpeed(speed));
           _armHide();
         },
@@ -879,53 +1056,57 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           IgnorePointer(
             child: PlayerViewport(playerKey: _playerKey, controller: _player),
           ),
-          PlayerGestures(
-            onTap: _tap,
-            enabled: !_locked && !_loading && _active != null,
-            position: () =>
-                (_active == null
-                    ? null
-                    : _player
-                          .videoPlayerController
-                          ?.value
-                          .position
-                          .inMilliseconds
-                          .toDouble()) ??
-                0,
-            duration: () =>
-                (_active == null
-                    ? null
-                    : _player
-                          .videoPlayerController
-                          ?.value
-                          .duration
-                          ?.inMilliseconds
-                          .toDouble()) ??
-                0,
-            onBoost: (boost) {
-              if (_active != null) {
-                unawaited(_player.setSpeed(boost ? 2 : _speed));
-              }
-              _scrubbing = boost;
-              _armHide();
-            },
-            onScrub: (value) {
-              _scrubbing = value;
-              _armHide();
-            },
-            onSeek: (value) {
-              if (_active != null) {
-                unawaited(
-                  _player.seekTo(Duration(milliseconds: value.round())),
-                );
-              }
-            },
-            child: EpisodePager(
-              controller: _pages,
-              count: widget.episodes.length,
-              onChanged: _pageChanged,
-              builder: _page,
-              locked: _locked,
+          Semantics(
+            container: true,
+            explicitChildNodes: true,
+            child: PlayerGestures(
+              onTap: _tap,
+              enabled: !_locked && !_loading && _active != null,
+              position: () =>
+                  (_active == null
+                      ? null
+                      : _player
+                            .videoPlayerController
+                            ?.value
+                            .position
+                            .inMilliseconds
+                            .toDouble()) ??
+                  0,
+              duration: () =>
+                  (_active == null
+                      ? null
+                      : _player
+                            .videoPlayerController
+                            ?.value
+                            .duration
+                            ?.inMilliseconds
+                            .toDouble()) ??
+                  0,
+              onBoost: (boost) {
+                if (_active != null) {
+                  unawaited(_player.setSpeed(boost ? 2 : _speed));
+                }
+                _scrubbing = boost;
+                _armHide();
+              },
+              onScrub: (value) {
+                _scrubbing = value;
+                _armHide();
+              },
+              onSeek: (value) {
+                if (_active != null) {
+                  unawaited(
+                    _player.seekTo(Duration(milliseconds: value.round())),
+                  );
+                }
+              },
+              child: EpisodePager(
+                controller: _pages,
+                count: widget.episodes.length,
+                onChanged: _pageChanged,
+                builder: _page,
+                locked: _locked,
+              ),
             ),
           ),
           Positioned(
@@ -959,79 +1140,85 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               ),
             ),
           IgnorePointer(
-            ignoring: !_controls || _locked,
-            child: AnimatedOpacity(
-              opacity: _controls && !_locked ? 1 : 0,
-              duration: const Duration(milliseconds: 180),
-              child: Column(
-                children: [
-                  DecoratedBox(
-                    key: const Key('playerTopChrome'),
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Colors.black87, Colors.transparent],
+            ignoring: !(_controls || _loading || _error != null) || _locked,
+            child: ExcludeSemantics(
+              excluding: !(_controls || _loading || _error != null) || _locked,
+              child: AnimatedOpacity(
+                alwaysIncludeSemantics: true,
+                opacity: (_controls || _loading || _error != null) && !_locked
+                    ? 1
+                    : 0,
+                duration: const Duration(milliseconds: 180),
+                child: Column(
+                  children: [
+                    DecoratedBox(
+                      key: const Key('playerTopChrome'),
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.black87, Colors.transparent],
+                        ),
                       ),
-                    ),
-                    child: SafeArea(
-                      bottom: false,
-                      child: Row(
-                        children: [
-                          IconButton(
-                            tooltip: '返回',
-                            onPressed: () => Navigator.maybePop(context),
-                            icon: const Icon(
-                              Icons.arrow_back,
-                              color: Colors.white,
-                            ),
-                          ),
-                          Expanded(
-                            child: Text(
-                              '${widget.drama.title} · 第 ${widget.episodes[_index].number} 集',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                      child: SafeArea(
+                        bottom: false,
+                        child: Row(
+                          children: [
+                            IconButton(
+                              tooltip: '返回',
+                              onPressed: () => Navigator.maybePop(context),
+                              icon: const Icon(
+                                Icons.arrow_back,
                                 color: Colors.white,
-                                fontSize: 15,
                               ),
                             ),
-                          ),
-                          if (Platform.isIOS)
-                            const SizedBox(
-                              width: 44,
-                              height: 44,
-                              child: UiKitView(viewType: 'guoguo/airplay'),
+                            Expanded(
+                              child: Text(
+                                '${widget.drama.title} · 第 ${widget.episodes[_index].number} 集',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                ),
+                              ),
                             ),
-                          IconButton(
-                            tooltip: '更多播放设置',
-                            onPressed: _showMore,
-                            icon: const Icon(
-                              Icons.more_horiz,
-                              color: Colors.white,
+                            if (Platform.isIOS)
+                              const SizedBox(
+                                width: 44,
+                                height: 44,
+                                child: UiKitView(viewType: 'guoguo/airplay'),
+                              ),
+                            IconButton(
+                              tooltip: '更多播放设置',
+                              onPressed: _showMore,
+                              icon: const Icon(
+                                Icons.more_horiz,
+                                color: Colors.white,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                  const Spacer(),
-                  DecoratedBox(
-                    key: const Key('playerBottomChrome'),
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Colors.transparent, Colors.black87],
+                    const Spacer(),
+                    DecoratedBox(
+                      key: const Key('playerBottomChrome'),
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.transparent, Colors.black87],
+                        ),
+                      ),
+                      child: SafeArea(
+                        top: false,
+                        minimum: const EdgeInsets.only(bottom: 4),
+                        child: _transport(),
                       ),
                     ),
-                    child: SafeArea(
-                      top: false,
-                      minimum: const EdgeInsets.only(bottom: 4),
-                      child: _transport(),
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -1052,6 +1239,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _network?.cancel();
     _player.removeEventsListener(_event);
     if (_nativeEvents case final events?) unawaited(events.cancel());
+    _healthTimer?.cancel();
+    for (final media in _resolved.values) {
+      unawaited(_releaseMedia(media));
+    }
+    _resolved.clear();
     _buffer.close();
     _player.dispose(forceDispose: true);
     _pages.dispose();

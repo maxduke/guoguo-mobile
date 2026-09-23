@@ -12,7 +12,7 @@ import 'widget_test.dart' show NoNetwork;
 
 void main() {
   testWidgets(
-    'default player hides chrome; tapping reveals controls within safe areas',
+    'failed player keeps exit and episode controls visible within safe areas',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -61,7 +61,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.byTooltip('返回').hitTestable(), findsNothing);
+      expect(find.byTooltip('返回').hitTestable(), findsOneWidget);
       await tester.tapAt(const Offset(195, 300));
       // A single tap responds without waiting for a possible double tap.
       await tester.pump();
@@ -89,7 +89,7 @@ void main() {
       await tester.pump();
       expect(
         tester.widget<AnimatedOpacity>(find.byType(AnimatedOpacity)).opacity,
-        0,
+        1,
       );
       await tester.pumpWidget(const SizedBox());
       downloads.dispose();
@@ -219,7 +219,7 @@ void main() {
     expect(pager.page, 0);
     expect(
       tester.widget<AnimatedOpacity>(find.byType(AnimatedOpacity)).opacity,
-      0,
+      1,
     );
     final normalSwipe = await tester.startGesture(const Offset(350, 600));
     await normalSwipe.moveBy(const Offset(0, -220));

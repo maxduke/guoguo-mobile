@@ -163,12 +163,15 @@ class ResolvedMedia {
       headers = Map<String, String>.from(json['headers'] as Map? ?? {}),
       qualities = (json['qualities'] as List? ?? []).cast<int>(),
       quality = json['quality'] as int? ?? 0,
+      routeIndex = json['routeIndex'] as int? ?? 0,
+      routeCount = json['routeCount'] as int? ?? 1,
       hls = json['hls'] == true,
       castDirect = json['castDirect'] == true;
   final String url, remoteUrl, session, contentKey;
   final Map<String, String> headers;
   final List<int> qualities;
-  final int quality;
+  final int quality, routeIndex, routeCount;
+  bool get hasAlternative => session.isNotEmpty && routeIndex + 1 < routeCount;
   final bool hls, castDirect;
 }
 
