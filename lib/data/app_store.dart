@@ -53,6 +53,7 @@ class AppStore extends ChangeNotifier {
   ThemeMode themeMode = ThemeMode.system;
   bool cellularDownloads = false, cellularPrefetch = false, prefetch = true;
   bool autoAdvance = true;
+  bool progressivePreparation = false;
   double playbackSpeed = 1;
   bool offline = false;
   String? persistenceError;
@@ -92,6 +93,7 @@ class AppStore extends ChangeNotifier {
     cellularPrefetch = state['cellularPrefetch'] == true;
     prefetch = state['prefetch'] != false;
     autoAdvance = state['autoAdvance'] != false;
+    progressivePreparation = state['progressivePreparation'] == true;
     final speed = state['playbackSpeed'];
     if (speed is num && const [.75, 1, 1.25, 1.5, 2].contains(speed)) {
       playbackSpeed = speed.toDouble();
@@ -147,6 +149,7 @@ class AppStore extends ChangeNotifier {
     'cellularPrefetch': cellularPrefetch,
     'prefetch': prefetch,
     'autoAdvance': autoAdvance,
+    'progressivePreparation': progressivePreparation,
     'playbackSpeed': playbackSpeed,
     'hideVip': hideVip,
     'recentSearches': recentSearches,
@@ -225,11 +228,16 @@ class AppStore extends ChangeNotifier {
     await persist();
   }
 
-  Future<void> setPlayback({bool? advance, double? speed}) async {
+  Future<void> setPlayback({
+    bool? advance,
+    double? speed,
+    bool? progressive,
+  }) async {
     if (speed != null && !const [.75, 1, 1.25, 1.5, 2].contains(speed)) {
       throw ArgumentError.value(speed, 'speed');
     }
     autoAdvance = advance ?? autoAdvance;
+    progressivePreparation = progressive ?? progressivePreparation;
     playbackSpeed = speed ?? playbackSpeed;
     notifyListeners();
     await persist();

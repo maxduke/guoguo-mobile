@@ -46,6 +46,32 @@ AppStore fixture() {
 }
 
 void main() {
+  testWidgets(
+    'continue card shows watched time when progressive total is unknown',
+    (tester) async {
+      final store = fixture();
+      store.history[drama.key] = WatchRecord(
+        drama: drama,
+        episodeId: 'e4',
+        episodeIndex: 4,
+        positionMs: 65000,
+        durationMs: 0,
+        updatedAt: DateTime.now(),
+      );
+      final downloads = RangeDownloads(store);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomePage(store: store, downloads: downloads, autoLoad: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('第 5 集 · 已看 1分5秒'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      downloads.dispose();
+      store.dispose();
+    },
+  );
+
   testWidgets('continue card pushes player directly at saved episode', (
     tester,
   ) async {

@@ -16,12 +16,16 @@ class PlaybackDiagnostic {
     required this.setupMs,
     required this.waitMs,
     required this.elapsedMs,
+    this.preparation = 'direct',
+    this.compatibilityFallback = false,
   });
   final DramaSource source;
   final int episode, resolveMs, prepareMs, setupMs, waitMs, elapsedMs;
   final DateTime at;
   final PlaybackResult result;
   final bool local, preloaded;
+  final String preparation;
+  final bool compatibilityFallback;
   Map<String, dynamic> toJson() => {
     'source': source.name,
     'episode': episode,
@@ -34,6 +38,8 @@ class PlaybackDiagnostic {
     'setupMs': setupMs,
     'waitMs': waitMs,
     'elapsedMs': elapsedMs,
+    'preparation': preparation,
+    'compatibilityFallback': compatibilityFallback,
   };
   factory PlaybackDiagnostic.fromJson(Map<String, dynamic> json) =>
       PlaybackDiagnostic(
@@ -48,12 +54,22 @@ class PlaybackDiagnostic {
         setupMs: json['setupMs'] as int,
         waitMs: json['waitMs'] as int,
         elapsedMs: json['elapsedMs'] as int,
+        preparation:
+            const {
+              'direct',
+              'complete',
+              'progressive',
+            }.contains(json['preparation'])
+            ? json['preparation'] as String
+            : 'direct',
+        compatibilityFallback: json['compatibilityFallback'] == true,
       );
 }
 
 class PreparationTiming {
   int resolveMs = 0, prepareMs = 0, setupMs = 0;
-  bool local = false;
+  bool local = false, compatibilityFallback = false;
+  String preparation = 'direct';
 }
 
 class PlaybackAttempt {
@@ -87,6 +103,8 @@ class PlaybackAttempt {
       setupMs: timing.setupMs,
       waitMs: waitMs,
       elapsedMs: clock.elapsedMilliseconds,
+      preparation: timing.preparation,
+      compatibilityFallback: timing.compatibilityFallback,
     );
   }
 }

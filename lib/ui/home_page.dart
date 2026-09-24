@@ -780,7 +780,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '第 ${record.episodeIndex + 1} 集 · 已看 ${(record.progress * 100).round()}%',
+                    '第 ${record.episodeIndex + 1} 集 · 已看 ${record.durationMs > 0 ? '${(record.progress * 100).round()}%' : '${record.positionMs ~/ 60000}分${record.positionMs ~/ 1000 % 60}秒'}',
                     style: const TextStyle(fontSize: 12),
                   ),
                 ],
