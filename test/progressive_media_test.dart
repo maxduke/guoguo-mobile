@@ -61,6 +61,23 @@ Future<HttpClientResponse> _request(
   return request.close();
 }
 
+Future<void> _waitForDuration(ProgressiveMedia media, Duration target) async {
+  if (media.timeline.value.duration >= target) return;
+  final reached = Completer<void>();
+  void check() {
+    if (media.timeline.value.duration >= target && !reached.isCompleted) {
+      reached.complete();
+    }
+  }
+
+  media.timeline.addListener(check);
+  try {
+    await reached.future.timeout(const Duration(seconds: 3));
+  } finally {
+    media.timeline.removeListener(check);
+  }
+}
+
 void main() {
   late Directory dir;
   setUp(
@@ -81,6 +98,8 @@ void main() {
       await _writeReady(dir);
       final url = Uri.parse(await opening);
       expect(media.complete, isFalse);
+      expect(media.timeline.value.duration, const Duration(seconds: 2));
+      expect(media.timeline.value.complete, isFalse);
       expect(url.host, '127.0.0.1');
 
       final playlist = await _request(url);
@@ -146,9 +165,9 @@ void main() {
       media.failure = null;
       await _writeReady(dir, ended: true);
       job.finish();
-      await job.done;
-      await Future<void>.delayed(Duration.zero);
+      await media.finished;
       expect(media.complete, isTrue);
+      expect(media.timeline.value.complete, isTrue);
       await media.close();
       expect(job.cancellations, 0);
     },
@@ -162,7 +181,117 @@ void main() {
       media.start(startupTimeout: const Duration(milliseconds: 200)),
       throwsA(isA<ProviderException>()),
     );
+    await expectLater(media.finished, throwsA(isA<ProviderException>()));
+    expect(media.timeline.value.complete, isFalse);
     await media.close();
+  });
+
+  test(
+    'timeline grows from published EXTINF pairs and finalizes after ENDLIST',
+    () async {
+      final job = _Job();
+      final media = ProgressiveMedia(dir, job);
+      await _writeReady(dir);
+      await media.start();
+      expect(media.timeline.value.duration, const Duration(seconds: 2));
+
+      final updates = <ProgressiveTimeline>[];
+      void record() => updates.add(media.timeline.value);
+      media.timeline.addListener(record);
+      await File('${dir.path}/segment_00001.m4s').writeAsBytes([9]);
+      await File('${dir.path}/index.m3u8').writeAsString(
+        '''$_openPlaylist#EXTINF:1.500000,
+segment_00001.m4s
+''',
+      );
+      await _waitForDuration(media, const Duration(milliseconds: 3500));
+      expect(media.timeline.value.complete, isFalse);
+      expect(updates.single.duration, const Duration(milliseconds: 3500));
+
+      await File('${dir.path}/index.m3u8').writeAsString(
+        '''$_openPlaylist#EXTINF:1.500000,
+segment_00001.m4s
+#EXT-X-ENDLIST
+''',
+      );
+      job.finish();
+      await media.finished;
+      expect(media.timeline.value.duration, const Duration(milliseconds: 3500));
+      expect(media.timeline.value.complete, isTrue);
+      expect(updates.last.complete, isTrue);
+      media.timeline.removeListener(record);
+      await media.close();
+    },
+  );
+
+  test('invalid or incomplete playlists never invent a duration', () async {
+    final invalid = <String>[
+      _openPlaylist.replaceFirst('2.000000', 'NaN'),
+      _openPlaylist.replaceFirst('2.000000', 'Infinity'),
+      _openPlaylist.replaceFirst('2.000000', '0'),
+      _openPlaylist.replaceFirst('2.000000,', '2.000000'),
+      _openPlaylist.replaceFirst('segment_00000.m4s\n', ''),
+      _openPlaylist.trimRight(),
+      _openPlaylist.replaceFirst('segment_00000.m4s', 'segment_00001.m4s'),
+    ];
+    for (var i = 0; i < invalid.length; i++) {
+      final caseDir = await Directory('${dir.path}/case-$i').create();
+      await File('${caseDir.path}/init.mp4').writeAsBytes([1]);
+      await File('${caseDir.path}/segment_00000.m4s').writeAsBytes([2]);
+      await File('${caseDir.path}/index.m3u8').writeAsString(invalid[i]);
+      final job = _Job()..finish();
+      final media = ProgressiveMedia(caseDir, job);
+      await expectLater(media.start(), throwsA(isA<ProviderException>()));
+      await expectLater(media.finished, throwsA(isA<ProviderException>()));
+      expect(media.timeline.value.duration, Duration.zero, reason: 'case $i');
+      await media.close();
+    }
+  });
+
+  test(
+    'malformed update preserves the last valid range and fails finalization',
+    () async {
+      await _writeReady(dir);
+      final job = _Job();
+      final media = ProgressiveMedia(dir, job);
+      await media.start();
+      await File('${dir.path}/segment_00001.m4s').writeAsBytes([9]);
+      await File('${dir.path}/index.m3u8').writeAsString(
+        '''$_openPlaylist#EXTINF:Infinity,
+segment_00001.m4s
+#EXT-X-ENDLIST
+''',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      expect(media.timeline.value.duration, const Duration(seconds: 2));
+      expect(media.timeline.value.complete, isFalse);
+      job.finish();
+      await expectLater(media.finished, throwsA(isA<ProviderException>()));
+      expect(media.timeline.value.duration, const Duration(seconds: 2));
+      expect(media.timeline.value.complete, isFalse);
+      await media.close();
+    },
+  );
+
+  test('cancel stops observation before notifier disposal', () async {
+    await _writeReady(dir);
+    final job = _Job();
+    final media = ProgressiveMedia(dir, job);
+    await media.start();
+    var notifications = 0;
+    void record() => notifications++;
+    media.timeline.addListener(record);
+    media.timeline.removeListener(record);
+    await media.close();
+    await File('${dir.path}/segment_00001.m4s').writeAsBytes([9]);
+    await File('${dir.path}/index.m3u8').writeAsString(
+      '''$_openPlaylist#EXTINF:2,
+segment_00001.m4s
+''',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    expect(notifications, 0);
+    expect(media.timeline.value.duration, const Duration(seconds: 2));
   });
 
   test(

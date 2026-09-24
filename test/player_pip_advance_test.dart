@@ -85,6 +85,9 @@ class _NativePlayer {
   static const connectivityStatus = MethodChannel(
     'dev.fluttercommunity.plus/connectivity_status',
   );
+  int hlsDurationMs = 30000, positionMs = 0;
+  bool followSeeks = false;
+  final seeks = <int>[];
   final sources = <String>[];
   final formats = <Object?>[];
   final plays = <Object?>[];
@@ -104,7 +107,9 @@ class _NativePlayer {
         formats.add(source['videoFormat']);
         scheduleMicrotask(
           () => emit('initialized', {
-            'duration': 30000,
+            'duration': (source['uri'] as String).endsWith('.m3u8')
+                ? hlsDurationMs
+                : 30000,
             'width': 320.0,
             'height': 180.0,
           }),
@@ -113,7 +118,12 @@ class _NativePlayer {
       if (call.method == 'play') plays.add(args?['textureId']);
       if (call.method == 'pause') pauses.add(args?['textureId']);
       if (call.method == 'isPictureInPictureSupported') return true;
-      if (call.method == 'position') return 0;
+      if (call.method == 'seekTo') {
+        final target = args!['location'] as int;
+        seeks.add(target);
+        if (followSeeks) positionMs = target;
+      }
+      if (call.method == 'position') return positionMs;
       return null;
     });
     messenger.setMockMethodCallHandler(eventChannel, (_) async => null);
@@ -183,12 +193,15 @@ class _Routes implements ProviderClient {
 class _ProgressivePreparer extends MediaPreparer {
   bool requested = false, cancelled = false, disposed = false;
   bool produced = false;
+  ValueNotifier<ProgressiveTimeline>? preparedTimeline;
+  @override
+  ValueNotifier<ProgressiveTimeline>? get timeline => preparedTimeline;
   Completer<void>? readyGate;
   ProviderException? problem;
   @override
   bool get streaming => requested;
   @override
-  bool get complete => produced;
+  bool get complete => preparedTimeline?.value.complete ?? produced;
   @override
   ProviderException? get failure => problem;
   @override
@@ -385,6 +398,194 @@ void main() {
       expect(first.disposed, isTrue);
       expect(platform.sources, hasLength(1));
       await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'indefinite HLS duration grows with fragments and supports real progress, paused seek and completion',
+    (tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final platform = _NativePlayer()
+        ..hlsDurationMs = 0
+        ..followSeeks = true
+        ..install();
+      addTearDown(platform.uninstall);
+      final store = AppStore(storage: MemoryStorage(), provider: _Routes())
+        ..progressivePreparation = true
+        ..prefetch = false;
+      final downloads = _OnlineDownloads(store);
+      final timeline = ValueNotifier(
+        const ProgressiveTimeline(
+          duration: Duration(seconds: 2),
+          complete: false,
+        ),
+      );
+      final job = _ProgressivePreparer()..preparedTimeline = timeline;
+      addTearDown(() {
+        timeline.dispose();
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: 'fixture',
+              source: DramaSource.hongguo,
+              title: '时间轴',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+            ],
+            initialIndex: 0,
+            preparerFactory: () => job,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final player = tester
+          .widget<BetterPlayer>(find.byType(BetterPlayer))
+          .controller;
+      expect(
+        player.videoPlayerController!.value.duration,
+        const Duration(seconds: 2),
+      );
+      platform.positionMs = 1000;
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(
+        player.videoPlayerController!.value.position,
+        const Duration(seconds: 1),
+      );
+      expect(
+        tester.widget<PlayerTransport>(find.byType(PlayerTransport)).position,
+        1000,
+      );
+      timeline.value = const ProgressiveTimeline(
+        duration: Duration(seconds: 8),
+        complete: false,
+      );
+      await tester.pump();
+      expect(tester.widget<Slider>(find.byType(Slider)).max, 8000);
+      await tester.tapAt(const Offset(400, 300));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('暂停'));
+      await tester.pump();
+      // Route a completed scrub through the actual UI callback and native channel.
+      tester.widget<Slider>(find.byType(Slider)).onChangeEnd!(4000);
+      await tester.pumpAndSettle();
+      expect(platform.seeks.last, 4000);
+      expect(player.isPlaying(), isFalse);
+      expect(platform.sources, hasLength(1));
+      expect(
+        tester.widget<PlayerTransport>(find.byType(PlayerTransport)).position,
+        4000,
+      );
+      timeline.value = const ProgressiveTimeline(
+        duration: Duration(seconds: 8),
+        complete: true,
+      );
+      await tester.pump();
+      expect(
+        tester.widget<PlayerTransport>(find.byType(PlayerTransport)).preparing,
+        isFalse,
+      );
+      await tester.tap(find.byTooltip('播放'));
+      await tester.pump();
+      platform.emit('completed');
+      await tester.pumpAndSettle();
+      expect(platform.sources, hasLength(1));
+      expect(store.history.values.single.durationMs, 8000);
+      expect(store.history.values.single.positionMs, 8000);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'partial timeline preserves unknown total in history and detaches on episode change',
+    (tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final platform = _NativePlayer()
+        ..hlsDurationMs = 0
+        ..followSeeks = true
+        ..install();
+      addTearDown(platform.uninstall);
+      final storage = MemoryStorage();
+      final store = AppStore(storage: storage, provider: _Routes())
+        ..progressivePreparation = true
+        ..prefetch = false;
+      final downloads = _OnlineDownloads(store);
+      final timeline = ValueNotifier(
+        const ProgressiveTimeline(
+          duration: Duration(seconds: 4),
+          complete: false,
+        ),
+      );
+      final first = _ProgressivePreparer()..preparedTimeline = timeline;
+      final nextTimeline = ValueNotifier(
+        const ProgressiveTimeline(
+          duration: Duration(seconds: 2),
+          complete: false,
+        ),
+      );
+      final second = _ProgressivePreparer()..preparedTimeline = nextTimeline;
+      var count = 0;
+      addTearDown(() {
+        timeline.dispose();
+        nextTimeline.dispose();
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: 'fixture',
+              source: DramaSource.hongguo,
+              title: '续播',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+              Episode.fromJson({'id': '2'}, 1),
+            ],
+            initialIndex: 0,
+            preparerFactory: () => count++ == 0 ? first : second,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final player = tester
+          .widget<BetterPlayer>(find.byType(BetterPlayer))
+          .controller;
+      await player.seekTo(const Duration(seconds: 3));
+      await tester.drag(find.byType(EpisodePager), const Offset(0, -500));
+      await tester.pumpAndSettle();
+      expect(first.disposed, isTrue);
+      final record = store.history.values.single;
+      expect(record.positionMs, 3000);
+      expect(record.durationMs, 0);
+      expect(WatchRecord.fromJson(record.toJson()).positionMs, 3000);
+      timeline.value = const ProgressiveTimeline(
+        duration: Duration(seconds: 50),
+        complete: true,
+      );
+      await tester.pump();
+      expect(
+        player.videoPlayerController!.value.duration,
+        const Duration(seconds: 2),
+      );
+      await tester.pumpWidget(const SizedBox());
+      // An old producer's late snapshot must never touch a disposed player.
+      nextTimeline.value = const ProgressiveTimeline(
+        duration: Duration(seconds: 10),
+        complete: true,
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
     },
   );
 

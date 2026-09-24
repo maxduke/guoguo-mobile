@@ -115,6 +115,11 @@ void main() {
             'the first playable fragment must arrive while FFmpeg is running',
       );
       expect(preparer.fellBack, isFalse);
+      expect(preparer.timeline, isNotNull);
+      final initialTimeline = preparer.timeline!.value;
+      expect(initialTimeline.duration, greaterThan(Duration.zero));
+      expect(initialTimeline.duration, lessThan(const Duration(seconds: 8)));
+      expect(initialTimeline.complete, isFalse);
 
       final firstFrame = await _run(ffmpeg, [
         '-hide_banner',
@@ -150,6 +155,8 @@ void main() {
       final completeMs = clock.elapsedMilliseconds;
       expect(preparer.complete, isTrue);
       expect(completeMs, greaterThan(readyMs));
+      expect(preparer.timeline!.value.duration, const Duration(seconds: 8));
+      expect(preparer.timeline!.value.complete, isTrue);
       final originalFrames = await _run(ffmpeg, [
         '-hide_banner',
         '-loglevel',

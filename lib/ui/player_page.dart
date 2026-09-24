@@ -11,6 +11,7 @@ import 'package:better_player_plus/src/video_player/video_player_platform_interf
     show VideoEvent, VideoEventType;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/services.dart';
 
 import '../data/app_store.dart';
@@ -78,6 +79,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   DateTime _prefetchRetryAt = DateTime(2000);
   Timer? _healthTimer;
   _Playable? _active;
+  ValueListenable<ProgressiveTimeline>? _timeline;
+  VoidCallback? _timelineListener;
   Future<void> _paused = Future.value();
   Future<void> _sourceSetup = Future.value();
   bool _pendingPlay = false, _playIntent = true;
@@ -255,6 +258,38 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
   }
 
+  void _detachTimeline() {
+    final listener = _timelineListener;
+    if (listener != null) _timeline?.removeListener(listener);
+    _timeline = null;
+    _timelineListener = null;
+  }
+
+  void _attachTimeline(_Playable item, int generation) {
+    _detachTimeline();
+    final timeline = item.preparer.timeline;
+    final controller = _player.videoPlayerController;
+    if (!item.preparer.streaming || timeline == null || controller == null) {
+      return;
+    }
+    void synchronize() {
+      if (!mounted || generation != _generation || !identical(_active, item)) {
+        return;
+      }
+      final snapshot = timeline.value;
+      if (snapshot.duration <= Duration.zero) return;
+      // EVENT HLS initially has an indefinite native duration. BetterPlayer
+      // only receives duration at initialization and clamps seeks to that value.
+      // Use the published fragment range, never elapsed time or a guessed total.
+      controller.value = controller.value.copyWith(duration: snapshot.duration);
+    }
+
+    _timeline = timeline;
+    _timelineListener = synchronize;
+    timeline.addListener(synchronize);
+    synchronize();
+  }
+
   void _save() {
     final value = _active == null ? null : _player.videoPlayerController?.value;
     if (value == null ||
@@ -271,7 +306,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               episodeId: widget.episodes[_index].id,
               episodeIndex: widget.episodeIndices?[_index] ?? _index,
               positionMs: value.position.inMilliseconds,
-              durationMs: value.duration!.inMilliseconds,
+              durationMs:
+                  _active!.preparer.streaming && !_active!.preparer.complete
+                  ? 0 // The available fragment range is not the episode total.
+                  : value.duration!.inMilliseconds,
               updatedAt: DateTime.now(),
             ),
           )
@@ -287,6 +325,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _finishAttempt(PlaybackResult.cancelled);
     _timings.removeWhere((key, _) => (key - index).abs() > 1);
     _save();
+    _detachTimeline();
     if ((_active ?? _buffer.peek(_index))?.preparer.streaming == true ||
         (_loading && widget.store.progressivePreparation)) {
       _buffer.evict(_index);
@@ -384,6 +423,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           .stream
           .listen(_nativeEvent);
       _active = item;
+      _attachTimeline(item, generation);
       if (!item.preparer.streaming) _compatibleOnResume = false;
       _health.reset();
       await _applyVideoFit();
@@ -460,6 +500,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             : _player.videoPlayerController?.value.position);
     _paused = _active == null ? Future.value() : _player.pause();
     unawaited(_paused.catchError((Object _) {}));
+    _detachTimeline();
     _active = null;
     if (quality != null) _qualities[_index] = quality;
     _buffer.evict(_index);
@@ -1167,6 +1208,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _seek(Duration position) async {
+    if (_loading || _active == null) return;
+    final duration = _player.videoPlayerController?.value.duration;
+    if (duration == null || duration <= Duration.zero) return;
+    // Seeking beyond an EVENT range can cause BetterPlayer to emit 'finished'.
+    final target = Duration(
+      microseconds: position.inMicroseconds.clamp(0, duration.inMicroseconds),
+    );
+    await _player.seekTo(target);
+  }
+
   Widget _transport() {
     final controller = _active == null ? null : _player.videoPlayerController;
     Widget build() {
@@ -1195,7 +1247,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         },
         onSeek: (position) {
           if (_active != null) {
-            unawaited(_player.seekTo(Duration(milliseconds: position.round())));
+            unawaited(_seek(Duration(milliseconds: position.round())));
           }
           _armHide();
         },
@@ -1260,9 +1312,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               },
               onSeek: (value) {
                 if (_active != null) {
-                  unawaited(
-                    _player.seekTo(Duration(milliseconds: value.round())),
-                  );
+                  unawaited(_seek(Duration(milliseconds: value.round())));
                 }
               },
               child: EpisodePager(
@@ -1419,6 +1469,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       unawaited(_releaseMedia(media));
     }
     _resolved.clear();
+    _detachTimeline();
     _buffer.close();
     _player.dispose(forceDispose: true);
     _pages.dispose();
@@ -1470,16 +1521,16 @@ class _PlayerTransportState extends State<PlayerTransport> {
           value: (_preview ?? widget.position).clamp(0, widget.duration),
           max: widget.duration > 0 ? widget.duration : 1,
           activeColor: const Color(0xFF9DCDB0),
-          onChangeStart: widget.enabled
+          onChangeStart: widget.enabled && widget.duration > 0
               ? (value) {
                   widget.onScrub(true);
                   setState(() => _preview = value);
                 }
               : null,
-          onChanged: widget.enabled
+          onChanged: widget.enabled && widget.duration > 0
               ? (value) => setState(() => _preview = value)
               : null,
-          onChangeEnd: widget.enabled
+          onChangeEnd: widget.enabled && widget.duration > 0
               ? (value) {
                   widget.onSeek(value);
                   widget.onScrub(false);

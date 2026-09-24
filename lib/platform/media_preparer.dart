@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import '../domain/models.dart';
 import 'provider_client.dart';
 import 'media_commands.dart';
 import 'media_executor.dart';
 import 'progressive_media.dart';
+export 'progressive_media.dart' show ProgressiveTimeline;
 
 /// Owns each preparation's native job, loopback origin and temporary files.
 class MediaPreparer {
@@ -30,8 +32,10 @@ class MediaPreparer {
   Future<void>? _cancellation;
   bool get streaming => _progressive != null;
   bool get complete => _progressive?.complete ?? true;
+  ValueListenable<ProgressiveTimeline>? get timeline => _progressive?.timeline;
   ProviderException? get failure => _progressive?.failure;
-  Future<void> get finished => _operation ?? Future.value();
+  Future<void> get finished =>
+      _progressive?.finished ?? _operation ?? Future.value();
 
   Future<String> prepare(ResolvedMedia media, {bool progressive = false}) =>
       _preparing ??= _prepare(media, progressive);

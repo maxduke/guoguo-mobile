@@ -12,6 +12,10 @@
 
 [发现页预览](screenshots/recommendations-light.png) · [深色发现页](screenshots/recommendations-dark.png) · [新版详情页](screenshots/detail-phone-light.png) · [平板详情页](screenshots/detail-tablet-dark.png)
 
+## 0.7.1 修复
+
+修复提前开播在 iOS 上初始时长为 0、进度条无法拖动的问题，持续更新已准备范围；保存真实观看位置，整集时长未知时首页显示已看时间。实验仍默认关闭，需真机复测。
+
 ## 0.7.0 更新
 
 播放诊断新增默认关闭的“提前开播（实验）”：从头播放加密 MP4 时，首段准备完成即可交给现有原生播放器，剩余内容继续准备。临时内容不计入下载；续播、画中画、投屏与返回前台使用完整准备，保留进度和暂停状态。失败自动回退，详情见 [融合实施记录](docs/app-fusion.md)。尚未完成 iOS 真机性能验收。

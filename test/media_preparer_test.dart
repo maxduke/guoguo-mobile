@@ -92,6 +92,8 @@ void main() {
       expect(url, startsWith('http://127.0.0.1:'));
       expect(preparer.streaming, isTrue);
       expect(preparer.complete, isFalse);
+      expect(preparer.timeline?.value.duration, const Duration(seconds: 2));
+      expect(preparer.timeline?.value.complete, isFalse);
       expect(preparer.fellBack, isFalse);
       expect(executor.arguments.single, contains('-hls_playlist_type'));
       final session = Directory(
@@ -123,6 +125,7 @@ void main() {
       expect(preparer.fellBack, isTrue);
       expect(preparer.streaming, isFalse);
       expect(preparer.complete, isTrue);
+      expect(preparer.timeline, isNull);
       expect(executor.arguments.length, 2);
       expect(executor.jobs.first.cancellations, 1);
       expect(await File(path).readAsBytes(), [1, 2, 3]);
@@ -168,6 +171,35 @@ void main() {
       _media(key: '').url,
     );
     expect(executor.arguments, isEmpty);
+    expect(preparer.timeline, isNull);
     await preparer.dispose();
   });
+
+  test(
+    'finished exposes the final playlist timeline before resolving',
+    () async {
+      final executor = _Executor()
+        ..onStart = (args, job) => _publish(args.last);
+      final preparer = MediaPreparer(
+        executor: executor,
+        temporaryDirectory: () async => root,
+      );
+      await preparer.prepare(_media(), progressive: true);
+      final timeline = preparer.timeline!;
+      expect(timeline.value.duration, const Duration(seconds: 2));
+      expect(timeline.value.complete, isFalse);
+      await File(executor.arguments.single.last).writeAsString('''#EXTM3U
+#EXT-X-MAP:URI="init.mp4"
+#EXTINF:2,
+segment_00000.m4s
+#EXT-X-ENDLIST
+''');
+      executor.jobs.single.finish();
+      await preparer.finished;
+      expect(timeline.value.duration, const Duration(seconds: 2));
+      expect(timeline.value.complete, isTrue);
+      expect(preparer.complete, isTrue);
+      await preparer.dispose();
+    },
+  );
 }

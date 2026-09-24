@@ -2,8 +2,27 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
+
 import 'media_executor.dart';
 import 'provider_client.dart';
+
+@immutable
+class ProgressiveTimeline {
+  const ProgressiveTimeline({required this.duration, required this.complete});
+
+  /// Duration covered by published, nonempty fragments in the EVENT playlist.
+  final Duration duration;
+
+  /// True only after the writer exits and publishes a valid ENDLIST.
+  final bool complete;
+}
+
+class _PlaylistObservation {
+  const _PlaylistObservation(this.duration, this.ended);
+  final Duration duration;
+  final bool ended;
+}
 
 /// A private loopback origin serving only completed output of one media job.
 class ProgressiveMedia {
@@ -13,12 +32,21 @@ class ProgressiveMedia {
     this.maxBytes = 128 * 1024 * 1024,
     this.maxDuration = const Duration(minutes: 5),
   }) {
-    _completion = execution.done.then(
-      (_) {
-        complete = true;
+    _completion = execution.done.then<void>(
+      (_) async {
+        _writerFinished = true;
+        // An inspection may have read the previous atomic playlist just as
+        // FFmpeg exited. Wait for it, then read the final snapshot ourselves.
+        await _inspection;
+        if (!_closed) await _inspect();
+        if (!_closed && !complete) {
+          failure ??= const ProviderException('视频未生成完整播放列表');
+        }
+        _monitor?.cancel();
       },
       onError: (Object _) {
         failure ??= const ProviderException('视频准备中断，正在切换兼容方式');
+        _monitor?.cancel();
       },
     );
   }
@@ -35,8 +63,18 @@ class ProgressiveMedia {
   HttpServer? _server;
   Timer? _monitor;
   Future<void>? _closing;
-  bool _closed = false, _checking = false;
-  bool complete = false;
+  Future<void>? _inspection;
+  bool _closed = false, _writerFinished = false, _ready = false;
+  final ValueNotifier<ProgressiveTimeline> _timeline = ValueNotifier(
+    const ProgressiveTimeline(duration: Duration.zero, complete: false),
+  );
+  ValueListenable<ProgressiveTimeline> get timeline => _timeline;
+  bool get complete => _timeline.value.complete;
+  Future<void> get finished async {
+    await _completion;
+    if (failure != null) throw failure!;
+  }
+
   ProviderException? failure;
   String get url => 'http://127.0.0.1:${_server!.port}/$_token/index.m3u8';
   static final _segment = RegExp(r'^segment_[0-9]{5,}\.m4s$');
@@ -54,17 +92,23 @@ class ProgressiveMedia {
     server.listen((request) => unawaited(_serve(request)));
     _monitor = Timer.periodic(
       const Duration(milliseconds: 500),
-      (_) => unawaited(_checkBudget()),
+      (_) => unawaited(_inspect()),
     );
     while (!_closed) {
-      await _checkBudget();
+      await _inspect();
       if (failure != null) throw failure!;
-      if (await _ready()) {
+      if (_ready) {
+        // The writer may have exited during an earlier inspection. Do not
+        // return that live snapshot until the final playlist has been checked.
+        if (_writerFinished && !complete) await _completion;
         if (_closed) throw const ProviderException('已取消准备');
         if (failure != null) throw failure!;
+        if (_writerFinished && !complete) {
+          throw const ProviderException('视频未生成完整播放列表');
+        }
         return url;
       }
-      if (complete) throw const ProviderException('视频未生成可播放分片');
+      if (_writerFinished) throw const ProviderException('视频未生成可播放分片');
       if (_clock.elapsed >= startupTimeout) {
         throw const ProviderException('提前开播准备超时');
       }
@@ -73,47 +117,127 @@ class ProgressiveMedia {
     throw const ProviderException('已取消准备');
   }
 
-  Future<bool> _ready() async {
+  Future<_PlaylistObservation?> _readPlaylist() async {
     final playlist = File('${directory.path}/index.m3u8');
-    if (!await playlist.exists()) return false;
-    if (await playlist.length() > 256 * 1024) {
-      throw const ProviderException('播放列表过大');
+    try {
+      if (await FileSystemEntity.type(playlist.path, followLinks: false) !=
+          FileSystemEntityType.file) {
+        return null;
+      }
+      if (await playlist.length() > 256 * 1024) {
+        throw const ProviderException('播放列表过大');
+      }
+      // FFmpeg uses temp_file and rename, so one read is one whole snapshot.
+      final text = await playlist.readAsString();
+      if (!text.endsWith('\n')) return null;
+      final lines = text.split('\n').map((line) => line.trim()).toList();
+      if (lines.first != '#EXTM3U' ||
+          !lines.any(
+            (line) =>
+                line.startsWith('#EXT-X-MAP:') &&
+                line.contains('URI="init.mp4"'),
+          )) {
+        return null;
+      }
+      if (!await _publishedFile('init.mp4')) return null;
+
+      var seconds = 0.0;
+      double? pending;
+      var segments = 0;
+      var ended = false;
+      final seen = <String>{};
+      for (final line in lines.skip(1)) {
+        if (line.isEmpty) continue;
+        if (ended) return null;
+        if (line.startsWith('#EXTINF:')) {
+          if (pending != null) return null;
+          if (line.indexOf(',') <= 8) return null;
+          final value = line.substring(8).split(',').first.trim();
+          pending = double.tryParse(value);
+          if (pending == null || !pending.isFinite || pending <= 0) return null;
+        } else if (line == '#EXT-X-ENDLIST') {
+          if (pending != null) return null;
+          ended = true;
+        } else if (line.startsWith('#')) {
+          if (pending != null) return null;
+        } else {
+          if (pending == null ||
+              !_segment.hasMatch(line) ||
+              !seen.add(line) ||
+              !await _publishedFile(line)) {
+            return null;
+          }
+          seconds += pending;
+          if (!seconds.isFinite || seconds * 1000000 > 9007199254740991) {
+            return null;
+          }
+          segments++;
+          pending = null;
+        }
+      }
+      if (pending != null || segments == 0) return null;
+      final micros = (seconds * 1000000).round();
+      if (micros <= 0) return null;
+      return _PlaylistObservation(Duration(microseconds: micros), ended);
+    } on FileSystemException {
+      // An atomic replacement can race a file lookup; the next poll retries.
+      return null;
+    } on FormatException {
+      return null;
     }
-    final text = await playlist.readAsString();
-    if (!text.startsWith('#EXTM3U') || !text.contains('URI="init.mp4"')) {
-      return false;
-    }
-    // A finished writer without ENDLIST did not publish a valid final playlist.
-    if (complete &&
-        !text.split('\n').any((line) => line.trim() == '#EXT-X-ENDLIST')) {
-      return false;
-    }
-    final fragments = text
-        .split('\n')
-        .map((line) => line.trim())
-        .where((line) => _segment.hasMatch(line));
-    if (fragments.isEmpty) return false;
-    for (final name in ['init.mp4', fragments.first]) {
-      final file = File('${directory.path}/$name');
-      if (!await file.exists() || await file.length() == 0) return false;
-    }
-    return true;
   }
 
-  Future<void> _checkBudget() async {
-    if (_closed || _checking || failure != null) return;
-    _checking = true;
+  Future<bool> _publishedFile(String name) async {
+    final path = '${directory.path}/$name';
+    return await FileSystemEntity.type(path, followLinks: false) ==
+            FileSystemEntityType.file &&
+        await File(path).length() > 0;
+  }
+
+  Future<void> _inspect() {
+    if (_closed || failure != null) return Future.value();
+    return _inspection ??= _inspectBody().whenComplete(
+      () => _inspection = null,
+    );
+  }
+
+  Future<void> _inspectBody() async {
+    final finalPass = _writerFinished;
     try {
       var bytes = 0;
       await for (final entity in directory.list(followLinks: false)) {
         if (entity is File) bytes += await entity.length();
       }
-      if (bytes > maxBytes || (!complete && _clock.elapsed > maxDuration)) {
+      if (_closed) return;
+      if (bytes > maxBytes ||
+          (!_writerFinished && _clock.elapsed > maxDuration)) {
         failure = const ProviderException('视频准备超过资源限制，正在切换兼容方式');
         _monitor?.cancel();
         await execution.cancel();
+        return;
       }
-      if (complete) _monitor?.cancel();
+      final snapshot = await _readPlaylist();
+      if (_closed) return;
+      _ready = snapshot != null;
+      if (snapshot == null ||
+          snapshot.duration < _timeline.value.duration ||
+          (finalPass && !snapshot.ended)) {
+        if (finalPass) {
+          failure ??= const ProviderException('视频未生成完整播放列表');
+          _monitor?.cancel();
+        }
+        return;
+      }
+      final finalized = finalPass && snapshot.ended;
+      final previous = _timeline.value;
+      if (snapshot.duration != previous.duration ||
+          finalized != previous.complete) {
+        _timeline.value = ProgressiveTimeline(
+          duration: snapshot.duration,
+          complete: finalized,
+        );
+      }
+      if (finalized) _monitor?.cancel();
     } catch (_) {
       // Timer callbacks must never leak an asynchronous error. If cancelling
       // failed, close() will retry/propagate it so the writer's files remain.
@@ -121,8 +245,6 @@ class ProgressiveMedia {
         failure ??= const ProviderException('无法读取或停止临时视频');
         _monitor?.cancel();
       }
-    } finally {
-      _checking = false;
     }
   }
 
@@ -234,7 +356,9 @@ class ProgressiveMedia {
     _closed = true;
     _monitor?.cancel();
     await _server?.close(force: true);
-    if (!complete) await execution.cancel();
+    if (!_writerFinished) await execution.cancel();
     await _completion;
+    await _inspection;
+    _timeline.dispose();
   }
 }
