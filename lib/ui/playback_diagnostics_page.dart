@@ -53,7 +53,7 @@ class PlaybackDiagnosticsPage extends StatelessWidget {
             contentPadding: EdgeInsets.zero,
             title: const Text('提前开播（实验）'),
             subtitle: const Text(
-              '仅用于从头播放的加密 MP4（主要为红果），已能直接播放的视频不受影响。进度条范围随已准备内容增长。续播、画中画、投屏及回到前台时使用完整准备。',
+              '仅用于从头播放的加密 MP4（主要为红果），已能直接播放的视频不受影响。进度条范围随已准备内容增长。续播、手动进入画中画和投屏时使用完整准备；自动画中画继续当前播放。',
             ),
             value: store.progressivePreparation,
             onChanged: (value) =>

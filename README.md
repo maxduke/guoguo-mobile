@@ -12,6 +12,10 @@
 
 [发现页预览](screenshots/recommendations-light.png) · [深色发现页](screenshots/recommendations-dark.png) · [新版详情页](screenshots/detail-phone-light.png) · [平板详情页](screenshots/detail-tablet-dark.png)
 
+## 0.7.2 修复
+
+修复提前开播与自动画中画的交接：直接返回桌面时保留当前播放，支持后台恢复与自动连播；画中画启动较晚时恢复兼容视频并保留位置。
+
 ## 0.7.1 修复
 
 修复提前开播在 iOS 上初始时长为 0、进度条无法拖动的问题，持续更新已准备范围；保存真实观看位置，整集时长未知时首页显示已看时间。实验仍默认关闭，需真机复测。

@@ -77,7 +77,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   int? _recoveryGeneration;
   bool get _recovering => _recoveryGeneration == _generation;
   DateTime _prefetchRetryAt = DateTime(2000);
-  Timer? _healthTimer;
+  Timer? _healthTimer, _backgroundTimer;
   _Playable? _active;
   ValueListenable<ProgressiveTimeline>? _timeline;
   VoidCallback? _timelineListener;
@@ -331,6 +331,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _buffer.evict(_index);
     }
     _compatibleOnResume = false;
+    _backgroundTimer?.cancel();
     _hideTimer?.cancel();
     _preloadTimer?.cancel();
     _settleTimer?.cancel();
@@ -444,12 +445,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         _error = null;
       });
       if (!_foreground && !_pipActive) {
-        _pendingPlay = play;
-        if (item.preparer.streaming) _suspendProgressive(play);
+        _pendingPlay = _playIntent;
+        if (item.preparer.streaming) _suspendProgressive(_playIntent);
         return;
       }
       attempt.initialPosition = _player.videoPlayerController?.value.position;
-      if (play) {
+      if (_playIntent) {
         await _player.play();
       } else {
         _showControls();
@@ -523,7 +524,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       value?.position ?? Duration.zero,
       DateTime.now(),
       watching:
-          _foreground &&
+          (_foreground || _pipActive) &&
           !_loading &&
           !_recovering &&
           _error == null &&
@@ -539,7 +540,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   Future<void> _recover() async {
     if (_recovering ||
         !mounted ||
-        !_foreground ||
+        (!_foreground && !_pipActive) ||
         widget.localOnly ||
         widget.store.offline ||
         _active?.timing.local == true) {
@@ -673,11 +674,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   void _nativeEvent(VideoEvent event) {
     if (!mounted) return;
     switch (event.eventType) {
+      case VideoEventType.play:
+        if (_pipActive && !_loading) _playIntent = true;
+      case VideoEventType.pause:
+        if (_pipActive && !_loading) _playIntent = false;
       case VideoEventType.pipStart:
         _setPipActive(true);
         final wasPlaying = _pipEntryWasPlaying;
         _pipEntryWasPlaying = null;
-        if (wasPlaying == true && _active != null) {
+        if (wasPlaying == true && _active != null && !_loading) {
           unawaited(_player.play());
         }
       case VideoEventType.pipStop:
@@ -692,15 +697,35 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (_pipActive == active) return;
     _pipActive = active;
     if (active) {
+      _backgroundTimer?.cancel();
+      // Automatic PiP can arrive after the background grace period. The origin
+      // is already closed in that case, so restore it through the complete path.
+      if (_compatibleOnResume && _active?.preparer.streaming == true) {
+        _compatibleOnResume = false;
+        _pendingPlay = false;
+        unawaited(
+          _ensureCompatible(
+            play: _compatiblePlay,
+            position: _compatiblePosition,
+          ),
+        );
+        return;
+      }
       if (_pendingPlay && _active != null) {
         _pendingPlay = false;
         unawaited(_player.play());
       }
       _schedulePrefetch();
     } else if (!_foreground) {
+      _playIntent = false;
+      _pendingPlay = false;
       _preloadTimer?.cancel();
       _buffer.retain({_index});
-      if (_active != null) unawaited(_player.pause());
+      if (_active?.preparer.streaming == true) {
+        _suspendProgressive(false);
+      } else if (_active != null) {
+        unawaited(_player.pause());
+      }
     }
   }
 
@@ -780,13 +805,32 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _health.reset();
     _foreground = state == AppLifecycleState.resumed;
     if (!_foreground) {
-      _preloadTimer?.cancel();
-      if (!_pipActive) _buffer.retain({_index});
       _save();
-      if (!_pipActive && _active?.preparer.streaming == true) {
-        _suspendProgressive(_player.isPlaying() == true);
+      if (!_pipActive) {
+        _preloadTimer?.cancel();
+        // AVKit may report automatic PiP after inactive/paused. Preserve the
+        // current origin AND any next-episode preparation during that handoff.
+        _backgroundTimer?.cancel();
+        final generation = _generation;
+        _backgroundTimer = Timer(const Duration(milliseconds: 800), () {
+          if (mounted &&
+              generation == _generation &&
+              !_foreground &&
+              !_pipActive) {
+            _buffer.retain({_index});
+            if (_active?.preparer.streaming == true) {
+              _suspendProgressive(_playIntent);
+            }
+          }
+        });
       }
     } else {
+      if (_backgroundTimer?.isActive == true &&
+          _active?.preparer.streaming == true &&
+          _playIntent) {
+        _pendingPlay = true;
+      }
+      _backgroundTimer?.cancel();
       if (_compatibleOnResume) {
         _compatibleOnResume = false;
         _pendingPlay = false;
@@ -1465,6 +1509,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _player.removeEventsListener(_event);
     if (_nativeEvents case final events?) unawaited(events.cancel());
     _healthTimer?.cancel();
+    _backgroundTimer?.cancel();
     for (final media in _resolved.values) {
       unawaited(_releaseMedia(media));
     }

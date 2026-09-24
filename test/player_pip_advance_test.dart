@@ -90,6 +90,7 @@ class _NativePlayer {
   final seeks = <int>[];
   final sources = <String>[];
   final formats = <Object?>[];
+  final authors = <Object?>[];
   final plays = <Object?>[];
   final pauses = <Object?>[];
   final ids = <Object?>[];
@@ -105,6 +106,7 @@ class _NativePlayer {
         final source = args?['dataSource'] as Map;
         sources.add(source['uri'] as String);
         formats.add(source['videoFormat']);
+        authors.add(source['author']);
         scheduleMicrotask(
           () => emit('initialized', {
             'duration': (source['uri'] as String).endsWith('.m3u8')
@@ -312,7 +314,7 @@ void main() {
           tester.binding.handleAppLifecycleStateChanged(
             AppLifecycleState.paused,
           );
-          await tester.pump();
+          await tester.pump(const Duration(seconds: 1));
           expect(jobs.first.cancelled, isTrue);
           // A closed origin may reset native position before foregrounding.
           await player.seekTo(Duration.zero);
@@ -320,6 +322,10 @@ void main() {
             AppLifecycleState.resumed,
           );
         } else if (trigger.endsWith('producer failure')) {
+          if (paused) {
+            platform.emit('pause');
+            await tester.pump();
+          }
           jobs.first.problem = const ProviderException('synthetic failure');
           await tester.pump(const Duration(seconds: 2));
         } else {
@@ -350,6 +356,300 @@ void main() {
       },
     );
   }
+
+  for (final order in ['native first', 'lifecycle first', 'late native']) {
+    testWidgets(
+      'automatic PiP $order survives background and advances without progressive next preparation',
+      (tester) async {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        final platform = _NativePlayer()
+          ..followSeeks = true
+          ..install();
+        addTearDown(platform.uninstall);
+        final store = AppStore(storage: MemoryStorage(), provider: _Routes())
+          ..progressivePreparation = true
+          ..prefetch = false;
+        final downloads = _OnlineDownloads(store);
+        final jobs = <_ProgressivePreparer>[];
+        addTearDown(() {
+          downloads.dispose();
+          store.dispose();
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            home: PlayerPage(
+              store: store,
+              downloads: downloads,
+              drama: const Drama(
+                id: 'fixture',
+                source: DramaSource.hongguo,
+                title: '自动画中画',
+              ),
+              episodes: [
+                Episode.fromJson({'id': '1'}, 0),
+                Episode.fromJson({'id': '2'}, 1),
+                Episode.fromJson({'id': '3'}, 2),
+              ],
+              initialIndex: 0,
+              preparerFactory: () {
+                final job = _ProgressivePreparer();
+                jobs.add(job);
+                return job;
+              },
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final player = tester
+            .widget<BetterPlayer>(find.byType(BetterPlayer))
+            .controller;
+        await player.seekTo(const Duration(seconds: 8));
+        if (order == 'native first') {
+          platform.emit('pipStart');
+          await tester.pump();
+        }
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        if (order == 'late native') {
+          await tester.pump(const Duration(seconds: 1));
+          expect(jobs.first.cancelled, isTrue);
+          platform.positionMs = 0;
+        }
+        if (order != 'native first') {
+          platform.emit('pipStart');
+          await tester.pump();
+        }
+        await tester.pumpAndSettle();
+        await tester.pump(const Duration(seconds: 1));
+        if (order == 'late native') {
+          expect(jobs, hasLength(2));
+          expect(jobs.last.requested, isFalse);
+          expect(
+            player.videoPlayerController!.value.position,
+            const Duration(seconds: 8),
+          );
+        } else {
+          expect(jobs, hasLength(1));
+          expect(jobs.single.cancelled, isFalse);
+        }
+        expect(player.isPlaying(), isTrue);
+        jobs.last.produced = true;
+        final beforeNext = platform.sources.length;
+        platform.emit('completed');
+        platform.emit('completed');
+        await tester.pumpAndSettle();
+        expect(platform.sources, hasLength(beforeNext + 1));
+        expect(jobs.last.requested, isFalse);
+        expect(platform.authors.last, '果果 · 第 2 集');
+        expect(platform.ids.toSet(), {7});
+        expect(player.isPlaying(), isTrue);
+        platform.emit('pipStop');
+        await tester.pump();
+        final beforeClose = platform.sources.length;
+        platform.emit('completed');
+        await tester.pumpAndSettle();
+        expect(platform.sources, hasLength(beforeClose));
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
+  for (final paused in [false, true]) {
+    testWidgets(
+      'automatic PiP recovers producer failure while backgrounded, paused=$paused',
+      (tester) async {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        final platform = _NativePlayer()
+          ..followSeeks = true
+          ..install();
+        addTearDown(platform.uninstall);
+        final store = AppStore(storage: MemoryStorage(), provider: _Routes())
+          ..progressivePreparation = true
+          ..prefetch = false;
+        final downloads = _OnlineDownloads(store);
+        final jobs = <_ProgressivePreparer>[];
+        addTearDown(() {
+          downloads.dispose();
+          store.dispose();
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            home: PlayerPage(
+              store: store,
+              downloads: downloads,
+              drama: const Drama(
+                id: 'fixture',
+                source: DramaSource.hongguo,
+                title: '恢复',
+              ),
+              episodes: [
+                Episode.fromJson({'id': '1'}, 0),
+              ],
+              initialIndex: 0,
+              preparerFactory: () {
+                final job = _ProgressivePreparer();
+                jobs.add(job);
+                return job;
+              },
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final player = tester
+            .widget<BetterPlayer>(find.byType(BetterPlayer))
+            .controller;
+        await player.seekTo(const Duration(seconds: 8));
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        platform.emit('pipStart');
+        await tester.pump();
+        if (paused) {
+          platform.emit('pause');
+          await tester.pump();
+        }
+        jobs.first.problem = const ProviderException('synthetic failure');
+        await tester.pump(const Duration(seconds: 2));
+        await tester.pumpAndSettle();
+        expect(jobs, hasLength(2));
+        expect(jobs.last.requested, isFalse);
+        expect(
+          player.videoPlayerController!.value.position,
+          const Duration(seconds: 8),
+        );
+        expect(player.isPlaying(), !paused);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
+  testWidgets(
+    'automatic PiP handoff retains an in-flight next-episode preload',
+    (tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final platform = _NativePlayer()
+        ..followSeeks = true
+        ..install();
+      addTearDown(platform.uninstall);
+      final store = AppStore(storage: MemoryStorage(), provider: _Routes())
+        ..progressivePreparation = true;
+      final downloads = _OnlineDownloads(store);
+      final first = _ProgressivePreparer()..produced = true;
+      final second = _ProgressivePreparer()..readyGate = Completer<void>();
+      var count = 0;
+      addTearDown(() {
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: 'fixture',
+              source: DramaSource.hongguo,
+              title: '预加载',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+              Episode.fromJson({'id': '2'}, 1),
+            ],
+            initialIndex: 0,
+            preparerFactory: () => count++ == 0 ? first : second,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final player = tester
+          .widget<BetterPlayer>(find.byType(BetterPlayer))
+          .controller;
+      platform.emit('bufferingUpdate', {
+        'values': [
+          [0, 30000],
+        ],
+      });
+      await player.seekTo(const Duration(seconds: 8));
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump();
+      expect(count, 2);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      expect(second.cancelled, isFalse);
+      platform.emit('pipStart');
+      await tester.pump();
+      second.readyGate!.complete();
+      await tester.pumpAndSettle();
+      platform.emit('completed');
+      await tester.pumpAndSettle();
+      expect(count, 2);
+      expect(second.cancelled, isFalse);
+      expect(platform.authors.last, '果果 · 第 2 集');
+      expect(player.isPlaying(), isTrue);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'closing automatic PiP during next preparation cannot resume playback later',
+    (tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final platform = _NativePlayer()..install();
+      addTearDown(platform.uninstall);
+      final store = AppStore(storage: MemoryStorage(), provider: _Routes())
+        ..progressivePreparation = true
+        ..prefetch = false;
+      final downloads = _OnlineDownloads(store);
+      final first = _ProgressivePreparer()..produced = true;
+      final second = _ProgressivePreparer()..readyGate = Completer<void>();
+      var count = 0;
+      addTearDown(() {
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: 'fixture',
+              source: DramaSource.hongguo,
+              title: '关闭画中画',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+              Episode.fromJson({'id': '2'}, 1),
+            ],
+            initialIndex: 0,
+            preparerFactory: () => count++ == 0 ? first : second,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      platform.emit('pipStart');
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      platform.emit('completed');
+      await tester.pump();
+      expect(count, 2);
+      platform.emit('pipStop');
+      await tester.pump();
+      final plays = platform.plays.length;
+      second.readyGate!.complete();
+      await tester.pumpAndSettle();
+      expect(platform.plays, hasLength(plays));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(platform.plays, hasLength(plays));
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 
   testWidgets(
     'swiping while progressive preparation is pending cancels and releases the old job',
