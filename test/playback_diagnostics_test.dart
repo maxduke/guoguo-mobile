@@ -6,6 +6,26 @@ import 'package:guoguo_mobile/domain/playback_diagnostic.dart';
 import 'widget_test.dart' show NoNetwork;
 
 void main() {
+  test('preparation diagnostics round-trip and read legacy samples', () {
+    final attempt =
+        PlaybackAttempt(
+            source: DramaSource.hongguo,
+            episode: 1,
+            preloaded: false,
+          )
+          ..timing.preparation = 'complete'
+          ..timing.compatibilityFallback = true;
+    final json = attempt.finish(PlaybackResult.started)!.toJson();
+    final restored = PlaybackDiagnostic.fromJson(json);
+    expect(restored.preparation, 'complete');
+    expect(restored.compatibilityFallback, isTrue);
+    json.remove('preparation');
+    json.remove('compatibilityFallback');
+    final legacy = PlaybackDiagnostic.fromJson(json);
+    expect(legacy.preparation, 'direct');
+    expect(legacy.compatibilityFallback, isFalse);
+  });
+
   test(
     'diagnostics finish once, remain bounded and persist only explicit fields',
     () async {
@@ -40,6 +60,8 @@ void main() {
         'setupMs',
         'waitMs',
         'elapsedMs',
+        'preparation',
+        'compatibilityFallback',
       });
       await restored.clearPlaybackDiagnostics();
       expect(storage.value!['playbackDiagnostics'], isEmpty);

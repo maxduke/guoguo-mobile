@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -12,8 +13,54 @@ import 'package:guoguo_mobile/data/storage.dart';
 import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/ui/player_page.dart';
 import 'package:guoguo_mobile/platform/provider_client.dart';
+import 'package:guoguo_mobile/platform/media_preparer.dart';
 
 import 'widget_test.dart' show NoNetwork;
+
+// BetterPlayer also parses HLS in Dart; native playback is mocked separately.
+class _PlaylistOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) => _PlaylistClient();
+}
+
+class _PlaylistClient implements HttpClient {
+  @override
+  set connectionTimeout(Duration? value) {}
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) async {
+    if (url.host != '127.0.0.1') {
+      throw const SocketException('No network in test');
+    }
+    return _PlaylistRequest();
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _PlaylistRequest implements HttpClientRequest {
+  @override
+  Future<HttpClientResponse> close() async => _PlaylistResponse();
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _PlaylistResponse extends Stream<List<int>>
+    implements HttpClientResponse {
+  @override
+  StreamSubscription<List<int>> listen(
+    void Function(List<int>)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) => Stream.value(
+    utf8.encode(
+      '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:2,\nsegment_00000.m4s\n',
+    ),
+  ).listen(onData, onError: onError, onDone: onDone, cancelOnError: cancelOnError);
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 class _LocalDownloads extends DownloadStore {
   _LocalDownloads(super.store, this.directory);
@@ -39,6 +86,7 @@ class _NativePlayer {
     'dev.fluttercommunity.plus/connectivity_status',
   );
   final sources = <String>[];
+  final formats = <Object?>[];
   final plays = <Object?>[];
   final pauses = <Object?>[];
   final ids = <Object?>[];
@@ -53,6 +101,7 @@ class _NativePlayer {
         ids.add(args?['textureId']);
         final source = args?['dataSource'] as Map;
         sources.add(source['uri'] as String);
+        formats.add(source['videoFormat']);
         scheduleMicrotask(
           () => emit('initialized', {
             'duration': 30000,
@@ -131,7 +180,271 @@ class _Routes implements ProviderClient {
   };
 }
 
+class _ProgressivePreparer extends MediaPreparer {
+  bool requested = false, cancelled = false, disposed = false;
+  bool produced = false;
+  Completer<void>? readyGate;
+  ProviderException? problem;
+  @override
+  bool get streaming => requested;
+  @override
+  bool get complete => produced;
+  @override
+  ProviderException? get failure => problem;
+  @override
+  Future<String> prepare(
+    ResolvedMedia media, {
+    bool progressive = false,
+  }) async {
+    requested = progressive;
+    await readyGate?.future;
+    return progressive
+        ? 'http://127.0.0.1:43210/fixture/index.m3u8'
+        : 'https://example.test/complete.mp4';
+  }
+
+  @override
+  Future<void> cancel() async {
+    cancelled = true;
+  }
+
+  @override
+  Future<void> dispose() async {
+    disposed = true;
+    await cancel();
+  }
+}
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  final originalOverrides = HttpOverrides.current;
+  setUpAll(() => HttpOverrides.global = _PlaylistOverrides());
+  tearDownAll(() => HttpOverrides.global = originalOverrides);
+
+  for (final trigger in [
+    'error',
+    'early end',
+    'producer failure',
+    'paused producer failure',
+    'background',
+    'paused background',
+    'PiP',
+    'paused PiP',
+  ]) {
+    testWidgets(
+      'progressive $trigger switches to complete preparation with position and intent',
+      (tester) async {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        final platform = _NativePlayer()..install();
+        addTearDown(platform.uninstall);
+        final provider = _Routes();
+        final store = AppStore(storage: MemoryStorage(), provider: provider)
+          ..progressivePreparation = true
+          ..prefetch = false
+          ..playbackSpeed = 1.5;
+        final downloads = _OnlineDownloads(store);
+        final jobs = <_ProgressivePreparer>[];
+        addTearDown(() {
+          downloads.dispose();
+          store.dispose();
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            home: PlayerPage(
+              store: store,
+              downloads: downloads,
+              drama: const Drama(
+                id: 'fixture',
+                source: DramaSource.hongguo,
+                title: '提前开播',
+              ),
+              episodes: [
+                Episode.fromJson({'id': '1'}, 0),
+                Episode.fromJson({'id': '2'}, 1),
+              ],
+              initialIndex: 0,
+              preparerFactory: () {
+                final job = _ProgressivePreparer();
+                jobs.add(job);
+                return job;
+              },
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(jobs.single.requested, isTrue);
+        expect(platform.sources.single, endsWith('index.m3u8'));
+        final player = tester
+            .widget<BetterPlayer>(find.byType(BetterPlayer))
+            .controller;
+        await player.seekTo(const Duration(seconds: 8));
+        final paused = trigger.startsWith('paused');
+        if (paused) {
+          await tester.tapAt(const Offset(400, 300));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byTooltip('暂停'));
+          await tester.pumpAndSettle();
+        }
+        if (trigger.endsWith('PiP')) {
+          if (!paused) {
+            await tester.tapAt(const Offset(400, 300));
+            await tester.pumpAndSettle();
+          }
+          await tester.tap(find.byTooltip('更多播放设置'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('画中画').last);
+        } else if (trigger.endsWith('background')) {
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.paused,
+          );
+          await tester.pump();
+          expect(jobs.first.cancelled, isTrue);
+          // A closed origin may reset native position before foregrounding.
+          await player.seekTo(Duration.zero);
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+        } else if (trigger.endsWith('producer failure')) {
+          jobs.first.problem = const ProviderException('synthetic failure');
+          await tester.pump(const Duration(seconds: 2));
+        } else {
+          player.postEvent(
+            BetterPlayerEvent(
+              trigger == 'error'
+                  ? BetterPlayerEventType.exception
+                  : BetterPlayerEventType.finished,
+            ),
+          );
+        }
+        await tester.pumpAndSettle();
+        expect(jobs, hasLength(2));
+        expect(jobs.last.requested, isFalse);
+        expect(jobs.first.cancelled, isTrue);
+        expect(jobs.first.disposed, isTrue);
+        expect(platform.sources.last, endsWith('complete.mp4'));
+        expect(provider.fallbacks, 0);
+        expect(
+          player.videoPlayerController!.value.position,
+          const Duration(seconds: 8),
+        );
+        expect(player.videoPlayerController!.value.speed, 1.5);
+        expect(player.isPlaying(), !paused);
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump();
+        expect(jobs.last.disposed, isTrue);
+      },
+    );
+  }
+
+  testWidgets(
+    'swiping while progressive preparation is pending cancels and releases the old job',
+    (tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final platform = _NativePlayer()..install();
+      addTearDown(platform.uninstall);
+      final store = AppStore(storage: MemoryStorage(), provider: _Routes())
+        ..progressivePreparation = true
+        ..prefetch = false;
+      final downloads = _OnlineDownloads(store);
+      addTearDown(() {
+        downloads.dispose();
+        store.dispose();
+      });
+      final first = _ProgressivePreparer()..readyGate = Completer<void>();
+      final second = _ProgressivePreparer();
+      var preparations = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: 'fixture',
+              source: DramaSource.hongguo,
+              title: '切集',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+              Episode.fromJson({'id': '2'}, 1),
+            ],
+            initialIndex: 0,
+            preparerFactory: () => preparations++ == 0 ? first : second,
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(first.requested, isTrue);
+      await tester.drag(find.byType(EpisodePager), const Offset(0, -500));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(first.cancelled, isTrue);
+      first.readyGate!.complete();
+      await tester.pumpAndSettle();
+      expect(preparations, 2);
+      expect(first.disposed, isTrue);
+      expect(platform.sources, hasLength(1));
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  for (final resume in [false, true]) {
+    testWidgets(
+      'progressive preference respects ${resume ? 'resume position' : 'default off'}',
+      (tester) async {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        final platform = _NativePlayer()..install();
+        addTearDown(platform.uninstall);
+        final store = AppStore(storage: MemoryStorage(), provider: _Routes())
+          ..prefetch = false;
+        const drama = Drama(
+          id: 'fixture',
+          source: DramaSource.hongguo,
+          title: '续播',
+        );
+        if (resume) {
+          store.progressivePreparation = true;
+          await store.saveWatch(
+            WatchRecord(
+              drama: drama,
+              episodeId: '1',
+              episodeIndex: 0,
+              positionMs: 8000,
+              durationMs: 30000,
+              updatedAt: DateTime.now(),
+            ),
+          );
+        }
+        final downloads = _OnlineDownloads(store);
+        final job = _ProgressivePreparer();
+        addTearDown(() {
+          downloads.dispose();
+          store.dispose();
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            home: PlayerPage(
+              store: store,
+              downloads: downloads,
+              drama: drama,
+              episodes: [
+                Episode.fromJson({'id': '1'}, 0),
+              ],
+              initialIndex: 0,
+              preparerFactory: () => job,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(job.requested, isFalse);
+        expect(platform.sources.single, endsWith('complete.mp4'));
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
   testWidgets(
     'online recovery preserves position and speed, exhausts budget and releases sessions',
     (tester) async {

@@ -49,6 +49,17 @@ class PlaybackDiagnosticsPage extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('提前开播（实验）'),
+            subtitle: const Text(
+              '仅用于从头播放加密视频。续播、画中画、投屏及回到前台时使用完整准备；开启前请预留临时空间。',
+            ),
+            value: store.progressivePreparation,
+            onChanged: (value) =>
+                perform(context, () => store.setPlayback(progressive: value)),
+          ),
+          const SizedBox(height: 16),
           const Text('仅保留最近 30 条本地记录，不含剧名、播放地址或密钥。开播时间以播放进度首次前进为准，并非精确首帧时间。'),
           const SizedBox(height: 16),
           if (store.playbackDiagnostics.isEmpty)
@@ -71,6 +82,13 @@ class PlaybackDiagnosticsPage extends StatelessWidget {
                     Text(
                       '${sample.at.toLocal().toString().split('.').first} · ${sample.local ? '本地视频' : '在线视频'}${sample.preloaded ? ' · 已预备' : ''}',
                       style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    Text(
+                      '${switch (sample.preparation) {
+                        'progressive' => '提前开播',
+                        'complete' => '完整准备',
+                        _ => '直接播放',
+                      }}${sample.compatibilityFallback ? ' · 已回退兼容方式' : ''}',
                     ),
                     const SizedBox(height: 8),
                     Text(

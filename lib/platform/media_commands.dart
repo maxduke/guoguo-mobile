@@ -45,6 +45,40 @@ List<String> remuxArguments({
   output,
 ];
 
+/// Publish complete fMP4 fragments atomically while preserving the source codec.
+List<String> progressiveArguments({
+  required String input,
+  required String directory,
+  required String contentKey,
+  Map<String, String> headers = const {},
+}) {
+  final args = remuxArguments(
+    input: input,
+    output: '$directory/index.m3u8',
+    contentKey: contentKey,
+    headers: headers,
+  );
+  args.removeRange(args.length - 3, args.length);
+  return [
+    ...args,
+    '-f',
+    'hls',
+    '-hls_time',
+    '2',
+    '-hls_playlist_type',
+    'event',
+    '-hls_segment_type',
+    'fmp4',
+    '-hls_fmp4_init_filename',
+    'init.mp4',
+    '-hls_flags',
+    'independent_segments+temp_file',
+    '-hls_segment_filename',
+    '$directory/segment_%05d.m4s',
+    '$directory/index.m3u8',
+  ];
+}
+
 /// Classify native failures without exposing signed URLs, headers or keys.
 String mediaFailureMessage(String log, int? code) {
   final text = log.toLowerCase();
