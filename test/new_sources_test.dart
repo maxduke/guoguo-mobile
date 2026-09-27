@@ -32,16 +32,55 @@ class SourceProvider implements ProviderClient {
   }
 }
 
-Map<String, dynamic> page(String id, {bool more = true}) => {
+Map<String, dynamic> page(
+  String id, {
+  bool more = true,
+  DramaSource source = DramaSource.huangju,
+}) => {
   'items': [
-    Drama(id: 'huangju:$id', source: DramaSource.huangju, title: id).toJson(),
+    Drama(id: '${source.name}:$id', source: source, title: id).toJson(),
   ],
   'hasMore': more,
 };
 
 void main() {
+  for (final source in DramaSource.values.skip(6)) {
+    test(
+      '${source.name} routes catalog and search and restores offline',
+      () async {
+        final provider = SourceProvider();
+        final storage = MemoryStorage();
+        final store = AppStore(storage: storage, provider: provider);
+        await store.selectSource(source);
+        final catalog = store.refresh();
+        expect(provider.calls.last, containsPair('source', source.name));
+        expect(provider.calls.last, containsPair('method', 'catalog'));
+        provider.pending.last.complete(page('catalog', source: source));
+        await catalog;
+        expect(store.library.single.source, source);
+        final search = store.searchCatalog(source, '故事', page: 2);
+        expect(provider.calls.last, containsPair('method', 'search'));
+        expect(provider.calls.last, containsPair('source', source.name));
+        expect(provider.calls.last, containsPair('page', 2));
+        provider.pending.last.complete(
+          page('search', source: source, more: false),
+        );
+        expect((await search).items.single.id, '${source.name}:search');
+        expect(store.library.single.id, '${source.name}:catalog');
+        final restored = AppStore(storage: storage, provider: provider);
+        await restored.load();
+        restored.offline = true;
+        expect(restored.source, source);
+        expect(restored.library.single.id, '${source.name}:catalog');
+        expect(restored.source.rankings, isFalse);
+        store.dispose();
+        restored.dispose();
+      },
+    );
+  }
+
   testWidgets(
-    'six sources remain accessible and new sources paginate online search',
+    'eighteen sources remain accessible and new sources paginate online search',
     (tester) async {
       tester.view.physicalSize = const Size(320, 740);
       tester.view.devicePixelRatio = 1;
@@ -58,6 +97,10 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.text('榜单'), findsNothing);
       expect(find.widgetWithText(ChoiceChip, '帝果'), findsOneWidget);
+      final lastSource = find.widgetWithText(ChoiceChip, '伍果');
+      await tester.ensureVisible(lastSource);
+      await tester.pumpAndSettle();
+      expect(lastSource.hitTestable(), findsOneWidget);
       await tester.enterText(find.byType(TextField), '样本');
       await tester.testTextInput.receiveAction(TextInputAction.search);
       await tester.pump();

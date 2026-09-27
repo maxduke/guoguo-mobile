@@ -24,7 +24,7 @@ type browserHTTPClient interface {
 type huangguoBrowserTransport struct {
 	base      http.RoundTripper
 	router    *proxyRouter
-	host      string
+	hosts     map[string]bool
 	insecure  bool
 	record    func(diagnosticEvent)
 	mu        sync.Mutex
@@ -35,7 +35,7 @@ type huangguoBrowserTransport struct {
 func newHuangguoBrowserTransport(base http.RoundTripper, downloader *Downloader) *huangguoBrowserTransport {
 	configured, _ := url.Parse(downloader.providerBaseURL(sourceHuangguoVideo))
 	transport := &huangguoBrowserTransport{
-		base: base, router: downloader.proxyRouter, host: configured.Host,
+		base: base, router: downloader.proxyRouter, hosts: browserTransportHosts(configured.Host),
 		insecure: downloader.cfg.InsecureTLS, record: downloader.recordDiagnostic,
 		clients: make(map[string]browserHTTPClient),
 	}
@@ -43,10 +43,30 @@ func newHuangguoBrowserTransport(base http.RoundTripper, downloader *Downloader)
 	return transport
 }
 
+func browserTransportHosts(huangguoVideoHost string) map[string]bool {
+	hosts := map[string]bool{"huangguo.video": true}
+	if huangguoVideoHost != "" {
+		hosts[strings.ToLower(huangguoVideoHost)] = true
+	}
+	for _, spec := range duanjuProviderCatalog {
+		if !spec.Browser {
+			continue
+		}
+		if parsed, err := url.Parse(spec.Base); err == nil && parsed.Host != "" {
+			hosts[strings.ToLower(parsed.Host)] = true
+		}
+	}
+	return hosts
+}
+
 func (transport *huangguoBrowserTransport) matches(request *http.Request) bool {
-	return (request.Method == http.MethodGet || request.Method == http.MethodHead) &&
-		(request.URL.Scheme == "http" || request.URL.Scheme == "https") &&
-		(strings.EqualFold(request.URL.Host, transport.host) || strings.EqualFold(request.URL.Hostname(), "huangguo.video"))
+	if request.Method != http.MethodGet && request.Method != http.MethodHead {
+		return false
+	}
+	if request.URL.Scheme != "http" && request.URL.Scheme != "https" {
+		return false
+	}
+	return transport.hosts[strings.ToLower(request.URL.Host)] || transport.hosts[strings.ToLower(request.URL.Hostname())]
 }
 
 func (transport *huangguoBrowserTransport) createClient(proxy string) (browserHTTPClient, error) {
@@ -114,6 +134,13 @@ func huangguoBrowserHeaders(request *http.Request) fhttp.Header {
 		"sec-fetch-dest":            {"document"},
 		"accept-language":           {"zh-CN,zh;q=0.9"},
 		fhttp.HeaderOrderKey:        {"sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform", "upgrade-insecure-requests", "user-agent", "accept", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-user", "sec-fetch-dest", "referer", "accept-encoding", "accept-language", "cookie"},
+	}
+	if mode := request.Header.Get("Sec-Fetch-Mode"); mode != "" && mode != "navigate" {
+		headers["accept"] = []string{firstNonEmpty(request.Header.Get("Accept"), "*/*")}
+		headers["sec-fetch-mode"] = []string{mode}
+		headers["sec-fetch-dest"] = []string{firstNonEmpty(request.Header.Get("Sec-Fetch-Dest"), "empty")}
+		delete(headers, "upgrade-insecure-requests")
+		delete(headers, "sec-fetch-user")
 	}
 	for key, values := range request.Header {
 		lower := strings.ToLower(key)

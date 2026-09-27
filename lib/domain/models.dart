@@ -4,12 +4,27 @@ enum DramaSource {
   huangdou('黄豆', '短剧，也有新滋味'),
   huangju('剧果', '发现新的故事'),
   yeguo('野果', '更多短剧随心看'),
-  dsd('帝果', '精彩故事继续看');
+  dsd('帝果', '精彩故事继续看'),
+  yaguo('芽果', '发现新的故事'),
+  maoguo('猫果', '短剧随心搜'),
+  fanguo('饭果', '发现更多好故事'),
+  guanguo('观果', '精彩故事继续看'),
+  heguo('河果', '短剧随心搜'),
+  xingguo('星果', '发现新的故事'),
+  huaguo('花果', '更多短剧随心看'),
+  niuguo('牛果', '发现更多好故事'),
+  wangguo('网果', '精彩故事继续看'),
+  faguo('发果', '更多短剧随心看'),
+  piguo('皮果', '发现新的故事'),
+  wuguo('伍果', '精彩故事继续看');
 
   const DramaSource(this.label, this.subtitle);
   final String label;
   final String subtitle;
-  bool get remoteCategories => this == huangju || this == yeguo || this == dsd;
+  bool get remoteCategories => switch (this) {
+    hongguo || huangguo || huangdou => false,
+    _ => true,
+  };
   bool get onlineSearch => this == hongguo || remoteCategories;
   bool get rankings => !remoteCategories;
   static DramaSource parse(Object? value) => values.firstWhere(

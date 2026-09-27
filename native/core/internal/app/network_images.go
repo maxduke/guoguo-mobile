@@ -264,6 +264,9 @@ func (transport *imageTransport) CloseIdleConnections() {
 }
 
 func mobileCoverSource(source string) bool {
+	if isDuanjuProviderSource(source) {
+		return true
+	}
 	switch source {
 	case sourceHongguo, sourceHuangdou, sourceHuangguoAI, sourceHuangguoVideo, sourceHuangju, sourceYeguo, sourceDSD:
 		return true

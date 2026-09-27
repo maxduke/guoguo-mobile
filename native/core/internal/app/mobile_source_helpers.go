@@ -12,6 +12,7 @@ type nativeCategory struct {
 }
 
 func validNativeCategory(source, category string) bool {
+	source = canonicalProviderSource(source)
 	if category == "" {
 		return true
 	}
@@ -26,7 +27,7 @@ func validNativeCategory(source, category string) bool {
 	case sourceDSD:
 		return webProviderNumericID.MatchString(category)
 	}
-	return false
+	return isDuanjuProviderSource(source) && validDuanjuCategory(source, category)
 }
 func nativeText(value any) string {
 	switch v := value.(type) {

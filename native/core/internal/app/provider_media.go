@@ -40,6 +40,9 @@ func (d *Downloader) providerBaseURL(source string) string {
 	case sourceDSD:
 		configured, fallback = d.cfg.DSDURL, dsdBaseURL
 	default:
+		if isDuanjuProviderSource(source) {
+			return d.duanjuBaseURL(source)
+		}
 		fallback = "https://d2pypzndaqisk.cloudfront.net"
 	}
 	return strings.TrimRight(firstNonEmpty(configured, fallback), "/")
@@ -67,13 +70,13 @@ func providerSourceForURL(raw string) string {
 	case host == "hongguoduanju.com" || host == "www.hongguoduanju.com":
 		return sourceHongguo
 	default:
-		return ""
+		return duanjuSourceForHost(host)
 	}
 }
 
 func (d *Downloader) providerURLCandidates(raw string) []string {
 	source := providerSourceForURL(raw)
-	if source == "" {
+	if source == "" || isDuanjuProviderSource(source) {
 		return []string{raw}
 	}
 	parsed, _ := url.Parse(raw)

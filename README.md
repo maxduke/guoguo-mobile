@@ -2,7 +2,7 @@
 
 暖白与墨绿的 Flutter 短剧应用。以 iPhone、iPad 为当前交付重点，Android 工程保留。
 
-> 开发版本。源码已接入六站目录、原生播放与下载/投屏路径；具体 iOS 安装包和验证结果以 GitHub Actions 及 [实现状态](docs/implementation-status.md) 为准，源码接入不等于真机验收通过。
+> 开发版本。源码已接入十八站目录、原生播放与下载/投屏路径；具体 iOS 安装包和验证结果以 GitHub Actions 及 [实现状态](docs/implementation-status.md) 为准，源码接入不等于真机验收通过。
 
 ## 界面预览
 
@@ -11,6 +11,10 @@
 <img src="screenshots/phone-light.png" width="260" alt="手机浅色界面" /> <img src="screenshots/tablet-dark.png" width="560" alt="平板深色界面" />
 
 [发现页预览](screenshots/recommendations-light.png) · [深色发现页](screenshots/recommendations-dark.png) · [新版详情页](screenshots/detail-phone-light.png) · [平板详情页](screenshots/detail-tablet-dark.png)
+
+## 0.9.0 接口更新
+
+根据用户提供的真果·鉴 `0.2.55+61` 压缩包，新增芽果、猫果、饭果、观果、河果、星果、花果、牛果、网果、发果、皮果、伍果十二个站源接口，接入现有分类、目录、搜索、详情及分集解析流程。包含河果、星果搜索接口更新和猫果标题清理；十八个站源沿用独立缓存与记录身份。皮果可能受站点浏览器校验限制，真实播放与 iOS 真机行为仍待验证。来源、范围及验证见 [本轮合并记录](docs/upstream-refresh-2026-09-28.md)。
 
 ## 0.8.0 新增站源
 
@@ -44,7 +48,7 @@
 
 ## 使用方式
 
-- 剧库按红果、黄果、黄豆、剧果、野果、帝果分别浏览；收藏、历史和下载跨站汇总。
+- 剧库按十八个站源分别浏览；收藏、历史和下载跨站汇总。
 - 选集、上下滑切集、续播、倍速、画中画；单击切换控件，左右滑动预览进度，长按 2 倍速，长按后左右滑动快进/快退。
 - 榜单采用大封面与排名卡片；黄果、黄豆以及历史/下载记录会自动补取缺失或过期的封面。
 - 浅色、深色、跟随系统，手机与平板布局。

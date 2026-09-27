@@ -14,6 +14,22 @@ type mobileSourceAdapter struct {
 }
 
 func (d *Downloader) mobileSource(source string) (mobileSourceAdapter, bool) {
+	source = canonicalProviderSource(source)
+	if isDuanjuProviderSource(source) {
+		return mobileSourceAdapter{
+			categories: func(ctx context.Context) ([]nativeCategory, error) { return d.fetchDuanjuCategories(ctx, source) },
+			catalog: func(ctx context.Context, page int, category, query string) ([]Drama, bool, error) {
+				if query != "" {
+					return d.searchDuanjuPage(ctx, source, query, page)
+				}
+				return d.fetchDuanjuCatalogPage(ctx, source, page, category)
+			},
+			detail: func(ctx context.Context, id string) (Drama, []Chapter, error) {
+				return d.fetchDuanjuDetail(ctx, source, id)
+			},
+			resolve: d.resolveDuanjuMedia,
+		}, true
+	}
 	sources := map[string]mobileSourceAdapter{
 		sourceHuangju: {d.fetchHuangjuCategories, d.fetchHuangjuCatalogPage, d.fetchHuangjuDetail, d.resolveHuangjuMedia},
 		sourceYeguo:   {d.fetchYeguoCategories, d.fetchYeguoCatalogPage, d.fetchYeguoDetail, d.resolveYeguoMedia},
