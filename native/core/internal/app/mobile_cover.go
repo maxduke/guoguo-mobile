@@ -28,6 +28,17 @@ func (d *Downloader) mobileCoverAddress(ctx context.Context, dramaID string) (st
 		}
 		return address, nil
 	}
+	if adapter, found := d.mobileSource(source); found {
+		row, _, err := adapter.detail(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		address := bestDramaCover(row)
+		if address == "" {
+			return "", errors.New("该剧暂未提供封面")
+		}
+		return address, nil
+	}
 	var address string
 	switch source {
 	case sourceHuangdou:

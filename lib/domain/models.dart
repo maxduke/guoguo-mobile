@@ -1,11 +1,17 @@
 enum DramaSource {
   hongguo('红果', '真人 · 漫剧 · AI 剧'),
   huangguo('黄果', '发现更多好故事'),
-  huangdou('黄豆', '短剧，也有新滋味');
+  huangdou('黄豆', '短剧，也有新滋味'),
+  huangju('剧果', '发现新的故事'),
+  yeguo('野果', '更多短剧随心看'),
+  dsd('帝果', '精彩故事继续看');
 
   const DramaSource(this.label, this.subtitle);
   final String label;
   final String subtitle;
+  bool get remoteCategories => this == huangju || this == yeguo || this == dsd;
+  bool get onlineSearch => this == hongguo || remoteCategories;
+  bool get rankings => !remoteCategories;
   static DramaSource parse(Object? value) => values.firstWhere(
     (source) => source.name == value,
     orElse: () => throw const FormatException('未知站源'),
@@ -158,6 +164,7 @@ class ResolvedMedia {
   ResolvedMedia.fromJson(Map<String, dynamic> json)
     : url = json['url'] as String,
       remoteUrl = json['remoteUrl'] as String,
+      expiresAt = json['expiresAt'] as int? ?? 0,
       session = json['session'] as String? ?? '',
       contentKey = json['contentKey'] as String? ?? '',
       headers = Map<String, String>.from(json['headers'] as Map? ?? {}),
@@ -170,7 +177,9 @@ class ResolvedMedia {
   final String url, remoteUrl, session, contentKey;
   final Map<String, String> headers;
   final List<int> qualities;
-  final int quality, routeIndex, routeCount;
+  final int quality, routeIndex, routeCount, expiresAt;
+  bool freshAt(DateTime now) =>
+      expiresAt == 0 || now.millisecondsSinceEpoch + 5000 < expiresAt;
   bool get hasAlternative => session.isNotEmpty && routeIndex + 1 < routeCount;
   final bool hls, castDirect;
 }

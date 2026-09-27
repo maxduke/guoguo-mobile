@@ -19,6 +19,11 @@ import (
 )
 
 type Downloader struct {
+	huangjuOnce           sync.Once
+	huangju               *huangjuAPIClient
+	yeguoOnce             sync.Once
+	yeguo                 *yeguoAPIClient
+	dsdCatalog            dsdCatalogState
 	huangdouDetails       map[string]huangdouDetailEntry
 	huangdouDetailPending map[string]*huangdouDetailCall
 	cfg                   Config

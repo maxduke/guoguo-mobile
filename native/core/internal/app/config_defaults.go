@@ -17,6 +17,11 @@ const (
 )
 
 type Config struct {
+	YeguoAPIURL        string `json:"yeguoAPIURL,omitempty"`
+	HuangjuURL         string `json:"huangjuURL,omitempty"`
+	HuangjuAPIURL      string `json:"huangjuAPIURL,omitempty"`
+	YeguoURL           string `json:"yeguoURL,omitempty"`
+	DSDURL             string `json:"dsdURL,omitempty"`
 	settingsLoaded     bool
 	dataDir            string
 	outputDirSetting   string

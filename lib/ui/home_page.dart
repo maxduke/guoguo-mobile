@@ -34,7 +34,8 @@ class _HomePageState extends State<HomePage> {
   String _query = '', _category = '全部';
   DramaSource? _personalSource;
   bool _favoritesOnly = true, _searching = false;
-  int _searchGeneration = 0;
+  int _searchGeneration = 0, _searchPage = 0;
+  bool _searchHasMore = false;
   String? _searchError, _searchNotice;
   Timer? _suggestionTimer;
   List<String> _suggestions = [];
@@ -45,7 +46,13 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _search.addListener(_queryChanged);
-    if (widget.autoLoad && store.library.isEmpty) unawaited(store.refresh());
+    if (widget.autoLoad) {
+      if (store.library.isEmpty) {
+        unawaited(store.refresh());
+      } else {
+        unawaited(store.loadCategories());
+      }
+    }
   }
 
   @override
@@ -63,6 +70,8 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _query = _search.text.trim();
       _remoteResults = null;
+      _searchPage = 0;
+      _searchHasMore = false;
       _suggestions = [];
       _searchNotice = null;
       _searchError = null;
@@ -87,7 +96,9 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  Future<void> _submit(String text) async {
+  Future<void> _submit(String text, {bool more = false}) async {
+    if (more && (_searching || !_searchHasMore)) return;
+    final page = more ? _searchPage + 1 : 1;
     if (text.trim().isEmpty || !_search.value.composing.isCollapsed) return;
     if (_search.text != text) {
       _search.value = TextEditingValue(
@@ -102,18 +113,26 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _query = text.trim();
       _suggestions = [];
-      _searching = source == DramaSource.hongguo && !store.offline;
+      _searching = source.onlineSearch && !store.offline;
       _searchError = null;
       _searchNotice = null;
     });
-    if (source != DramaSource.hongguo || store.offline) return;
+    if (!source.onlineSearch || store.offline) return;
     try {
-      final result = await store.searchCatalog(source, text);
+      final result = await store.searchCatalog(source, text, page: page);
       if (mounted &&
           generation == _searchGeneration &&
           source == store.source) {
         setState(() {
-          _remoteResults = result.items;
+          _remoteResults = {
+            for (final row in [
+              ...(more ? _remoteResults ?? <Drama>[] : <Drama>[]),
+              ...result.items,
+            ])
+              row.key: row,
+          }.values.toList();
+          _searchPage = page;
+          _searchHasMore = result.hasMore;
           _searchNotice = result.warning.isNotEmpty
               ? result.warning
               : result.limited
@@ -263,7 +282,7 @@ class _HomePageState extends State<HomePage> {
     final rows = queryCatalog(
       _remoteResults ?? store.library,
       query: _remoteResults == null ? _query : '',
-      category: _category,
+      category: store.source.remoteCategories ? '全部' : _category,
       hideVip: store.source == DramaSource.huangdou && store.hideVip,
       sort: _sort,
     );
@@ -271,7 +290,7 @@ class _HomePageState extends State<HomePage> {
       '全部',
       ...store.library.map((d) => d.category).where((s) => s.isNotEmpty),
     }.toList();
-    final loading = store.loadingSources.contains(store.source);
+    final loading = store.libraryLoading;
     final horizontal = wide ? 40.0 : 22.0;
     return RefreshIndicator(
       onRefresh: () => store.refresh(),
@@ -281,13 +300,15 @@ class _HomePageState extends State<HomePage> {
               notification is ScrollUpdateNotification &&
               notification.metrics.extentAfter < 700 &&
               _query.isEmpty &&
-              store.sourceErrors[store.source] == null) {
+              store.libraryError == null) {
             unawaited(store.loadMore());
           }
           return false;
         },
         child: CustomScrollView(
-          key: PageStorageKey('library-${store.source.name}'),
+          key: PageStorageKey(
+            'library-${store.source.name}-${store.selectedCategory}',
+          ),
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverPadding(
@@ -310,80 +331,55 @@ class _HomePageState extends State<HomePage> {
                           ),
                           label: const Text('发现推荐'),
                         ),
-                      TextButton.icon(
-                        onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute<void>(
-                            builder: (_) =>
-                                RankingsPage(store: store, onOpen: _open),
+                      if (store.source.rankings)
+                        TextButton.icon(
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  RankingsPage(store: store, onOpen: _open),
+                            ),
                           ),
+                          icon: const Icon(Icons.bar_chart_rounded, size: 19),
+                          label: const Text('榜单'),
                         ),
-                        icon: const Icon(Icons.bar_chart_rounded, size: 19),
-                        label: const Text('榜单'),
-                      ),
                     ],
                   ),
                   const SizedBox(height: 18),
-                  Row(
-                    children: [
-                      for (final source in DramaSource.values)
-                        Expanded(
-                          child: Padding(
-                            padding: EdgeInsets.only(
-                              right: source == DramaSource.values.last ? 0 : 10,
-                            ),
-                            child: Semantics(
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final source in DramaSource.values)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 10),
+                            child: ChoiceChip(
+                              label: Text(source.label),
                               selected: store.source == source,
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(15),
-                                onTap: () => perform(context, () async {
-                                  _search.clear();
-                                  _suggestionTimer?.cancel();
-                                  ++_searchGeneration;
-                                  setState(() {
-                                    _query = '';
-                                    _category = '全部';
-                                    _searchError = null;
-                                    _searching = false;
-                                  });
-                                  await store.selectSource(source);
-                                  if ((store.catalogs[source] ?? []).isEmpty) {
-                                    await store.refresh(source);
-                                  }
-                                }),
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 180),
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 14,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: store.source == source
-                                        ? Theme.of(context).colorScheme.primary
-                                        : Theme.of(
-                                            context,
-                                          ).colorScheme.surfaceContainerLow,
-                                    borderRadius: BorderRadius.circular(15),
-                                  ),
-                                  child: Text(
-                                    source.label,
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      color: store.source == source
-                                          ? Theme.of(
-                                              context,
-                                            ).colorScheme.onPrimary
-                                          : Theme.of(
-                                              context,
-                                            ).colorScheme.onSurface,
-                                    ),
-                                  ),
-                                ),
-                              ),
+                              onSelected: (_) => perform(context, () async {
+                                _search.clear();
+                                ++_searchGeneration;
+                                setState(() {
+                                  _query = '';
+                                  _category = '全部';
+                                  _remoteResults = null;
+                                  _searchError = null;
+                                  _searchNotice = null;
+                                  _searching = false;
+                                  _searchHasMore = false;
+                                  _searchPage = 0;
+                                });
+                                await store.selectSource(source);
+                                if (store.library.isEmpty) {
+                                  await store.refresh(source);
+                                } else {
+                                  await store.loadCategories(source);
+                                }
+                              }),
                             ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 18),
                   TextField(
@@ -416,12 +412,14 @@ class _HomePageState extends State<HomePage> {
                                       _query = '';
                                       _searchError = null;
                                       _remoteResults = null;
+                                      _searchPage = 0;
+                                      _searchHasMore = false;
                                       _searching = false;
                                       ++_searchGeneration;
                                     }),
                                   ),
                                 IconButton(
-                                  tooltip: store.source == DramaSource.hongguo
+                                  tooltip: store.source.onlineSearch
                                       ? '联网搜索'
                                       : '筛选缓存',
                                   icon: const Icon(Icons.arrow_forward_rounded),
@@ -432,7 +430,7 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                   if (_query.isNotEmpty &&
-                      (store.source != DramaSource.hongguo || store.offline))
+                      (!store.source.onlineSearch || store.offline))
                     Padding(
                       padding: const EdgeInsets.only(top: 10),
                       child: Text(
@@ -463,7 +461,7 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                   if (_query.isEmpty &&
-                      store.source == DramaSource.hongguo &&
+                      store.source.onlineSearch &&
                       store.recentSearches.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 12),
@@ -609,7 +607,34 @@ class _HomePageState extends State<HomePage> {
                       '部分剧集会员状态待识别，打开详情后更新',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
-                  if (categories.length > 1)
+                  if (store.source.remoteCategories && _query.isEmpty)
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final category
+                              in store.sourceCategories[store.source] ??
+                                  [const SourceCategory('', '全部')])
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: ChoiceChip(
+                                label: Text(category.name),
+                                selected: store.selectedCategory == category.id,
+                                onSelected: (_) => perform(
+                                  context,
+                                  () => store.selectCategory(category.id),
+                                ),
+                              ),
+                            ),
+                          if (store.categoryErrors.containsKey(store.source))
+                            TextButton(
+                              onPressed: () => store.loadCategories(),
+                              child: const Text('重试加载分类'),
+                            ),
+                        ],
+                      ),
+                    ),
+                  if (!store.source.remoteCategories && categories.length > 1)
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: Row(
@@ -628,11 +653,11 @@ class _HomePageState extends State<HomePage> {
                         ],
                       ),
                     ),
-                  if (store.sourceErrors[store.source] != null)
+                  if (store.libraryError != null)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       child: _Notice(
-                        store.sourceErrors[store.source]!,
+                        store.libraryError!,
                         Icons.cloud_off_outlined,
                       ),
                     ),
@@ -694,6 +719,28 @@ class _HomePageState extends State<HomePage> {
                   },
                 ),
               ),
+            if (_query.isNotEmpty &&
+                store.source.onlineSearch &&
+                (_searchHasMore || _searchError != null))
+              SliverToBoxAdapter(
+                child: Center(
+                  child: OutlinedButton(
+                    onPressed: _searching
+                        ? null
+                        : () => _submit(
+                            _query,
+                            more: _searchPage > 0 && _searchHasMore,
+                          ),
+                    child: Text(
+                      _searching
+                          ? '正在搜索…'
+                          : _searchError != null
+                          ? '重试搜索'
+                          : '加载更多结果',
+                    ),
+                  ),
+                ),
+              ),
             if (store.library.isNotEmpty && _query.isEmpty)
               SliverToBoxAdapter(
                 child: Padding(
@@ -702,14 +749,14 @@ class _HomePageState extends State<HomePage> {
                     child: Column(
                       children: [
                         Text(
-                          '已加载 ${store.library.length} 部 · ${store.hasMore[store.source] == true ? "继续下滑加载" : "当前来源已返回完毕"}',
+                          '已加载 ${store.library.length} 部 · ${store.libraryHasMore ? "继续下滑加载" : "当前来源已返回完毕"}',
                         ),
                         const SizedBox(height: 8),
                         const Text(
                           '已加载数量不代表全站总量',
                           style: TextStyle(fontSize: 12),
                         ),
-                        if (store.hasMore[store.source] == true)
+                        if (store.libraryHasMore)
                           OutlinedButton.icon(
                             onPressed: loading ? null : store.loadMore,
                             icon: loading

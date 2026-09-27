@@ -6,22 +6,25 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 )
 
 type mobileAsset struct {
-	Name string `json:"name"`
-	URL  string `json:"url,omitempty"`
-	Body string `json:"body,omitempty"`
+	Identity string `json:"identity,omitempty"`
+	Name     string `json:"name"`
+	URL      string `json:"url,omitempty"`
+	Body     string `json:"body,omitempty"`
 }
 type mobileDownloadPlan struct {
-	Input      string            `json:"input"`
-	Assets     []mobileAsset     `json:"assets"`
-	Inline     []mobileAsset     `json:"inline"`
-	Headers    map[string]string `json:"headers"`
-	ContentKey string            `json:"contentKey"`
-	Process    bool              `json:"process"`
+	RefreshOnResume bool              `json:"refreshOnResume,omitempty"`
+	Input           string            `json:"input"`
+	Assets          []mobileAsset     `json:"assets"`
+	Inline          []mobileAsset     `json:"inline"`
+	Headers         map[string]string `json:"headers"`
+	ContentKey      string            `json:"contentKey"`
+	Process         bool              `json:"process"`
 }
 
 // Build a durable offline resource graph. URLs point at upstream resources, not
@@ -31,7 +34,31 @@ func (c *MobileClient) downloadPlan(ctx context.Context, request mobileRequest) 
 	if err != nil {
 		return mobileDownloadPlan{}, publicError(err)
 	}
-	return c.planMobileMedia(ctx, media, key)
+	plan, err := c.planMobileMedia(providerMediaContext(ctx, media.credentials), media, key)
+	if err != nil {
+		return plan, err
+	}
+	if media.credentials != nil {
+		plan.RefreshOnResume = media.credentials.cookie != ""
+		headerRequest, _ := http.NewRequest(http.MethodGet, media.URL, nil)
+		if err := media.credentials.apply(headerRequest); err != nil {
+			return plan, publicError(err)
+		}
+		for _, name := range []string{"Referer", "Origin", "User-Agent"} {
+			if value := headerRequest.Header.Get(name); value != "" {
+				plan.Headers[name] = value
+			}
+		}
+	}
+	for i := range plan.Assets {
+		asset := &plan.Assets[i]
+		asset.Identity = asset.URL
+		asset.URL, err = media.credentials.downloadURL(asset.URL)
+		if err != nil {
+			return plan, publicError(err)
+		}
+	}
+	return plan, nil
 }
 
 func (c *MobileClient) planMobileMedia(ctx context.Context, media providerMedia, key []byte) (mobileDownloadPlan, error) {
@@ -50,7 +77,11 @@ func (c *MobileClient) planMobileMedia(ctx context.Context, media providerMedia,
 		}
 		if raw == "" {
 			var err error
-			raw, remote, err = c.downloader.fetchProviderTextURL(ctx, remote, media.Referer)
+			if media.credentials != nil {
+				raw, remote, err = c.downloader.fetchMediaPlaylist(ctx, remote, media.Referer)
+			} else {
+				raw, remote, err = c.downloader.fetchProviderTextURL(ctx, remote, media.Referer)
+			}
 			if err != nil {
 				return err
 			}

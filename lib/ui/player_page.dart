@@ -110,7 +110,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       release: _release,
       isReusable: (item) =>
           !item.path.startsWith('http') ||
-          DateTime.now().difference(item.created) < const Duration(minutes: 2),
+          (DateTime.now().difference(item.created) <
+                  const Duration(minutes: 2) &&
+              (item.media?.freshAt(DateTime.now()) ?? true)),
     );
     _player = BetterPlayerController(
       BetterPlayerConfiguration(

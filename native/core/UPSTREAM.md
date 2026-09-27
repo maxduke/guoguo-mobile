@@ -30,3 +30,10 @@ are adapted from sibling `guoapp` 0.2.54+60, HEAD `ffddc0b`. Only the ranking pa
 and required HTML helpers are copied; the existing mobile transport and provider
 facade remain in use. Synthetic tests cover identity, rank, pagination, retries
 and cancellation. See `docs/app-fusion.md` for adoption decisions and limitations.
+
+
+The 0.8.0 mobile extension also ports Huangju, Yeguo and DSD catalog/detail/playback
+parsers and their client helpers from the same `ffddc0b`. Mobile adapters, scoped
+playback credentials, durable download grants and facade tests are local
+integration code. Existing source IDs and mobile transport are retained; no
+upstream desktop shell, account model or media engine is started.

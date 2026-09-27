@@ -55,6 +55,8 @@ func (downloader *Downloader) fetchCoverImage(ctx context.Context, remoteURL str
 		referer = hongguoBaseURL + "/"
 	case sourceHuangguoAI:
 		referer = downloader.providerBaseURL(sourceHuangguoAI) + "/"
+	case sourceHuangju, sourceYeguo, sourceDSD:
+		referer = downloader.providerBaseURL(source) + "/"
 	case sourceHuangguoVideo:
 		referer = downloader.providerBaseURL(sourceHuangguoVideo) + "/"
 	}

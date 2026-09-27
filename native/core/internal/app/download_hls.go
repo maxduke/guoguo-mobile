@@ -25,22 +25,23 @@ type hlsAsset struct {
 }
 
 type hlsProxy struct {
-	client     *http.Client
-	server     *http.Server
-	base       string
-	referer    string
-	key        []byte
-	mediaKey   []byte
-	mu         sync.Mutex
-	assets     map[string]hlsAsset
-	assetIDs   map[string]string
-	failure    error
-	root       string
-	retries    int
-	host       string
-	diagnostic func(diagnosticEvent)
-	query      string
-	acquire    func(context.Context) (func(), error)
+	credentials *providerMediaCredentials
+	client      *http.Client
+	server      *http.Server
+	base        string
+	referer     string
+	key         []byte
+	mediaKey    []byte
+	mu          sync.Mutex
+	assets      map[string]hlsAsset
+	assetIDs    map[string]string
+	failure     error
+	root        string
+	retries     int
+	host        string
+	diagnostic  func(diagnosticEvent)
+	query       string
+	acquire     func(context.Context) (func(), error)
 }
 
 var hlsURIAttribute = regexp.MustCompile(`URI="([^"]+)"`)
@@ -67,6 +68,10 @@ func (d *Downloader) newHLSProxy(ctx context.Context, media providerMedia, key [
 	}
 	if remote, err := url.Parse(media.URL); err == nil {
 		proxy.host = remote.Hostname()
+	}
+	proxy.credentials = media.credentials
+	if media.credentials != nil {
+		proxy.client = media.credentials.client(proxy.client)
 	}
 	proxy.root = proxy.addAsset(playbackRootAsset(media))
 	proxy.server = &http.Server{
@@ -366,7 +371,13 @@ func (proxy *hlsProxy) fetch(request *http.Request) (*http.Response, error) {
 				return nil, request.Context().Err()
 			}
 		}
-		response, err := proxy.client.Do(request.Clone(request.Context()))
+		attemptRequest := request.Clone(request.Context())
+		if proxy.credentials != nil {
+			if err := proxy.credentials.apply(attemptRequest); err != nil {
+				return nil, err
+			}
+		}
+		response, err := proxy.client.Do(attemptRequest)
 		if err == nil {
 			return response, nil
 		}

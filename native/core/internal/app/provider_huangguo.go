@@ -27,6 +27,9 @@ const (
 	sourceHuangguoVideo = "huangguo-video"
 	sourceHuangdou      = "huangdou"
 	sourceHongguo       = "hongguo"
+	sourceHuangju       = "huangju"
+	sourceYeguo         = "yeguo"
+	sourceDSD           = "dsd"
 
 	providerMaxBodyBytes = 20 * 1024 * 1024
 	providerTimeout      = 12 * time.Second
@@ -87,7 +90,7 @@ func splitProviderDramaID(id string) (source, sourceID string, ok bool) {
 
 func isHuangguoProviderSource(source string) bool {
 	switch canonicalProviderSource(source) {
-	case sourceHuangguoAI, sourceHuangguoVideo, sourceHuangdou, sourceHongguo:
+	case sourceHuangguoAI, sourceHuangguoVideo, sourceHuangdou, sourceHongguo, sourceHuangju, sourceYeguo, sourceDSD:
 		return true
 	default:
 		return false
@@ -104,6 +107,12 @@ func canonicalProviderSource(source string) string {
 		return sourceHuangdou
 	case "hongguo", "hongguoduanju.com":
 		return sourceHongguo
+	case "huangju", "huangju.net", "www.huangju.net", "api.huangju.net":
+		return sourceHuangju
+	case "yeguo", "analyze.buxefaex.cc", "delta.ygrwdsgt.cc", "yeguodj.com", "ygdj7.com", "www.yeguodj.com", "www.ygdj7.com":
+		return sourceYeguo
+	case "dsd", "dsd.com.se", "www.dsd.com.se":
+		return sourceDSD
 	default:
 		return strings.TrimSpace(source)
 	}
@@ -373,6 +382,11 @@ func (d *Downloader) fetchHuangguoVideoDramas(ctx context.Context) ([]Drama, err
 }
 
 func (d *Downloader) GetHuangguoChapters(ctx context.Context, source, sourceID string) (string, []Chapter, error) {
+	if adapter, ok := d.mobileSource(source); ok {
+		row, chapters, err := adapter.detail(ctx, sourceID)
+		return row.DisplayTitle(), chapters, err
+	}
+
 	switch canonicalProviderSource(source) {
 	case sourceHuangguoAI:
 		return d.fetchHuangguoAIChapters(ctx, sourceID)
@@ -522,6 +536,9 @@ func (d *Downloader) fetchProviderTextURL(ctx context.Context, rawURL, referer s
 				return "", "", err
 			}
 			req.Header.Set("User-Agent", userAgent)
+			if agent, _ := ctx.Value(providerTextUserAgentKey{}).(string); agent != "" {
+				req.Header.Set("User-Agent", agent)
+			}
 			if providerSourceForURL(rawURL) != "" {
 				req.Header.Set("Referer", providerRefererForURL(candidate, referer))
 			} else {

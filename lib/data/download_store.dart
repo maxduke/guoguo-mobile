@@ -60,13 +60,17 @@ class DownloadEntry {
     this.ready = false,
     this.userPaused = false,
     this.failure,
-  });
+    this.refreshOnResume = false,
+    Map<String, String>? assetIdentities,
+  }) : assetIdentities = assetIdentities ?? {};
   final String id, directory, input, contentKey;
   final Drama drama;
   final Episode episode;
   final int index;
   final bool process;
   final List<DownloadTask> tasks;
+  final Map<String, String> assetIdentities;
+  bool refreshOnResume;
   bool ready, userPaused, processing = false;
   TaskStatus status = TaskStatus.enqueued;
   double progress = 0;
@@ -114,6 +118,8 @@ class DownloadEntry {
     'input': input,
     'contentKey': contentKey,
     'process': process,
+    'assetIdentities': assetIdentities,
+    'refreshOnResume': refreshOnResume,
     'tasks': tasks.map((t) => t.toJson()).toList(),
     'ready': ready,
     'userPaused': userPaused,
@@ -131,6 +137,10 @@ class DownloadEntry {
     input: json['input'] as String,
     contentKey: json['contentKey'] as String,
     process: json['process'] == true,
+    assetIdentities: Map<String, String>.from(
+      json['assetIdentities'] as Map? ?? {},
+    ),
+    refreshOnResume: json['refreshOnResume'] == true,
     tasks: (json['tasks'] as List)
         .map((t) => DownloadTask.fromJson(Map<String, dynamic>.from(t as Map)))
         .toList(),
@@ -216,16 +226,32 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     );
     await downloader.start();
     await cleanupOrphans();
-    for (final entry in entries.where(
-      (e) => !e.ready && !e.userPaused && e.failure == null,
-    )) {
+    await restorePendingTasks();
+    await reload();
+  }
+
+  Future<void> restorePendingTasks() async {
+    for (final entry
+        in entries
+            .where((e) => !e.ready && !e.userPaused && e.failure == null)
+            .toList()) {
+      final missing = <DownloadTask>[];
       for (final task in entry.tasks) {
-        if (await driver.record(task.taskId) == null) {
+        if (await driver.record(task.taskId) == null) missing.add(task);
+      }
+      if (missing.isEmpty) continue;
+      if (entry.refreshOnResume) {
+        try {
+          await retry(entry);
+        } catch (_) {
+          // retry preserves files and records the error for an explicit retry.
+        }
+      } else {
+        for (final task in missing) {
           await driver.enqueue(task);
         }
       }
     }
-    await reload();
   }
 
   Future<void> _save() async => _storage?.write({
@@ -502,6 +528,12 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         input: safeName(plan['input']),
         contentKey: plan['contentKey'] as String? ?? '',
         process: plan['process'] == true,
+        refreshOnResume: plan['refreshOnResume'] == true,
+        assetIdentities: {
+          for (final asset in assets)
+            asset['name'] as String:
+                (asset['identity'] ?? asset['url']) as String,
+        },
         tasks: tasks,
       );
       created = entry;
@@ -556,7 +588,8 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> pause(DownloadEntry entry) => _setPaused(entry, true);
 
-  Future<void> resume(DownloadEntry entry) => _setPaused(entry, false);
+  Future<void> resume(DownloadEntry entry) =>
+      entry.refreshOnResume ? retry(entry) : _setPaused(entry, false);
 
   Future<void> _setPaused(DownloadEntry entry, bool paused) async {
     if (entry.ready || !entries.contains(entry)) return;
@@ -662,6 +695,11 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
           for (final asset in plan['assets'] as List)
             asset['name'] as String: asset['url'] as String,
         };
+        final identities = {
+          for (final asset in plan['assets'] as List)
+            asset['name'] as String:
+                (asset['identity'] ?? asset['url']) as String,
+        };
         if (plan['input'] != entry.input ||
             (plan['process'] == true) != entry.process ||
             (plan['contentKey'] as String? ?? '') != entry.contentKey ||
@@ -686,7 +724,8 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         for (final task in entry.tasks.where(
           (t) => complete.contains(t.taskId),
         )) {
-          if (assets[task.filename] != task.url) {
+          if (identities[task.filename] !=
+              (entry.assetIdentities[task.filename] ?? task.url)) {
             throw const ProviderException('已下载资源地址发生变化，旧文件已保留；请删除此任务后重新下载');
           }
         }
@@ -708,6 +747,10 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         entry.tasks
           ..clear()
           ..addAll(replacements);
+        entry.assetIdentities
+          ..clear()
+          ..addAll(identities);
+        entry.refreshOnResume = plan['refreshOnResume'] == true;
         entry.failure = null;
         entry.userPaused = false;
         await _save();

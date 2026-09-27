@@ -55,7 +55,7 @@ func (c *MobileClient) openMobilePlayback(choice mobilePlaybackChoice) (map[stri
 	media := choice.media[choice.index]
 	playURL := media.URL
 	var proxy *hlsProxy
-	if media.Playlist != "" || len(choice.key) > 0 || len(media.HLSKey) > 0 {
+	if media.credentials != nil || media.Playlist != "" || len(choice.key) > 0 || len(media.HLSKey) > 0 {
 		var err error
 		proxy, err = c.downloader.newHLSProxy(context.Background(), media, choice.key)
 		if err != nil {
@@ -80,8 +80,13 @@ func (c *MobileClient) openMobilePlayback(choice mobilePlaybackChoice) (map[stri
 		c.proxies[session] = proxy
 	}
 	c.mu.Unlock()
+	expires := int64(0)
+	if media.credentials != nil && !media.credentials.expires.IsZero() {
+		expires = media.credentials.expires.UnixMilli()
+	}
 	return map[string]any{
-		"url": playURL, "remoteUrl": media.URL, "session": session,
+		"expiresAt": expires,
+		"url":       playURL, "remoteUrl": media.URL, "session": session,
 		"headers": map[string]string{"Referer": media.Referer, "User-Agent": userAgent},
 		"quality": media.Quality, "qualities": choice.qualities,
 		"hls": media.Playlist != "", "castDirect": proxy == nil && len(media.CENCKey) == 0,

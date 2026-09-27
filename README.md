@@ -2,7 +2,7 @@
 
 暖白与墨绿的 Flutter 短剧应用。以 iPhone、iPad 为当前交付重点，Android 工程保留。
 
-> 开发版本。源码已接入三站目录、原生播放与下载/投屏路径；具体 iOS 安装包和验证结果以 GitHub Actions 及 [实现状态](docs/implementation-status.md) 为准，源码接入不等于真机验收通过。
+> 开发版本。源码已接入六站目录、原生播放与下载/投屏路径；具体 iOS 安装包和验证结果以 GitHub Actions 及 [实现状态](docs/implementation-status.md) 为准，源码接入不等于真机验收通过。
 
 ## 界面预览
 
@@ -11,6 +11,10 @@
 <img src="screenshots/phone-light.png" width="260" alt="手机浅色界面" /> <img src="screenshots/tablet-dark.png" width="560" alt="平板深色界面" />
 
 [发现页预览](screenshots/recommendations-light.png) · [深色发现页](screenshots/recommendations-dark.png) · [新版详情页](screenshots/detail-phone-light.png) · [平板详情页](screenshots/detail-tablet-dark.png)
+
+## 0.8.0 新增站源
+
+合并 guoapp 的剧果、野果、帝果，支持在线分类、分页目录与搜索、详情和分集解析。六源选择栏可横向滚动，分类缓存独立保存；剧果播放凭证限制在对应媒体源，过期地址重新解析，下载恢复刷新授权并保留身份一致的已完成分片。原有收藏、历史和下载身份保持兼容。范围和验收记录见 [融合实施记录](docs/app-fusion.md)。
 
 ## 0.7.3 修复
 
@@ -32,7 +36,7 @@
 
 吸收 guoapp 的播放恢复与详情交互设计：详情底部常驻播放和下载入口，选集支持定位当前；播放失败优先尝试备用线路，再有限次重新解析，保留位置与倍速。新增自动连播开关和倍速记忆，预加载等待当前播放缓冲充足后启动。iOS 继续使用现有原生播放器及后台下载路径。
 
-本轮范围、验证与后续融合计划见 [融合实施记录](docs/app-fusion.md)。流式解密内核替换、Android TV、更多站源和设备同步尚未在本轮接入。
+本轮范围、验证与后续融合计划见 [融合实施记录](docs/app-fusion.md)。流式解密内核替换、Android TV 和设备同步尚未接入；更多站源见 0.8.0。
 
 ## 0.5.0 更新
 
@@ -40,7 +44,7 @@
 
 ## 使用方式
 
-- 剧库按红果、黄果、黄豆分别浏览；收藏、历史和下载跨站汇总。
+- 剧库按红果、黄果、黄豆、剧果、野果、帝果分别浏览；收藏、历史和下载跨站汇总。
 - 选集、上下滑切集、续播、倍速、画中画；单击切换控件，左右滑动预览进度，长按 2 倍速，长按后左右滑动快进/快退。
 - 榜单采用大封面与排名卡片；黄果、黄豆以及历史/下载记录会自动补取缺失或过期的封面。
 - 浅色、深色、跟随系统，手机与平板布局。
@@ -95,7 +99,7 @@ cd native/core
 go test ./mobile ./internal/app
 ```
 
-三站目录手动实测（不在 CI 自动访问站源）：
+各站目录手动实测（不在 CI 自动访问站源）：
 
 ```bash
 cd native/core
