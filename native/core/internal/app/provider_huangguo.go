@@ -487,6 +487,9 @@ func (d *Downloader) fetchProviderTextURL(ctx context.Context, rawURL, referer s
 	if retries <= 0 {
 		retries = 3
 	}
+	if single, _ := ctx.Value(providerTextSingleAttemptKey{}).(bool); single {
+		retries = 1
+	}
 	if referer == "" {
 		referer = rawURL
 	}
@@ -525,6 +528,9 @@ func (d *Downloader) fetchProviderTextURL(ctx context.Context, rawURL, referer s
 				req.Header.Set("Referer", referer)
 			}
 			req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+			if noCache, _ := ctx.Value(providerTextNoCacheKey{}).(bool); noCache {
+				req.Header.Set("Cache-Control", "no-cache")
+			}
 			resp, err := d.doCatalogRequestWithTimeout(req, timeout)
 			if err != nil {
 				lastErr = err

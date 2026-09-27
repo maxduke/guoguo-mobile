@@ -593,7 +593,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         _finishAttempt(PlaybackResult.failed);
         final next = replacement;
         replacement = null;
-        _retry(automatic: true, resolved: next);
+        unawaited(_retry(automatic: true, resolved: next, play: _playIntent));
       }
     } catch (_) {
       if (mounted && generation == _generation) {
@@ -776,6 +776,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
     _preloadTimer?.cancel();
     final index = _index;
+    final generation = _generation;
     _preloadTimer = Timer(const Duration(seconds: 2), () async {
       try {
         final states = await Connectivity().checkConnectivity();
@@ -784,6 +785,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             _recovering ||
             !_prefetchReady ||
             index != _index ||
+            generation != _generation ||
+            _error != null ||
             (!_foreground && !_pipActive) ||
             !widget.store.prefetch ||
             states.contains(ConnectivityResult.none) ||
@@ -791,9 +794,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                 !widget.store.cellularPrefetch)) {
           return;
         }
-        await _buffer.prepare(index + 1);
+        await _buffer.prepare(
+          index + 1,
+          backgroundTimeout: const Duration(seconds: 15),
+        );
       } catch (_) {
-        if (mounted && index == _index) {
+        if (mounted && index == _index && generation == _generation) {
           _prefetchRetryAt = DateTime.now().add(const Duration(seconds: 30));
         }
       }

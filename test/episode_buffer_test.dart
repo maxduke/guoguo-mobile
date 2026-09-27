@@ -3,6 +3,66 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:guoguo_mobile/platform/episode_buffer.dart';
 
 void main() {
+  testWidgets(
+    'background timeout releases late results without replacing a retry',
+    (tester) async {
+      final pending = Completer<String>();
+      final released = <String>[];
+      late EpisodeCancellation token;
+      var calls = 0;
+      final buffer = EpisodeBuffer<String>(
+        load: (_, cancellation) {
+          token = cancellation;
+          return ++calls == 1 ? pending.future : Future.value('fresh');
+        },
+        release: (value) async {
+          released.add(value);
+        },
+      );
+      final preload = buffer.prepare(
+        1,
+        backgroundTimeout: const Duration(seconds: 15),
+      );
+      final failure = expectLater(preload, throwsA(isA<TimeoutException>()));
+      await tester.pump(const Duration(seconds: 15));
+      await failure;
+      expect(token.cancelled, isTrue);
+      expect(buffer.contains(1), isFalse);
+      expect(await buffer.prepare(1), 'fresh');
+      pending.complete('late');
+      await tester.pump();
+      expect(released, ['late']);
+      expect(buffer.peek(1), 'fresh');
+      buffer.close();
+    },
+  );
+
+  testWidgets('foreground selection removes the shared preload deadline', (
+    tester,
+  ) async {
+    final pending = Completer<String>();
+    late EpisodeCancellation token;
+    final buffer = EpisodeBuffer<String>(
+      load: (_, cancellation) {
+        token = cancellation;
+        return pending.future;
+      },
+      release: (_) async {},
+    );
+    final preload = buffer.prepare(
+      1,
+      backgroundTimeout: const Duration(seconds: 15),
+    );
+    await tester.pump(const Duration(seconds: 10));
+    final selected = buffer.prepare(1);
+    expect(identical(preload, selected), isTrue);
+    await tester.pump(const Duration(seconds: 10));
+    expect(token.cancelled, isFalse);
+    pending.complete('ready');
+    expect(await selected, 'ready');
+    buffer.close();
+  });
+
   test(
     'an old failed prefetch cannot evict a newer preparation for the same episode',
     () async {

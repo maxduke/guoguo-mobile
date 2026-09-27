@@ -12,6 +12,10 @@
 
 [发现页预览](screenshots/recommendations-light.png) · [深色发现页](screenshots/recommendations-dark.png) · [新版详情页](screenshots/detail-phone-light.png) · [平板详情页](screenshots/detail-tablet-dark.png)
 
+## 0.7.3 修复
+
+吸收 guoapp 的红果榜单兼容解析：结构化数据未完整返回时读取经过身份、名次和分页校验的网页内容，有限重试并沿用旧榜单回退。修复暂停时线路恢复会自动开播的问题；下一集后台准备限制为 15 秒，切到该集后复用任务并撤销后台时限，迟到结果释放资源。合并取舍和播放器后续优化见 [融合实施记录](docs/app-fusion.md#第三批近期更新评估与稳定性修复07318)。
+
 ## 0.7.2 修复
 
 修复提前开播与自动画中画的交接：直接返回桌面时保留当前播放，支持后台恢复与自动连播；画中画启动较晚时恢复兼容视频并保留位置。

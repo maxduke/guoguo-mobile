@@ -22,3 +22,11 @@ retained. Upstream HTTP/account route tests are adapted to the mobile JSON API;
 provider parsing and transport fixtures are retained. Desktop/account/Emby/UI
 code remains at the earlier baseline unless needed by shared parser types.
 See `docs/upstream-refresh-2026-09.md` at the repository root for scope and validation.
+
+## September 27 guoapp selective port
+
+Hongguo semantic ranking / JSON-LD fallback and bounded incomplete-response retries
+are adapted from sibling `guoapp` 0.2.54+60, HEAD `ffddc0b`. Only the ranking parser
+and required HTML helpers are copied; the existing mobile transport and provider
+facade remain in use. Synthetic tests cover identity, rank, pagination, retries
+and cancellation. See `docs/app-fusion.md` for adoption decisions and limitations.

@@ -19,6 +19,7 @@ class _Entry<T> {
   final cancellation = EpisodeCancellation();
   late Future<T> future;
   T? value;
+  Timer? deadline;
 }
 
 /// Shares preparation between preload and playback; releases evicted results.
@@ -31,7 +32,7 @@ class EpisodeBuffer<T> {
   bool _closed = false;
   T? peek(int index) => _entries[index]?.value;
   bool contains(int index) => _entries.containsKey(index);
-  Future<T> prepare(int index) {
+  Future<T> prepare(int index, {Duration? backgroundTimeout}) {
     if (_closed) return Future.error(EpisodeCancelled());
     var existing = _entries[index];
     if (existing?.value case final value?) {
@@ -40,22 +41,40 @@ class EpisodeBuffer<T> {
         existing = null;
       }
     }
-    if (existing != null) return existing.future;
+    if (existing != null) {
+      if (backgroundTimeout == null) existing.deadline?.cancel();
+      return existing.future;
+    }
     final entry = _Entry<T>();
     _entries[index] = entry;
-    entry.future = Future.sync(() => load(index, entry.cancellation))
-        .then((value) async {
-          if (entry.cancellation.cancelled || _closed) {
-            await release(value);
-            throw EpisodeCancelled();
-          }
-          entry.value = value;
-          return value;
-        })
-        .catchError((Object error, StackTrace stack) {
-          if (identical(_entries[index], entry)) _entries.remove(index);
-          Error.throwWithStackTrace(error, stack);
-        });
+    final result = Completer<T>();
+    entry.future = result.future;
+    if (backgroundTimeout != null) {
+      entry.deadline = Timer(backgroundTimeout, () {
+        if (identical(_entries[index], entry)) _entries.remove(index);
+        entry.cancellation.cancel();
+        if (!result.isCompleted) {
+          result.completeError(TimeoutException('下一集准备超时', backgroundTimeout));
+        }
+      });
+    }
+    unawaited(
+      Future.sync(() => load(index, entry.cancellation))
+          .then((value) async {
+            if (entry.cancellation.cancelled || _closed) {
+              await release(value);
+              throw EpisodeCancelled();
+            }
+            entry.deadline?.cancel();
+            entry.value = value;
+            if (!result.isCompleted) result.complete(value);
+          })
+          .catchError((Object error, StackTrace stack) {
+            if (identical(_entries[index], entry)) _entries.remove(index);
+            entry.deadline?.cancel();
+            if (!result.isCompleted) result.completeError(error, stack);
+          }),
+    );
     unawaited(
       entry.future.then<void>((_) {}, onError: (Object _, StackTrace _) {}),
     );
@@ -71,6 +90,7 @@ class EpisodeBuffer<T> {
   void evict(int index) {
     final entry = _entries.remove(index);
     if (entry == null) return;
+    entry.deadline?.cancel();
     entry.cancellation.cancel();
     final value = entry.value;
     if (value != null) unawaited(release(value));

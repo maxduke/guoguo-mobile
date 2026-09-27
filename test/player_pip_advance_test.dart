@@ -1025,6 +1025,90 @@ void main() {
   );
 
   testWidgets(
+    'paused online recovery retains pause through alternatives and refresh',
+    (tester) async {
+      final platform = _NativePlayer()..install();
+      addTearDown(platform.uninstall);
+      final provider = _Routes();
+      final store = AppStore(storage: MemoryStorage(), provider: provider)
+        ..playbackSpeed = 1.5
+        ..autoAdvance = false;
+      final downloads = _OnlineDownloads(store);
+      addTearDown(() {
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: 'fixture',
+              source: DramaSource.hongguo,
+              title: '播放恢复',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+              Episode.fromJson({'id': '2'}, 1),
+            ],
+            initialIndex: 0,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final player = tester
+          .widget<BetterPlayer>(find.byType(BetterPlayer))
+          .controller;
+      expect(find.byTooltip('返回').hitTestable(), findsNothing);
+      await player.seekTo(const Duration(seconds: 8));
+      player.postEvent(BetterPlayerEvent(BetterPlayerEventType.finished));
+      await tester.pumpAndSettle();
+      expect(platform.sources, hasLength(1));
+      await tester.tap(find.byTooltip('暂停'));
+      await tester.pumpAndSettle();
+      expect(player.isPlaying(), isFalse);
+      final playCalls = platform.plays.length;
+      void fail() =>
+          player.postEvent(BetterPlayerEvent(BetterPlayerEventType.exception));
+      fail();
+      await tester.pumpAndSettle();
+      expect(provider.fallbacks, 1);
+      expect(provider.resolves, 1);
+      expect(platform.sources.last, contains('route1.mp4'));
+      expect(
+        player.videoPlayerController!.value.position,
+        const Duration(seconds: 8),
+      );
+      expect(player.videoPlayerController!.value.speed, 1.5);
+      fail();
+      await tester.pumpAndSettle();
+      expect(provider.resolves, 2);
+      expect(player.isPlaying(), isFalse);
+      expect(platform.plays.length, playCalls);
+      fail();
+      await tester.pumpAndSettle();
+      expect(provider.fallbacks, 2);
+      fail();
+      await tester.pumpAndSettle();
+      expect(find.text('自动恢复未成功，请重试或切换分集'), findsOneWidget);
+      expect(platform.sources, hasLength(4));
+      expect(find.byTooltip('返回').hitTestable(), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      expect(
+        provider.releases.toSet(),
+        containsAll([
+          'session-1-0',
+          'session-1-1',
+          'session-2-0',
+          'session-2-1',
+        ]),
+      );
+    },
+  );
+
+  testWidgets(
     'leaving during fallback releases its late result without restarting playback',
     (tester) async {
       final platform = _NativePlayer()..install();
@@ -1066,6 +1150,60 @@ void main() {
       await tester.pump();
       expect(platform.sources, hasLength(1));
       expect(provider.releases, contains('session-1-1'));
+    },
+  );
+
+  testWidgets(
+    'closing PiP during fallback keeps the recovered episode paused',
+    (tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final platform = _NativePlayer()..install();
+      addTearDown(platform.uninstall);
+      final provider = _Routes()
+        ..pendingFallback = Completer<Map<String, dynamic>>();
+      final store = AppStore(storage: MemoryStorage(), provider: provider);
+      final downloads = _OnlineDownloads(store);
+      addTearDown(() {
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: 'fixture',
+              source: DramaSource.hongguo,
+              title: '播放恢复',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+            ],
+            initialIndex: 0,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final player = tester
+          .widget<BetterPlayer>(find.byType(BetterPlayer))
+          .controller;
+      platform.emit('pipStart');
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      player.postEvent(BetterPlayerEvent(BetterPlayerEventType.exception));
+      await tester.pump();
+      platform.emit('pipStop');
+      await tester.pump();
+      final playCalls = platform.plays.length;
+      provider.pendingFallback!.complete(provider.plan(1));
+      await tester.pumpAndSettle();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(platform.sources, hasLength(2));
+      expect(platform.plays.length, playCalls);
+      expect(player.isPlaying(), isFalse);
+      await tester.pumpWidget(const SizedBox());
     },
   );
 
