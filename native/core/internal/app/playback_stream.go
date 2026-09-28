@@ -67,7 +67,7 @@ func (log *playbackLog) mimeType() string {
 }
 
 func (downloader *Downloader) resolvePlaybackMedia(ctx context.Context, task Task) (providerMedia, []byte, error) {
-	if isHuangguoProviderSource(task.Chapter.Source) || task.Chapter.PageURL != "" || isProviderHTTPMediaURL(task.Chapter.VideoURL) || strings.HasPrefix(task.Chapter.VideoURL, "hongguo-cenc://") {
+	if isHuangguoProviderSource(sourceFromDramaID(task.DramaID)) || isHuangguoProviderSource(task.Chapter.Source) || task.Chapter.PageURL != "" || isProviderHTTPMediaURL(task.Chapter.VideoURL) || strings.HasPrefix(task.Chapter.VideoURL, "hongguo-cenc://") {
 		media, err := downloader.resolveProviderMedia(ctx, task)
 		return media, nil, err
 	}

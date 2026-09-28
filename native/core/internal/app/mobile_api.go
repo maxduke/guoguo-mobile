@@ -48,6 +48,7 @@ func NewMobileClient(directory string) (*MobileClient, error) {
 }
 
 type mobileRequest struct {
+	Category       string                     `json:"category"`
 	Recommendation hongguoRecommendationQuery `json:"recommendation"`
 	Method         string                     `json:"method"`
 	Source         string                     `json:"source"`
@@ -121,7 +122,25 @@ func (c *MobileClient) Call(raw string) (string, error) {
 			return "", err
 		}
 		value = plan
+	case "categories":
+		adapter, ok := c.downloader.mobileSource(request.Source)
+		if !ok {
+			return "", errors.New("当前站源没有在线分类")
+		}
+		categories, err := adapter.categories(ctx)
+		if err != nil {
+			return "", publicError(err)
+		}
+		value = map[string]any{"items": append([]nativeCategory{{ID: "", Name: "全部"}}, categories...)}
 	case "catalog":
+		if adapter, ok := c.downloader.mobileSource(request.Source); ok {
+			result, err := c.sourcePage(ctx, request, adapter)
+			if err != nil {
+				return "", err
+			}
+			value = result
+			break
+		}
 		c.catalogMu.Lock()
 		defer c.catalogMu.Unlock()
 		if request.Source != "hongguo" && request.Source != "huangdou" && request.Source != "huangguo" {
@@ -216,6 +235,14 @@ func (c *MobileClient) Call(raw string) (string, error) {
 		}
 		value = map[string]any{"items": items}
 	case "search":
+		if adapter, ok := c.downloader.mobileSource(request.Source); ok {
+			result, err := c.sourcePage(ctx, request, adapter)
+			if err != nil {
+				return "", err
+			}
+			value = result
+			break
+		}
 		if request.Source != "hongguo" {
 			return "", errors.New("当前站源尚未接入联网搜索，可继续使用本地筛选")
 		}

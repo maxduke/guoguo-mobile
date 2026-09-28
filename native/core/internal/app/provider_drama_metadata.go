@@ -12,6 +12,10 @@ func (d *Downloader) fetchDramaMetadata(ctx context.Context, drama Drama) (Drama
 	if !valid {
 		return Drama{}, errors.New("无效的剧集 ID")
 	}
+	if adapter, ok := d.mobileSource(source); ok {
+		row, _, err := adapter.detail(ctx, id)
+		return row, err
+	}
 	switch source {
 	case sourceHongguo:
 		return d.fetchHongguoDramaMetadata(ctx, drama, id)

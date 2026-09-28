@@ -10,14 +10,15 @@ import (
 )
 
 type providerMedia struct {
-	URL      string
-	Referer  string
-	Duration time.Duration
-	Playlist string
-	HLSKey   []byte
-	CENCKey  []byte
-	Quality  int
-	Variants []providerMedia
+	credentials *providerMediaCredentials
+	URL         string
+	Referer     string
+	Duration    time.Duration
+	Playlist    string
+	HLSKey      []byte
+	CENCKey     []byte
+	Quality     int
+	Variants    []providerMedia
 }
 
 func (d *Downloader) providerBaseURL(source string) string {
@@ -32,7 +33,16 @@ func (d *Downloader) providerBaseURL(source string) string {
 		configured, fallback = d.cfg.HuangdouURL, huangdouBaseURL
 	case sourceHongguo:
 		configured, fallback = d.cfg.HongguoURL, hongguoBaseURL
+	case sourceHuangju:
+		configured, fallback = d.cfg.HuangjuURL, huangjuBaseURL
+	case sourceYeguo:
+		configured, fallback = d.cfg.YeguoURL, yeguoBaseURL
+	case sourceDSD:
+		configured, fallback = d.cfg.DSDURL, dsdBaseURL
 	default:
+		if isDuanjuProviderSource(source) {
+			return d.duanjuBaseURL(source)
+		}
 		fallback = "https://d2pypzndaqisk.cloudfront.net"
 	}
 	return strings.TrimRight(firstNonEmpty(configured, fallback), "/")
@@ -45,6 +55,12 @@ func providerSourceForURL(raw string) string {
 	}
 	host := strings.ToLower(parsed.Hostname())
 	switch {
+	case host == "huangju.net" || host == "www.huangju.net" || host == "api.huangju.net":
+		return sourceHuangju
+	case host == "ygdj7.com" || host == "www.ygdj7.com" || host == "yeguodj.com" || host == "www.yeguodj.com" || strings.HasSuffix(host, ".ygrwdsgt.cc") || strings.HasSuffix(host, ".buxefaex.cc") || strings.HasSuffix(host, ".fzchosdi.cc"):
+		return sourceYeguo
+	case host == "dsd.com.se" || host == "www.dsd.com.se":
+		return sourceDSD
 	case host == "huangguoai.com" || strings.HasSuffix(host, ".ediayikma.cc") || strings.HasSuffix(host, ".agdkczeyx.cc"):
 		return sourceHuangguoAI
 	case host == "huangguo.video":
@@ -54,13 +70,13 @@ func providerSourceForURL(raw string) string {
 	case host == "hongguoduanju.com" || host == "www.hongguoduanju.com":
 		return sourceHongguo
 	default:
-		return ""
+		return duanjuSourceForHost(host)
 	}
 }
 
 func (d *Downloader) providerURLCandidates(raw string) []string {
 	source := providerSourceForURL(raw)
-	if source == "" {
+	if source == "" || isDuanjuProviderSource(source) {
 		return []string{raw}
 	}
 	parsed, _ := url.Parse(raw)
@@ -88,6 +104,12 @@ func (d *Downloader) providerURLCandidates(raw string) []string {
 }
 
 func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (providerMedia, error) {
+	if source, _, valid := splitProviderDramaID(task.DramaID); valid {
+		if adapter, ok := d.mobileSource(source); ok {
+			return adapter.resolve(ctx, task)
+		}
+	}
+
 	chapter := task.Chapter
 	chapter.Source = canonicalProviderSource(chapter.Source)
 	if chapter.Source == "" {

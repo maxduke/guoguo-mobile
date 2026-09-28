@@ -39,7 +39,7 @@ class FakeDriver extends DownloadDriver {
 }
 
 class PlanProvider implements ProviderClient {
-  bool fail = false, changed = false, empty = false;
+  bool fail = false, changed = false, empty = false, signed = false;
   @override
   Future<Map<String, dynamic>> call(
     String method, [
@@ -47,6 +47,7 @@ class PlanProvider implements ProviderClient {
   ]) async {
     if (fail) throw const ProviderException('暂时无法获取资源');
     return {
+      'refreshOnResume': signed,
       'input': 'local.m3u8',
       'process': true,
       'contentKey': changed ? 'changed' : '',
@@ -60,8 +61,20 @@ class PlanProvider implements ProviderClient {
       'assets': empty
           ? []
           : [
-              {'name': '1.bin', 'url': 'https://example.com/1'},
-              {'name': '2.bin', 'url': 'https://example.com/2?renewed'},
+              {
+                'name': '1.bin',
+                'url': signed
+                    ? 'https://example.com/1?Signature=new'
+                    : 'https://example.com/1',
+                if (signed) 'identity': 'https://example.com/1',
+              },
+              {
+                'name': '2.bin',
+                'url': signed
+                    ? 'https://example.com/2?Signature=new'
+                    : 'https://example.com/2?renewed',
+                if (signed) 'identity': 'https://example.com/2',
+              },
             ],
     };
   }
@@ -138,6 +151,72 @@ void main() {
     await root.delete(recursive: true);
   });
 
+  test(
+    'lost signed native task is recreated with a fresh grant on restart',
+    () async {
+      provider.signed = true;
+      entry.refreshOnResume = true;
+      entry.assetIdentities.addAll({
+        '1.bin': 'https://example.com/1',
+        '2.bin': 'https://example.com/2',
+      });
+      entry.userPaused = false;
+      entry.failure = null;
+      driver.saved.remove(entry.tasks.last.taskId);
+      await downloads.restorePendingTasks();
+      expect(driver.submitted.single.url, contains('Signature=new'));
+      expect(
+        await File('${entry.directory}/1.bin').readAsString(),
+        'keep this fragment',
+      );
+    },
+  );
+
+  test(
+    'signed download resume refreshes grants and keeps completed assets by identity',
+    () async {
+      provider.signed = true;
+      entry.refreshOnResume = true;
+      entry.assetIdentities.addAll({
+        '1.bin': 'https://example.com/1',
+        '2.bin': 'https://example.com/2',
+      });
+      entry.tasks[0] = entry.tasks[0].copyWith(
+        url: 'https://example.com/1?Signature=old',
+      );
+      await downloads.resume(entry);
+      expect(driver.submitted, hasLength(1));
+      expect(
+        driver.submitted.single.url,
+        'https://example.com/2?Signature=new',
+      );
+      expect(
+        await File('${entry.directory}/1.bin').readAsString(),
+        'keep this fragment',
+      );
+      final restored = DownloadEntry.fromJson(entry.toJson());
+      expect(restored.refreshOnResume, isTrue);
+      expect(restored.assetIdentities, entry.assetIdentities);
+    },
+  );
+
+  test(
+    'changed signed asset identity cannot be mixed with downloaded fragments',
+    () async {
+      provider.signed = true;
+      entry.refreshOnResume = true;
+      entry.assetIdentities['1.bin'] = 'https://example.com/different';
+      await expectLater(
+        downloads.resume(entry),
+        throwsA(isA<ProviderException>()),
+      );
+      expect(driver.submitted, isEmpty);
+      expect(
+        await File('${entry.directory}/1.bin').readAsString(),
+        'keep this fragment',
+      );
+    },
+  );
   test(
     'native storage failure is explained and persisted without raw URLs',
     () async {

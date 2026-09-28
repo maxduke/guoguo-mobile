@@ -12,10 +12,34 @@ class CatalogSearchResult {
     this.items, {
     this.warning = '',
     this.limited = false,
+    this.hasMore = false,
   });
   final List<Drama> items;
   final String warning;
-  final bool limited;
+  final bool limited, hasMore;
+}
+
+class SourceCategory {
+  const SourceCategory(this.id, this.name);
+  final String id, name;
+}
+
+class _CatalogSlice {
+  List<Drama> items = [];
+  int page = 0;
+  bool more = false, loading = false;
+  String? error;
+  Map<String, dynamic> toJson() => {
+    'items': items.map((d) => d.toJson()).toList(),
+    'page': page,
+    'more': more,
+  };
+  static _CatalogSlice fromJson(Map value) => _CatalogSlice()
+    ..items = (value['items'] as List)
+        .map((d) => Drama.fromJson(Map<String, dynamic>.from(d as Map)))
+        .toList()
+    ..page = value['page'] as int
+    ..more = value['more'] == true;
 }
 
 class AppStore extends ChangeNotifier {
@@ -57,7 +81,100 @@ class AppStore extends ChangeNotifier {
   double playbackSpeed = 1;
   bool offline = false;
   String? persistenceError;
-  List<Drama> get library => catalogs[source] ?? [];
+  final Map<String, _CatalogSlice> _slices = {};
+  final Map<DramaSource, String> selectedCategories = {};
+  final Map<DramaSource, List<SourceCategory>> sourceCategories = {};
+  final Map<DramaSource, String> categoryErrors = {};
+  final Set<DramaSource> _loadingCategories = {};
+  String get selectedCategory => selectedCategories[source] ?? '';
+  String _sliceKey(DramaSource target, String category) =>
+      '${target.name}|$category';
+  _CatalogSlice? get _activeSlice =>
+      _slices[_sliceKey(source, selectedCategory)];
+  List<Drama> get library => source.remoteCategories
+      ? _activeSlice?.items ?? []
+      : catalogs[source] ?? [];
+  bool get libraryLoading => source.remoteCategories
+      ? _activeSlice?.loading == true
+      : loadingSources.contains(source);
+  bool get libraryHasMore => source.remoteCategories
+      ? _activeSlice?.more == true
+      : hasMore[source] == true;
+  String? get libraryError =>
+      source.remoteCategories ? _activeSlice?.error : sourceErrors[source];
+
+  Future<void> loadCategories([DramaSource? selected]) async {
+    final target = selected ?? source;
+    if (!target.remoteCategories ||
+        offline ||
+        !_loadingCategories.add(target)) {
+      return;
+    }
+    try {
+      final result = await provider.call('categories', {'source': target.name});
+      sourceCategories[target] = (result['items'] as List)
+          .map((v) => SourceCategory(v['id'] as String, v['name'] as String))
+          .toList();
+      categoryErrors.remove(target);
+      await persist();
+    } catch (error) {
+      categoryErrors[target] = '$error';
+    } finally {
+      _loadingCategories.remove(target);
+      notifyListeners();
+    }
+  }
+
+  Future<void> selectCategory(String category) async {
+    final target = source;
+    selectedCategories[target] = category;
+    notifyListeners();
+    if (!_slices.containsKey(_sliceKey(target, category))) {
+      await _loadCategory(target, category, more: false);
+    }
+    await persist();
+  }
+
+  Future<void> _loadCategory(
+    DramaSource target,
+    String category, {
+    required bool more,
+  }) async {
+    if (offline) return;
+    final slice = _slices.putIfAbsent(
+      _sliceKey(target, category),
+      _CatalogSlice.new,
+    );
+    if (slice.loading || (more && !slice.more)) return;
+    slice.loading = true;
+    slice.error = null;
+    notifyListeners();
+    try {
+      final page = more ? slice.page + 1 : 1;
+      final result = await provider.call('catalog', {
+        'source': target.name,
+        'category': category,
+        'page': page,
+      });
+      final rows = _parseRows(result, target);
+      slice.items = {
+        for (final row in [...(more ? slice.items : <Drama>[]), ...rows])
+          row.key: row,
+      }.values.toList();
+      slice.page = page;
+      slice.more = result['hasMore'] == true;
+      final warning = result['warning'] as String? ?? '';
+      slice.error = warning.isEmpty ? null : warning;
+      _mergeCatalog(target, rows);
+      await persist();
+    } catch (error) {
+      slice.error = '$error';
+    } finally {
+      slice.loading = false;
+      notifyListeners();
+    }
+  }
+
   List<WatchRecord> get recent =>
       history.values.toList()
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
@@ -84,6 +201,23 @@ class AppStore extends ChangeNotifier {
           Episode.fromJson(Map<String, dynamic>.from(rows[i] as Map), i),
       ];
     }
+    final loadedSlices = <String, _CatalogSlice>{
+      for (final entry in (state['categorySlices'] as Map? ?? {}).entries)
+        entry.key as String: _CatalogSlice.fromJson(entry.value as Map),
+    };
+    final loadedSelections = <DramaSource, String>{
+      for (final entry in (state['selectedCategories'] as Map? ?? {}).entries)
+        DramaSource.parse(entry.key): entry.value as String,
+    };
+    final loadedCategories = <DramaSource, List<SourceCategory>>{
+      for (final entry in (state['sourceCategories'] as Map? ?? {}).entries)
+        DramaSource.parse(entry.key): (entry.value as List)
+            .map((v) => SourceCategory(v['id'] as String, v['name'] as String))
+            .toList(),
+    };
+    sourceCategories.addAll(loadedCategories);
+    _slices.addAll(loadedSlices);
+    selectedCategories.addAll(loadedSelections);
     source = DramaSource.parse(state['source'] ?? 'hongguo');
     themeMode = ThemeMode.values.firstWhere(
       (v) => v.name == state['theme'],
@@ -135,6 +269,19 @@ class AppStore extends ChangeNotifier {
   }
 
   Map<String, dynamic> snapshot() => {
+    'sourceCategories': {
+      for (final entry in sourceCategories.entries)
+        entry.key.name: entry.value
+            .map((v) => {'id': v.id, 'name': v.name})
+            .toList(),
+    },
+    'categorySlices': {
+      for (final entry in _slices.entries) entry.key: entry.value.toJson(),
+    },
+    'selectedCategories': {
+      for (final entry in selectedCategories.entries)
+        entry.key.name: entry.value,
+    },
     'pages': {
       for (final entry in catalogPages.entries) entry.key.name: entry.value,
     },
@@ -252,6 +399,13 @@ class AppStore extends ChangeNotifier {
 
   Future<void> refresh([DramaSource? selected]) async {
     final target = selected ?? source;
+    if (target.remoteCategories) {
+      await Future.wait([
+        loadCategories(target),
+        _loadCategory(target, selectedCategories[target] ?? '', more: false),
+      ]);
+      return;
+    }
     if (!loadingSources.add(target)) return;
     sourceErrors.remove(target);
     notifyListeners();
@@ -274,6 +428,10 @@ class AppStore extends ChangeNotifier {
 
   Future<void> loadMore() async {
     final target = source;
+    if (target.remoteCategories) {
+      await _loadCategory(target, selectedCategory, more: true);
+      return;
+    }
     if (offline || hasMore[target] != true) return;
     if (!loadingSources.add(target)) return;
     notifyListeners();
@@ -307,8 +465,9 @@ class AppStore extends ChangeNotifier {
 
   Future<CatalogSearchResult> searchCatalog(
     DramaSource target,
-    String query,
-  ) async {
+    String query, {
+    int page = 1,
+  }) async {
     if (query.trim().isEmpty) {
       return CatalogSearchResult(catalogs[target] ?? []);
     }
@@ -316,12 +475,14 @@ class AppStore extends ChangeNotifier {
     final response = await provider.call('search', {
       'source': target.name,
       'query': query.trim(),
+      'page': page,
     });
     final incoming = _parseRows(response, target);
     final result = CatalogSearchResult(
       incoming,
       warning: response['warning'] as String? ?? '',
       limited: response['limited'] == true,
+      hasMore: response['hasMore'] == true,
     );
     recentSearches.remove(query.trim());
     recentSearches.insert(0, query.trim());
@@ -453,6 +614,13 @@ class AppStore extends ChangeNotifier {
           merged[row.key]?.merge(row, replaceTags: replaceTags) ?? row;
     }
     catalogs[target] = merged.values.toList();
+    for (final entry in _slices.entries) {
+      if (entry.key.startsWith('${target.name}|')) {
+        entry.value.items = entry.value.items
+            .map((row) => merged[row.key] ?? row)
+            .toList();
+      }
+    }
   }
 
   int newEpisodeCount(Drama drama) {
