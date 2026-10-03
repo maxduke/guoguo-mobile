@@ -22,7 +22,8 @@ import '../data/download_store.dart';
 import '../domain/models.dart';
 import '../domain/playback_diagnostic.dart';
 import '../domain/playback_policy.dart';
-import '../platform/episode_buffer.dart';
+import '../platform/episode_buffer.dart' show EpisodeCancelled;
+import '../platform/playback_session.dart';
 import '../platform/media_preparer.dart';
 import '../platform/provider_client.dart';
 import 'components.dart';
@@ -55,32 +56,11 @@ class PlayerPage extends StatefulWidget {
   State<PlayerPage> createState() => _PlayerPageState();
 }
 
-class _Playable {
-  _Playable(
-    this.preparer,
-    this.media,
-    this.path,
-    this.timing, {
-    this.deferred = false,
-  });
-  final DateTime created = DateTime.now();
-  final PreparationTiming timing;
-  final MediaPreparer preparer;
-  final ResolvedMedia? media;
-  String path;
-  bool deferred;
-  Future<void>? preparing;
-}
-
 class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   late final PageController _pages;
-  late final EpisodeBuffer<_Playable> _buffer;
+  late final PlaybackSessionController _session;
   late final BetterPlayerController _player;
   final GlobalKey _playerKey = GlobalKey();
-  final Map<int, int> _qualities = {};
-  final Map<int, ResolvedMedia> _resolved = {};
-  final Set<int> _forceComplete = {};
-  final Set<int> _compatibilityFallback = {};
   bool _compatibleOnResume = false, _compatiblePlay = false;
   Duration? _compatiblePosition;
   final PlaybackRecovery _recovery = PlaybackRecovery();
@@ -89,17 +69,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   bool get _recovering => _recoveryGeneration == _generation;
   DateTime _prefetchRetryAt = DateTime(2000);
   Timer? _healthTimer, _backgroundTimer;
-  _Playable? _active;
+  PreparedEpisode? _active;
   ValueListenable<ProgressiveTimeline>? _timeline;
   VoidCallback? _timelineListener;
   Future<void> _paused = Future.value();
-  Future<void> _sourceSetup = Future.value();
   bool _pendingPlay = false, _playIntent = true;
   bool? _pipEntryWasPlaying;
   StreamSubscription<VideoEvent>? _nativeEvents;
   Timer? _hideTimer, _preloadTimer, _settleTimer;
   StreamSubscription<List<ConnectivityResult>>? _network;
-  int _index = 0, _generation = 0;
+  int _index = 0;
+  int get _generation => _session.generation;
   bool _controls = false, _locked = false, _fill = false;
   bool _loading = true, _foreground = true, _pipActive = false;
   bool _modal = false, _scrubbing = false;
@@ -107,7 +87,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   String? _error;
   String _loadingPhase = '正在查找本地视频…';
   PlaybackAttempt? _attempt;
-  final Map<int, PreparationTiming> _timings = {};
   DateTime _lastSaved = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
@@ -116,14 +95,20 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _index = widget.initialIndex;
     _speed = widget.store.playbackSpeed;
     _pages = PageController(initialPage: _index);
-    _buffer = EpisodeBuffer(
-      load: _prepare,
-      release: _release,
-      isReusable: (item) =>
-          !item.path.startsWith('http') ||
-          (DateTime.now().difference(item.created) <
-                  const Duration(minutes: 2) &&
-              (item.media?.freshAt(DateTime.now()) ?? true)),
+    _session = PlaybackSessionController(
+      provider: widget.store.provider,
+      drama: widget.drama,
+      episodes: widget.episodes,
+      localFile: (index) =>
+          widget.downloads.localFile(widget.drama, widget.episodes[index]),
+      canResolve: () => !widget.localOnly && !widget.store.offline,
+      progressive: (index) =>
+          widget.store.progressivePreparation &&
+          index == _index &&
+          _foreground &&
+          !_pipActive,
+      onPhase: _phase,
+      preparerFactory: widget.preparerFactory,
     );
     _player = BetterPlayerController(
       BetterPlayerConfiguration(
@@ -147,7 +132,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       if (!states.contains(ConnectivityResult.wifi) &&
           !widget.store.cellularPrefetch) {
         _preloadTimer?.cancel();
-        _buffer.retain({_index});
+        _session.retain({_index});
       } else {
         _schedulePrefetch();
       }
@@ -171,159 +156,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<_Playable> _prepare(
-    int index,
-    EpisodeCancellation cancellation,
-  ) async {
-    final timing = PreparationTiming();
-    _timings[index] = timing;
-    final stage = Stopwatch();
-    var stageName = 'local';
-    final preparer = widget.preparerFactory?.call() ?? MediaPreparer();
-    ResolvedMedia? media = _resolved.remove(index);
-    void cancelPrefetch() => unawaited(
-      widget.store.provider.cancelPrefetch(media).catchError((Object _) {}),
-    );
-    cancellation.onForeground = cancelPrefetch;
-    cancellation.onCancel = () {
-      cancelPrefetch();
-      unawaited(preparer.cancel().catchError((Object _) {}));
-    };
-    try {
-      cancellation.check();
-      var path = await widget.downloads.localFile(
-        widget.drama,
-        widget.episodes[index],
-      );
-      cancellation.check();
-      timing.local = path != null;
-      if (path == null) {
-        if (widget.localOnly || widget.store.offline) {
-          throw const ProviderException('此分集尚未下载，请联网后播放');
-        }
-        stageName = 'resolve';
-        _phase(index, '正在获取播放资源…');
-        stage.start();
-        media ??= await widget.store.provider.resolve(
-          widget.drama,
-          widget.episodes[index],
-          quality: _qualities[index] ?? 0,
-        );
-        timing.resolveMs = stage.elapsedMilliseconds;
-        stage.reset();
-        stageName = 'prepare';
-        cancellation.check();
-        if (cancellation.background) {
-          // Address resolution and a bounded prefix are sufficient in the
-          // background. Decryption/remuxing starts only after selection.
-          stageName = 'prefetch';
-          media = await widget.store.provider.prefetch(media);
-          cancellation.check();
-          timing.prefetchBytes = media.prefetchedBytes;
-          timing.prefetchMs = media.prefetchMs;
-          return _Playable(preparer, media, media.url, timing, deferred: true);
-        }
-        _phase(
-          index,
-          media.contentKey.isEmpty ? '正在连接视频…' : '正在准备视频，首次播放可能稍久…',
-        );
-        cancellation.check();
-        path = await preparer.prepare(
-          media,
-          progressive:
-              widget.store.progressivePreparation &&
-              index == _index &&
-              !_forceComplete.contains(index) &&
-              _foreground &&
-              !_pipActive,
-        );
-        timing.preparation = preparer.streaming
-            ? 'progressive'
-            : media.contentKey.isEmpty
-            ? 'direct'
-            : 'complete';
-        timing.compatibilityFallback =
-            preparer.fellBack || _compatibilityFallback.contains(index);
-        timing.prepareMs = stage.elapsedMilliseconds;
-        cancellation.check();
-      }
-      if (timing.local && media != null) {
-        await _releaseMedia(media);
-        media = null;
-      }
-      return _Playable(preparer, media, path, timing);
-    } catch (_) {
-      switch (stageName) {
-        case 'resolve':
-          timing.resolveMs = stage.elapsedMilliseconds;
-        case 'prepare':
-          timing.prepareMs = stage.elapsedMilliseconds;
-        case 'prefetch':
-          timing.prefetchMs = stage.elapsedMilliseconds;
-      }
-      try {
-        await preparer.dispose();
-      } catch (_) {
-        // Preserve the preparation error; failed cancellation retains files.
-      } finally {
-        await _releaseMedia(media);
-      }
-      rethrow;
-    }
-  }
-
-  Future<void> _prepareSelected(_Playable item, int index) =>
-      item.preparing ??= () async {
-        if (!item.deferred) return;
-        final media = item.media!;
-        _phase(
-          index,
-          media.contentKey.isEmpty ? '正在连接视频…' : '正在准备视频，首次播放可能稍久…',
-        );
-        final stage = Stopwatch()..start();
-        try {
-          item.path = await item.preparer.prepare(
-            media,
-            progressive:
-                widget.store.progressivePreparation &&
-                !_forceComplete.contains(index) &&
-                _foreground &&
-                !_pipActive,
-          );
-          item.deferred = false;
-          item.timing.preparation = item.preparer.streaming
-              ? 'progressive'
-              : media.contentKey.isEmpty
-              ? 'direct'
-              : 'complete';
-          item.timing.compatibilityFallback =
-              item.preparer.fellBack || _compatibilityFallback.contains(index);
-        } catch (_) {
-          if (identical(_buffer.peek(index), item)) _buffer.evict(index);
-          rethrow;
-        } finally {
-          item.timing.prepareMs = stage.elapsedMilliseconds;
-        }
-      }();
-
-  Future<void> _releaseMedia(ResolvedMedia? media) async {
-    try {
-      await widget.store.provider.release(media);
-    } catch (_) {
-      /* Best-effort session cleanup. */
-    }
-  }
-
-  Future<void> _release(_Playable item) async {
-    try {
-      await item.preparer.dispose();
-    } catch (_) {
-      // Failed cancellation must retain files until native writes stop.
-    } finally {
-      await _releaseMedia(item.media);
-    }
-  }
-
   void _detachTimeline() {
     final listener = _timelineListener;
     if (listener != null) _timeline?.removeListener(listener);
@@ -331,7 +163,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _timelineListener = null;
   }
 
-  void _attachTimeline(_Playable item, int generation) {
+  void _attachTimeline(PreparedEpisode item, int generation) {
     _detachTimeline();
     final timeline = item.preparer.timeline;
     final controller = _player.videoPlayerController;
@@ -394,19 +226,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _health.reset();
     _prefetchRetryAt = DateTime(2000);
     _finishAttempt(PlaybackResult.cancelled);
-    _timings.removeWhere((key, _) => (key - index).abs() > 1);
     _save();
     _detachTimeline();
-    if ((_active ?? _buffer.peek(_index))?.preparer.streaming == true ||
+    if ((_active ?? _session.peek(_index))?.preparer.streaming == true ||
         (_loading && widget.store.progressivePreparation)) {
-      _buffer.evict(_index);
+      _session.evict(_index);
     }
     _compatibleOnResume = false;
     _backgroundTimer?.cancel();
     _hideTimer?.cancel();
     _preloadTimer?.cancel();
     _settleTimer?.cancel();
-    ++_generation;
+    _session.invalidate();
     _paused = _active == null ? Future.value() : _player.pause();
     unawaited(_paused.catchError((Object _) {}));
     setState(() {
@@ -417,7 +248,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _error = null;
       _controls = false;
     });
-    _buffer.retain({index - 1, index, index + 1});
+    _session.retain({index - 1, index, index + 1});
     if (_pipActive && !_foreground) {
       unawaited(_activate());
     } else {
@@ -435,7 +266,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }) async {
     _pendingPlay = false;
     _playIntent = play;
-    final generation = ++_generation;
+    final generation = _session.invalidate();
     final index = _index;
     final record = widget.store.history[widget.drama.key];
     var start =
@@ -443,20 +274,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         (resume && record?.episodeId == widget.episodes[index].id
             ? Duration(milliseconds: record!.positionMs)
             : null);
-    if (start != null && start > Duration.zero) _forceComplete.add(index);
+    if (start != null && start > Duration.zero) _session.requireComplete(index);
     final attempt = PlaybackAttempt(
       source: widget.drama.source,
       episode: widget.episodes[index].number,
-      preloaded: _buffer.peek(index) != null,
+      preloaded: _session.peek(index) != null,
     );
     _attempt = attempt;
     try {
-      final pending = _buffer.prepare(index);
-      attempt.timing = _timings[index] ?? PreparationTiming();
+      final pending = _session.prepare(index, ticket: generation);
+      attempt.timing = _session.timing(index) ?? PreparationTiming();
       final item = await pending;
       attempt.timing = item.timing;
-      if (!mounted || generation != _generation) return;
-      await _prepareSelected(item, index);
       attempt.waitMs = attempt.clock.elapsedMilliseconds;
       if (!mounted || generation != _generation) return;
       await _paused;
@@ -482,13 +311,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       );
       // Native setDataSource operates on one texture. Serialize rapid swipes so
       // an older request cannot finish after a newer episode starts loading.
-      final setupFuture = _sourceSetup.then((_) async {
-        if (mounted && generation == _generation) {
-          await _player.setupDataSource(source);
-        }
-      });
-      _sourceSetup = setupFuture.catchError((Object _) {});
-      await setupFuture;
+      if (!await _session.installSource(
+        generation,
+        () => _player.setupDataSource(source),
+      )) {
+        return;
+      }
       item.timing.setupMs = setup.elapsedMilliseconds;
       if (!mounted || generation != _generation) return;
       _nativeEvents ??= _player
@@ -576,9 +404,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     unawaited(_paused.catchError((Object _) {}));
     _detachTimeline();
     _active = null;
-    if (quality != null) _qualities[_index] = quality;
-    _buffer.evict(_index);
-    if (resolved != null) _resolved[_index] = resolved;
+    _session.retry(_index, quality: quality, resolved: resolved);
     setState(() {
       _loading = true;
       _error = null;
@@ -619,11 +445,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         _active?.timing.local == true) {
       return;
     }
-    if ((_active ?? _buffer.peek(_index))?.preparer.streaming == true) {
+    if ((_active ?? _session.peek(_index))?.preparer.streaming == true) {
       await _ensureCompatible(play: _playIntent);
       return;
     }
-    var media = _active?.media ?? _buffer.peek(_index)?.media;
+    var media = _active?.media ?? _session.peek(_index)?.media;
     var action = _recovery.next(alternative: media?.hasAlternative == true);
     if (action == RecoveryAction.stop) {
       if (_active != null) unawaited(_player.pause());
@@ -636,7 +462,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     final generation = _generation;
     _recoveryGeneration = generation;
     _preloadTimer?.cancel();
-    _buffer.retain({_index});
+    _session.retain({_index});
     setState(() {
       _error = null;
       _loading = true;
@@ -676,7 +502,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         });
       }
     } finally {
-      if (replacement != null) await _releaseMedia(replacement);
+      if (replacement != null) await _session.releaseUnused(replacement);
       if (_recoveryGeneration == generation) _recoveryGeneration = null;
       if (generation == _generation) _health.reset();
     }
@@ -793,7 +619,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _playIntent = false;
       _pendingPlay = false;
       _preloadTimer?.cancel();
-      _buffer.retain({_index});
+      _session.retain({_index});
       if (_active?.preparer.streaming == true) {
         _suspendProgressive(false);
       } else if (_active != null) {
@@ -805,7 +631,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   void _preferencesChanged() {
     if (!widget.store.prefetch) {
       _preloadTimer?.cancel();
-      _buffer.retain({_index});
+      _session.retain({_index});
     }
   }
 
@@ -844,7 +670,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         _active == null ||
         _loading ||
         _index + 1 >= widget.episodes.length ||
-        _buffer.contains(_index + 1)) {
+        _session.contains(_index + 1)) {
       return;
     }
     _preloadTimer?.cancel();
@@ -867,10 +693,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                 !widget.store.cellularPrefetch)) {
           return;
         }
-        await _buffer.prepare(
-          index + 1,
-          backgroundTimeout: const Duration(seconds: 15),
-        );
+        await _session.prefetch(index + 1);
       } catch (_) {
         if (mounted && index == _index && generation == _generation) {
           _prefetchRetryAt = DateTime.now().add(const Duration(seconds: 30));
@@ -896,7 +719,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               generation == _generation &&
               !_foreground &&
               !_pipActive) {
-            _buffer.retain({_index});
+            _session.retain({_index});
             if (_active?.preparer.streaming == true) {
               _suspendProgressive(_playIntent);
             }
@@ -939,7 +762,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<bool> _ensureCompatible({bool? play, Duration? position}) async {
-    final item = _active ?? _buffer.peek(_index);
+    final item = _active ?? _session.peek(_index);
     if (item == null || _loading && _recovering) return false;
     if (!item.preparer.streaming) return true;
     final generation = _generation;
@@ -949,10 +772,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         position ?? _player.videoPlayerController?.value.position;
     _save();
     _recoveryGeneration = generation;
-    _forceComplete.add(_index);
-    _compatibilityFallback.add(_index);
+    _session.requireComplete(_index, compatibilityFallback: true);
     _preloadTimer?.cancel();
-    _buffer.retain({_index});
+    _session.retain({_index});
     setState(() {
       _loading = true;
       _error = null;
@@ -1324,7 +1146,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Widget _page(BuildContext context, int index) {
-    final item = _buffer.peek(index);
+    final item = _session.peek(index);
     final selected = index == _index;
     return RepaintBoundary(
       child: Stack(
@@ -1635,7 +1457,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     _finishAttempt(PlaybackResult.cancelled);
-    ++_generation;
+    _session.invalidate();
     _save();
     _hideTimer?.cancel();
     _preloadTimer?.cancel();
@@ -1647,12 +1469,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (_nativeEvents case final events?) unawaited(events.cancel());
     _healthTimer?.cancel();
     _backgroundTimer?.cancel();
-    for (final media in _resolved.values) {
-      unawaited(_releaseMedia(media));
-    }
-    _resolved.clear();
     _detachTimeline();
-    _buffer.close();
+    _session.close();
     _player.dispose(forceDispose: true);
     _pages.dispose();
     unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
