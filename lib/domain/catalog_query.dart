@@ -1,4 +1,5 @@
 import 'models.dart';
+import 'series_title.dart';
 
 enum CatalogSort {
   recommended('默认顺序'),
@@ -143,7 +144,38 @@ List<Drama> queryCatalog(
   return rows;
 }
 
-List<Drama> relatedSeries(Drama current, Iterable<Drama> candidates) {
+List<Drama> relatedSeries(
+  Drama current,
+  Iterable<Drama> candidates, {
+  int limit = 200,
+}) {
+  if (current.source == DramaSource.hongguo) {
+    final anchor = SeriesTitle.parse(current.title);
+    if (anchor == null) return [];
+    final rows = candidates.where((d) => d.source == current.source).toList();
+    final units = {
+      for (final row in rows)
+        if (SeriesTitle.parse(row.title) case final info?)
+          if (info.key == anchor.key && info.unit != null) info.unit!,
+    };
+    final unit = anchor.unit ?? (units.length == 1 ? units.single : null);
+    if (unit == null) return [];
+    final related = {
+      for (final row in rows)
+        if (row.key != current.key)
+          if (SeriesTitle.parse(row.title) case final info?)
+            if (info.key == anchor.key &&
+                (info.unit == null || info.unit == unit))
+              row.key: row,
+    }.values.toList();
+    related.sort((a, b) {
+      final order = SeriesTitle.parse(
+        a.title,
+      )!.season.compareTo(SeriesTitle.parse(b.title)!.season);
+      return order != 0 ? order : naturalTitleCompare(a.title, b.title);
+    });
+    return related.take(limit).toList();
+  }
   String base(String title) =>
       searchText(title).replaceFirst(RegExp(r'第[零〇一二两三四五六七八九十百\d]+[季部]$'), '');
   final title = base(current.title);

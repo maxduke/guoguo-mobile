@@ -10,6 +10,7 @@ import 'components.dart';
 import 'episode_grid.dart';
 import 'player_page.dart';
 import 'download_range_sheet.dart';
+import 'related_series_section.dart';
 
 Future<void> openDrama(
   BuildContext context,
@@ -81,6 +82,7 @@ class DetailPage extends StatefulWidget {
 class _DetailPageState extends State<DetailPage> {
   late Future<List<Episode>> _episodes;
   List<Episode> _loaded = [];
+  final _seriesKey = GlobalKey<RelatedSeriesSectionState>();
   bool _enqueueing = false, _refreshing = false, _expanded = false;
   Drama get drama => widget.store.currentDrama(widget.drama);
   @override
@@ -88,9 +90,14 @@ class _DetailPageState extends State<DetailPage> {
     super.initState();
     _episodes = _fetch();
     unawaited(widget.store.refreshDetail(widget.drama));
+    unawaited(
+      widget.store.markSeasonRead(widget.drama.key).catchError((Object _) {}),
+    );
   }
 
   Future<void> _play(int index) async {
+    _seriesKey.currentState?.cancelLookup();
+    widget.store.cancelUpdateChecks();
     await Navigator.push(
       context,
       MaterialPageRoute<void>(
@@ -386,6 +393,13 @@ class _DetailPageState extends State<DetailPage> {
               style: const TextStyle(fontSize: 12),
             ),
           const SizedBox(height: 24),
+          RelatedSeriesSection(
+            key: _seriesKey,
+            store: widget.store,
+            drama: drama,
+            onOpen: (row) =>
+                openDrama(context, widget.store, widget.downloads, row),
+          ),
         ],
       );
     },

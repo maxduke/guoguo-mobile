@@ -70,7 +70,7 @@ class _SettingsPageState extends State<SettingsPage> {
       builder: (context) => AlertDialog(
         title: const Text('合并记录备份'),
         content: Text(
-          '备份包含 ${backup.favorites.length} 部收藏、${backup.history.length} 条观看记录。\n\n收藏会去重，观看记录保留观看时间较新的一条。现有视频不会改变。',
+          '备份包含 ${backup.favorites.length} 部收藏、${backup.history.length} 条观看记录、${backup.seasonReminders.length} 项新季提醒。\n\n收藏会去重，观看记录与新季提醒保留时间较新的一份。现有视频不会改变。',
         ),
         actions: [
           TextButton(
@@ -269,7 +269,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     ListTile(
                       leading: const Icon(Icons.ios_share),
                       title: const Text('导出记录备份'),
-                      subtitle: const Text('收藏与观看历史，不包含视频文件'),
+                      subtitle: const Text('收藏、观看历史和新季提醒，不含视频文件'),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => perform(context, () => _export(context)),
                     ),

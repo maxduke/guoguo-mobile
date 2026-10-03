@@ -28,7 +28,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   int _tab = 0;
   bool _resuming = false;
   final _search = TextEditingController();
@@ -58,6 +58,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _search.addListener(_queryChanged);
     if (widget.autoLoad) {
       if (store.library.isEmpty) {
@@ -70,6 +71,8 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    store.cancelUpdateChecks();
+    WidgetsBinding.instance.removeObserver(this);
     _cancelSearch();
     _suggestionTimer?.cancel();
     _search.removeListener(_queryChanged);
@@ -77,7 +80,16 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 
-  void _open(Drama drama) => openDrama(context, store, widget.downloads, drama);
+  void _open(Drama drama) {
+    store.cancelUpdateChecks();
+    openDrama(context, store, widget.downloads, drama);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) store.cancelUpdateChecks();
+  }
+
   void _queryChanged() {
     _cancelSearch();
     _suggestionTimer?.cancel();
@@ -272,7 +284,10 @@ class _HomePageState extends State<HomePage> {
         ),
         bottomNavigationBar: NavigationBar(
           selectedIndex: _tab,
-          onDestinationSelected: (v) => setState(() => _tab = v),
+          onDestinationSelected: (v) {
+            if (v != _tab) store.cancelUpdateChecks();
+            setState(() => _tab = v);
+          },
           destinations: const [
             NavigationDestination(
               icon: Icon(Icons.grid_view_outlined),
@@ -815,6 +830,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _continue(WatchRecord record) async {
     if (_resuming) return;
+    store.cancelUpdateChecks();
     setState(() => _resuming = true);
     await perform(
       context,
@@ -930,21 +946,82 @@ class _HomePageState extends State<HomePage> {
           Align(
             alignment: Alignment.centerRight,
             child: TextButton.icon(
-              onPressed: store.checkingUpdates || favorites.isEmpty
+              onPressed:
+                  store.checkingUpdates ||
+                      (favorites.isEmpty && store.seasonReminders.isEmpty)
                   ? null
                   : () => perform(context, () async {
-                      await store.checkFavoriteUpdates();
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('收藏分集已更新')),
-                        );
+                      final completed = await store.checkFavoriteUpdates();
+                      if (mounted && completed) {
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(const SnackBar(content: Text('更新检查完成')));
                       }
                     }),
               icon: const Icon(Icons.refresh_rounded),
-              label: Text(store.checkingUpdates ? '正在检查更新…' : '检查新集'),
+              label: Text(store.checkingUpdates ? '正在检查更新…' : '检查更新'),
             ),
           ),
         const SizedBox(height: 18),
+        if (_favoritesOnly &&
+            store.seasonReminders.values.any(
+              (r) =>
+                  _personalSource == null || r.anchor.source == _personalSource,
+            )) ...[
+          Text('新季提醒', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          for (final reminder in store.seasonReminders.values.where(
+            (r) =>
+                _personalSource == null || r.anchor.source == _personalSource,
+          ))
+            Card(
+              child: Column(
+                children: [
+                  ListTile(
+                    title: Text(
+                      reminder.anchor.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      !reminder.initialized
+                          ? '等待首次检查建立提醒基准'
+                          : reminder.unreadCount == 0
+                          ? '暂无新季'
+                          : '发现 ${reminder.unreadCount} 部新季',
+                    ),
+                    onTap: () => _open(reminder.anchor),
+                    trailing: IconButton(
+                      tooltip: '关闭新季提醒',
+                      icon: const Icon(Icons.notifications_off_outlined),
+                      onPressed: () => perform(
+                        context,
+                        () => store.toggleSeasonReminder(reminder.anchor),
+                      ),
+                    ),
+                  ),
+                  for (final notice
+                      in reminder.seasons.values.where((n) => !n.read).take(3))
+                    ListTile(
+                      title: Text(
+                        notice.drama.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: const Text('新季'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => _open(notice.drama),
+                    ),
+                  if (reminder.unreadCount > 3)
+                    TextButton(
+                      onPressed: () => _open(reminder.anchor),
+                      child: const Text('查看全部新季'),
+                    ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 18),
+        ],
         if (_favoritesOnly && favorites.isEmpty ||
             !_favoritesOnly && records.isEmpty)
           EmptyState(

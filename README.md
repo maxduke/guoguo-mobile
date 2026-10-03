@@ -12,6 +12,12 @@
 
 [发现页预览](screenshots/recommendations-light.png) · [深色发现页](screenshots/recommendations-dark.png) · [新版详情页](screenshots/detail-phone-light.png) · [平板详情页](screenshots/detail-tablet-dark.png)
 
+## 0.12.0 新季提醒与同系列
+
+红果详情页先展示缓存中的同系列作品，可手动联网补全；按标题和季号匹配并排序，离开、开始播放或进入后台时取消请求。单独开启“提醒新季”，首次完整检查记录已有季，之后发现更高季号的新作品时在追剧页提示，查看该季后清除提示。收藏和同一部剧的新集检查继续保留原有含义。提醒状态随记录备份保存，旧版备份仍可导入。范围与验证见 [实施记录](docs/season-reminders-2026-10-03.md)。
+
+用户已反馈 0.11.4 真机测试无明显问题，本批继续保留该播放修复。
+
 ## 0.11.4 iOS 提前开播画面修复
 
 修正 iOS 播放器将不受支持的视频合成用于 HLS 的路径，处理红果提前开播“进度前进但画面停住，拖动才恢复”的反馈。起播位置由本地播放列表声明，去掉初始化阶段多余的定位；保留续播、拖动和 PiP 行为。范围与验证见 [原生修复记录](docs/ios-progressive-rendering-2026-10-03.md)。
