@@ -9,6 +9,10 @@ import (
 )
 
 func (d *Downloader) fetchMediaPlaylist(ctx context.Context, address, referer string) (string, string, error) {
+	return d.fetchMediaPlaylistWithClient(ctx, address, referer, d.client)
+}
+
+func (d *Downloader) fetchMediaPlaylistWithClient(ctx context.Context, address, referer string, client *http.Client) (string, string, error) {
 	if !isProviderHTTPMediaURL(address) {
 		return "", "", errors.New("播放列表地址无效")
 	}
@@ -18,7 +22,6 @@ func (d *Downloader) fetchMediaPlaylist(ctx context.Context, address, referer st
 	}
 	request.Header.Set("Referer", referer)
 	request.Header.Set("User-Agent", userAgent)
-	client := d.client
 	if credentials, _ := ctx.Value(providerMediaCredentialsKey{}).(*providerMediaCredentials); credentials != nil {
 		if err := credentials.apply(request); err != nil {
 			return "", "", err

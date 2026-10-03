@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,14 +37,14 @@ const (
 )
 
 var (
-	huangguoAIBaseURL     = "https://huangguoai.com"
+	huangguoAIBaseURL     = "https://huangguoai.ai"
 	huangguoAIBaseMirrors = []string{"https://huangguoai.com", "https://ttvoij.ediayikma.cc", "https://thu.ediayikma.cc", "https://pku.ediayikma.cc", "https://fdu.ediayikma.cc", "https://thu.agdkczeyx.cc"}
 	huangguoVideoBaseURL  = "https://huangguo.video"
 
 	huangguoAISlugs     = []string{"recommend", "newest", "ai-duanju", "ai-manju", "ai-huanlian", "ai-mogai", "ranks/hot"}
 	huangguoAITypeNames = map[string]string{"recommend": "精选推荐", "newest": "最近上新", "ai-duanju": "AI成人短剧", "ai-manju": "AI成人漫剧", "ai-huanlian": "AI换脸", "ai-mogai": "AI魔改", "ranks/hot": "排行榜"}
 
-	reDetailHref      = regexp.MustCompile(`(?is)<a\b[^>]*href=["']([^"']*/detail/([^"'/?#]+)[^"']*)["'][^>]*>.*?</a>`)
+	reDetailHref      = regexp.MustCompile(`(?is)<a\b[^>]*href=["']([^"']*/(?:detail|video)/([^"'/?#]+)[^"']*)["'][^>]*>.*?</a>`)
 	reDramaCardStart  = regexp.MustCompile(`(?is)<div\b[^>]*class=["'][^"']*\bhg-drama-card\b[^"']*["'][^>]*>`)
 	reVideoCard       = regexp.MustCompile(`(?is)<article\b[^>]*class=["'][^"']*\bvideo-card\b[^"']*["'][^>]*>.*?</article>`)
 	reAnyArticle      = regexp.MustCompile(`(?is)<article\b[^>]*>.*?</article>`)
@@ -62,6 +63,26 @@ var (
 	reViewsText       = regexp.MustCompile(`(?i)[0-9]+(?:\.[0-9]+)?\s*[w万]?\s*次播放`)
 	reScoreText       = regexp.MustCompile(`[0-9]+(?:\.[0-9]+)?\s*分`)
 )
+
+type providerTextValidator func(string, string) error
+type providerTextValidatorKey struct{}
+type providerTextExactURLKey struct{}
+
+func (d *Downloader) fetchHuangguoDetailText(ctx context.Context, pageURL, referer, source, sourceID string) (string, string, error) {
+	if source == sourceHuangguoAI {
+		ctx = context.WithValue(ctx, providerTextValidatorKey{}, providerTextValidator(func(body, effectiveURL string) error {
+			return validateHuangguoAIDetailPage(body, effectiveURL, sourceID)
+		}))
+	}
+	return d.fetchProviderTextURL(ctx, pageURL, referer)
+}
+
+var huangguoAIDiscoveredHosts sync.Map
+var huangguoAIRouteDataPattern = regexp.MustCompile(`(?is)data-url\s*=\s*["'](https?://[^"'\s]+)["']`)
+var huangguoAIRouteLinkPattern = regexp.MustCompile(`(?is)href\s*=\s*["'](https?://[^"'\s]+)["']`)
+var huangguoAIContentHosts = []string{"rurhvbhx.cc", "kmexvuoz.cc", "hwqlgzvsk.cc", "ediayikma.cc", "agdkczeyx.cc"}
+var huangguoAIExcludedHosts = []string{"t.me", "x.com", "twitter.com", "yandex.ru", "googletagmanager.com", "google-analytics.com", "google.com", "gstatic.com", "cloudflare.com"}
+var reAIDataHistory = regexp.MustCompile(`(?is)data-history=["']([^"']+)["']`)
 
 type providerEpisode struct {
 	Key   string
@@ -157,21 +178,22 @@ func (d *Downloader) fetchHuangguoAIDramas(ctx context.Context) ([]Drama, error)
 		category string
 		jsonAPI  bool
 	}
+	base := d.huangguoAIContentBaseURL(ctx)
 	maxPages := d.cfg.MaxPagesPerSort
 	if maxPages <= 0 {
 		maxPages = 1
 	}
-	pages := []aiPage{{url: huangguoAIBaseURL + "/", referer: huangguoAIBaseURL + "/", category: "首页"}}
+	pages := []aiPage{{url: base + "/", referer: base + "/", category: "首页"}}
 	for _, slug := range huangguoAISlugs {
-		categoryURL := huangguoAIListURL(slug, 1)
+		categoryURL := rehostProviderURL(mustProviderURL(huangguoAIListURL(slug, 1)), base)
 		category := huangguoAITypeName(slug)
-		pages = append(pages, aiPage{url: categoryURL, referer: huangguoAIBaseURL + "/", category: category})
+		pages = append(pages, aiPage{url: categoryURL, referer: base + "/", category: category})
 
 		if !strings.HasPrefix(slug, "ai-") {
 			continue
 		}
 		for page := 1; page <= maxPages; page++ {
-			apiURL := fmt.Sprintf("%s/api/videos/category/%s?sort=hot&page=%d&size=24", strings.TrimRight(huangguoAIBaseURL, "/"), url.PathEscape(slug), page)
+			apiURL := fmt.Sprintf("%s/api/videos/category/%s?sort=hot&page=%d&size=24", strings.TrimRight(base, "/"), url.PathEscape(slug), page)
 			pages = append(pages, aiPage{url: apiURL, referer: categoryURL, category: category, jsonAPI: true})
 		}
 	}
@@ -406,45 +428,8 @@ func (d *Downloader) GetHuangguoChapters(ctx context.Context, source, sourceID s
 }
 
 func (d *Downloader) fetchHuangguoAIChapters(ctx context.Context, sourceID string) (string, []Chapter, error) {
-	sourceID = strings.Trim(strings.TrimSpace(sourceID), "/")
-	sourceID = strings.TrimPrefix(sourceID, "detail/")
-	if sourceID == "" {
-		return "", nil, fmt.Errorf("empty huangguoai sourceID")
-	}
-	detailURL := strings.TrimRight(huangguoAIBaseURL, "/") + "/detail/" + url.PathEscape(sourceID) + "/"
-	body, err := d.fetchProviderText(ctx, detailURL, huangguoAIBaseURL+"/")
-	if err != nil {
-		return "", nil, err
-	}
-	title := firstNonEmpty(extractPageTitle(body), titleNearDetail(body, sourceID), "短剧")
-	episodes := parseHuangguoAIEpisodes(body, detailURL, sourceID)
-	if len(episodes) == 0 {
-		if media := parseAIVideoURL(body, detailURL); media != "" {
-			episodes = []providerEpisode{{Key: "1", Title: title, URL: detailURL, Index: 1, HLS: media}}
-		}
-	}
-	if len(episodes) == 0 {
-		return title, nil, nil
-	}
-	var chapters []Chapter
-	for _, ep := range episodes {
-		mediaURL := ep.HLS
-		idx := ep.Index
-		if idx <= 0 {
-			idx = len(chapters) + 1
-		}
-		chapterTitle := strings.TrimSpace(ep.Title)
-		if chapterTitle == "" {
-			chapterTitle = fmt.Sprintf("第%d集", idx)
-		}
-		key := ep.Key
-		if key == "" {
-			key = strconv.Itoa(idx)
-		}
-		chapters = append(chapters, Chapter{ID: providerChapterID(sourceHuangguoAI, sourceID, key), Source: sourceHuangguoAI, Title: chapterTitle, VideoURL: mediaURL, PageURL: ep.URL, CurrentEpisode: rawEpisode(idx)})
-	}
-	sortProviderChapters(chapters)
-	return title, uniqueChapters(chapters), nil
+	drama, chapters, err := d.fetchHuangguoAIDetail(ctx, sourceID)
+	return drama.DisplayTitle(), chapters, err
 }
 
 func (d *Downloader) fetchHuangguoVideoChapters(ctx context.Context, sourceID string) (string, []Chapter, error) {
@@ -512,6 +497,9 @@ func (d *Downloader) fetchProviderTextURL(ctx context.Context, rawURL, referer s
 		referer = rawURL
 	}
 	candidates := d.providerURLCandidates(rawURL)
+	if exact, _ := ctx.Value(providerTextExactURLKey{}).(bool); exact {
+		candidates = []string{rawURL}
+	}
 	var lastErr error
 	tried := 0
 	for _, candidate := range candidates {
@@ -535,7 +523,12 @@ func (d *Downloader) fetchProviderTextURL(ctx context.Context, rawURL, referer s
 			if len(candidates) > 1 {
 				timeout = 5 * time.Second
 			}
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, candidate, nil)
+			requestCtx := ctx
+			if huangguoAIIsKnownHost(candidate) {
+				// Reuse pinned public-DNS transport for discovered HTML routes and redirects.
+				requestCtx = context.WithValue(ctx, coverRequestKey{}, true)
+			}
+			req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, candidate, nil)
 			if err != nil {
 				return "", "", err
 			}
@@ -586,6 +579,12 @@ func (d *Downloader) fetchProviderTextURL(ctx context.Context, rawURL, referer s
 			if resp.Request != nil && resp.Request.URL != nil {
 				effectiveURL = resp.Request.URL
 			}
+			if validator, ok := ctx.Value(providerTextValidatorKey{}).(providerTextValidator); ok {
+				if err := validator(string(body), effectiveURL.String()); err != nil {
+					lastErr = err
+					continue
+				}
+			}
 			if source := providerSourceForURL(rawURL); source != "" {
 				d.providerMu.Lock()
 				d.providerHosts[source] = effectiveURL.Scheme + "://" + effectiveURL.Host
@@ -602,10 +601,13 @@ func (d *Downloader) fetchProviderTextURL(ctx context.Context, rawURL, referer s
 
 func providerURLCandidates(rawURL string) []string {
 	u, err := url.Parse(rawURL)
-	if err != nil || u.Hostname() != "huangguoai.com" {
+	if err != nil || providerSourceForURL(rawURL) != sourceHuangguoAI {
 		return []string{rawURL}
 	}
-	out := make([]string, 0, len(huangguoAIBaseMirrors)+8)
+	if huangguoAIIsContentHost(u.Hostname()) {
+		return []string{rawURL}
+	}
+	out := make([]string, 0, 1)
 	seen := map[string]bool{}
 	add := func(candidate string) {
 		if candidate == "" || seen[candidate] {
@@ -614,14 +616,7 @@ func providerURLCandidates(rawURL string) []string {
 		seen[candidate] = true
 		out = append(out, candidate)
 	}
-	for i, mirror := range huangguoAIBaseMirrors {
-		if i == 1 {
-			for _, generated := range generatedHuangguoAIMirrors(rawURL, 8) {
-				add(rehostProviderURL(u, generated))
-			}
-		}
-		add(rehostProviderURL(u, mirror))
-	}
+	add(rehostProviderURL(u, huangguoAIBaseURL))
 	if len(out) == 0 {
 		return []string{rawURL}
 	}
@@ -665,10 +660,16 @@ func generatedHuangguoAIMirrors(seed string, n int) []string {
 }
 
 func providerRefererForURL(candidate, fallback string) string {
-	if u, err := url.Parse(candidate); err == nil && u.Scheme != "" && u.Host != "" {
-		return u.Scheme + "://" + u.Host + "/"
+	target, err := url.Parse(candidate)
+	previous, previousErr := url.Parse(fallback)
+	if err != nil || target.Host == "" || previousErr != nil || previous.Host == "" {
+		return fallback
 	}
-	return fallback
+	if source := providerSourceForURL(fallback); source != "" && (source == providerSourceForURL(candidate) || providerSourceForURL(candidate) == "") {
+		previous.Scheme, previous.Host = target.Scheme, target.Host
+	}
+	previous.Fragment = ""
+	return previous.String()
 }
 
 func parseHuangguoAIDramaCards(rawHTML, pageURL, category string) []Drama {
@@ -727,6 +728,10 @@ func parseHuangguoAIDramaCards(rawHTML, pageURL, category string) []Drama {
 		}
 		sourceID := cleanID(markup[m[4]:m[5]])
 		block := markup[m[0]:m[1]]
+		href, err := url.Parse(extractAttr(block, "href"))
+		if err != nil || (!strings.HasPrefix(href.Path, "/video/") && !strings.HasPrefix(href.Path, "/detail/")) {
+			continue
+		}
 		title := firstHuangguoTitle(sourceID, huangguoCardTitle(block, sourceID), cleanText(block))
 		if title == "" {
 			continue
@@ -903,30 +908,71 @@ func parseHuangguoAIEpisodes(rawHTML, pageURL, sourceID string) []providerEpisod
 	seen := map[string]bool{}
 	var episodes []providerEpisode
 	usedIndex := map[int]bool{}
+	episodeSeen := map[int]bool{}
+	expectedID := cleanID(sourceID)
+	var initialData map[string]any
+	if data, ok := parseAIVideoInitialDataMap(rawHTML); ok && cleanID(mapString(data, "id", "videoId", "video_id")) == expectedID {
+		initialData = data
+	}
+	addEpisode := func(key, title, pageURL, hls string) {
+		key = cleanID(key)
+		if key == "" || seen[key] || seen[pageURL] {
+			return
+		}
+		idx := aiEpisodeNumber(key)
+		if idx <= 0 {
+			idx = episodeIndex(title, 0)
+		}
+		if idx <= 0 {
+			return
+		}
+		if episodeSeen[idx] {
+			return
+		}
+		idx = nextUnusedEpisodeIndex(idx, usedIndex)
+		usedIndex[idx] = true
+		episodeSeen[idx] = true
+		seen[key] = true
+		seen[pageURL] = true
+		episodes = append(episodes, providerEpisode{Key: key, Title: title, URL: pageURL, Index: idx, HLS: hls})
+	}
 	for _, m := range matches {
 		if len(m) < 4 || m[2] < 0 || m[3] < 0 {
 			continue
 		}
 		href := rawHTML[m[2]:m[3]]
+		key := aiEpisodeKey(href, expectedID)
+		if key == "" {
+			continue
+		}
 		fullURL := resolveProviderURL(pageURL, href)
 		linkHTML := rawHTML[m[0]:m[1]]
 		title := firstNonEmpty(extractAttr(linkHTML, "title", "aria-label"), cleanText(linkHTML))
-		key := aiEpisodeKey(href, sourceID)
-		if key == "" {
-			key = fmt.Sprintf("auto-%d", len(episodes)+1)
+		addEpisode(key, title, fullURL, aiEpisodeMedia(initialData, key, pageURL))
+	}
+	if len(initialData) > 0 {
+		eps, _ := initialData["epPlaySrcs"].(map[string]any)
+		keys := make([]string, 0, len(eps))
+		for key := range eps {
+			keys = append(keys, key)
 		}
-		if seen[key] || seen[fullURL] {
-			continue
+		sort.SliceStable(keys, func(i, j int) bool {
+			return aiEpisodeNumber(keys[i]) < aiEpisodeNumber(keys[j])
+		})
+		base := pageOrigin(pageURL)
+		for _, key := range keys {
+			number := aiEpisodeNumber(key)
+			if number <= 0 {
+				continue
+			}
+			episodeURL := huangguoAIPlaybackPageURL(base, expectedID, strconv.Itoa(number))
+			addEpisode(fmt.Sprintf("ep-%d", number), fmt.Sprintf("第%d集", number), episodeURL, aiEpisodeMedia(initialData, key, pageURL))
 		}
-		seen[key] = true
-		seen[fullURL] = true
-		idx := episodeIndex(title, 0)
-		if idx <= 0 {
-			idx = len(episodes) + 1
+		total := aiEpisodeNumber(mapString(initialData, "total", "episode", "episodes"))
+		for number := 1; number <= min(total, 10000); number++ {
+			episodeURL := huangguoAIPlaybackPageURL(base, expectedID, strconv.Itoa(number))
+			addEpisode(fmt.Sprintf("ep-%d", number), fmt.Sprintf("第%d集", number), episodeURL, aiEpisodeMedia(initialData, strconv.Itoa(number), pageURL))
 		}
-		idx = nextUnusedEpisodeIndex(idx, usedIndex)
-		usedIndex[idx] = true
-		episodes = append(episodes, providerEpisode{Key: key, Title: title, URL: fullURL, Index: idx})
 	}
 	sortProviderEpisodes(episodes)
 	return episodes
@@ -962,6 +1008,9 @@ func parseHuangguoVideoEpisodes(rawHTML, pageURL string) []providerEpisode {
 }
 
 func parseAIVideoURL(rawHTML, pageURL string) string {
+	if aiVideoInitialDataPresent(rawHTML) {
+		return parseAIVideoInitialData(rawHTML, pageURL)
+	}
 	if media := parseAIVideoInitialData(rawHTML, pageURL); media != "" {
 		return media
 	}
@@ -981,30 +1030,33 @@ func parseAIVideoURL(rawHTML, pageURL string) string {
 }
 
 func parseAIVideoInitialData(rawHTML, pageURL string) string {
-	re := regexp.MustCompile(`(?is)<script\b[^>]*id=["']videoInitialData["'][^>]*>(.*?)</script>`)
-	m := re.FindStringSubmatch(rawHTML)
-	if len(m) < 2 {
+	data, ok := parseAIVideoInitialDataMap(rawHTML)
+	if !ok {
 		return ""
 	}
-	var data map[string]any
-	if err := json.Unmarshal([]byte(html.UnescapeString(m[1])), &data); err != nil {
-		return ""
+	eps, _ := data["epPlaySrcs"].(map[string]any)
+	preferred := firstNonEmpty(aiEpisodeFromPageURL(pageURL), mapString(data, "ep", "episode"))
+	if preferred != "" {
+		if len(eps) > 0 {
+			if media := normalizeProviderMediaURL(pageURL, mapString(eps, preferred, "ep-"+preferred, "episode-"+preferred)); media != "" {
+				return media
+			}
+			for key, value := range eps {
+				if aiEpisodeNumber(key) != aiEpisodeNumber(preferred) {
+					continue
+				}
+				if media := normalizeProviderMediaURL(pageURL, fmt.Sprint(value)); media != "" {
+					return media
+				}
+			}
+			return ""
+		}
 	}
 	if media := normalizeProviderMediaURL(pageURL, mapString(data, "videoSrc", "videoUrl", "playUrl")); media != "" {
 		return media
 	}
-	eps, _ := data["epPlaySrcs"].(map[string]any)
-	if len(eps) == 0 {
+	if len(eps) == 0 || preferred != "" {
 		return ""
-	}
-	preferred := firstNonEmpty(mapString(data, "ep", "episode"))
-	if m := regexp.MustCompile(`/ep-(\d+)(?:/|$)`).FindStringSubmatch(pageURL); len(m) > 1 {
-		preferred = m[1]
-	}
-	if preferred != "" {
-		if media := normalizeProviderMediaURL(pageURL, fmt.Sprint(eps[preferred])); media != "" {
-			return media
-		}
 	}
 	keys := make([]string, 0, len(eps))
 	for key := range eps {
@@ -1177,15 +1229,25 @@ func aiEpisodeKey(href, sourceID string) string {
 	if err == nil {
 		path = u.Path
 	}
-	path = strings.Trim(strings.TrimPrefix(path, "/video/"), "/")
-	parts := strings.Split(path, "/")
-	if len(parts) > 1 && parts[0] == sourceID {
-		return cleanID(parts[len(parts)-1])
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	for index := 0; index+1 < len(parts); index++ {
+		if parts[index] != "video" {
+			continue
+		}
+		if cleanID(parts[index+1]) != cleanID(sourceID) {
+			return ""
+		}
+		if index+2 >= len(parts) {
+			return "1"
+		}
+		for last := len(parts) - 1; last > index+1; last-- {
+			if key := cleanID(parts[last]); key != "" {
+				return key
+			}
+		}
+		return "1"
 	}
-	if len(parts) == 1 && parts[0] == sourceID {
-		return ""
-	}
-	return cleanID(strings.Join(parts, "-"))
+	return ""
 }
 
 func huangguoVideoSourceID(href string) (path, sourceID string) {
@@ -1216,7 +1278,7 @@ func detailIDFromString(s string) string {
 	}
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	for i := 0; i+1 < len(parts); i++ {
-		if parts[i] == "detail" {
+		if parts[i] == "detail" || parts[i] == "video" {
 			return cleanID(parts[i+1])
 		}
 	}
@@ -1516,9 +1578,7 @@ func normalizeProviderMediaURL(pageURL, raw string) string {
 	}
 	raw = strings.ReplaceAll(raw, `\/`, `/`)
 	resolved := resolveProviderURL(pageURL, raw)
-	if !strings.Contains(strings.ToLower(resolved), ".m3u8") && !strings.Contains(strings.ToLower(resolved), ".mp4") {
-		return ""
-	}
+
 	return resolved
 }
 
@@ -1730,3 +1790,471 @@ func providerReferer(source string) string {
 	}
 	return huangguoAIBaseURL + "/"
 }
+
+func (d *Downloader) fetchHuangguoAIDetail(ctx context.Context, sourceID string) (Drama, []Chapter, error) {
+	sourceID = strings.Trim(strings.TrimSpace(sourceID), "/")
+	sourceID = strings.TrimPrefix(sourceID, "detail/")
+	sourceID = strings.TrimPrefix(sourceID, "video/")
+	if sourceID == "" {
+		return Drama{}, nil, fmt.Errorf("empty huangguoai sourceID")
+	}
+	base := d.huangguoAIContentBaseURL(ctx)
+	detailURL := strings.TrimRight(base, "/") + "/video/" + url.PathEscape(sourceID) + "/"
+	detailCtx := context.WithValue(ctx, providerTextValidatorKey{}, providerTextValidator(func(body, effectiveURL string) error {
+		return validateHuangguoAIDetailPage(body, effectiveURL, sourceID)
+	}))
+	detailCtx = context.WithValue(detailCtx, providerTextExactURLKey{}, true)
+	body, detailURL, err := d.fetchProviderTextURL(detailCtx, detailURL, base+"/")
+	if err != nil && ctx.Err() == nil {
+		for _, route := range d.discoverHuangguoAIRoutes(ctx, true) {
+			if route == base {
+				continue
+			}
+			detailURL = huangguoAIPlaybackPageURL(route, sourceID, "1")
+			body, detailURL, err = d.fetchProviderTextURL(detailCtx, detailURL, route+"/")
+			if err == nil || ctx.Err() != nil {
+				break
+			}
+		}
+	}
+	if err != nil {
+		return Drama{}, nil, err
+	}
+	drama := huangguoDetailMetadata(body, detailURL, sourceHuangguoAI, sourceID)
+	title := drama.DisplayTitle()
+	episodes := parseHuangguoAIEpisodes(body, detailURL, sourceID)
+	if len(episodes) == 0 {
+		if media := parseAIVideoURL(body, detailURL); media != "" {
+			episodes = []providerEpisode{{Key: "1", Title: title, URL: detailURL, Index: 1, HLS: media}}
+		}
+	}
+	if len(episodes) == 0 {
+		return drama, nil, nil
+	}
+	var chapters []Chapter
+	for _, ep := range episodes {
+		mediaURL := ep.HLS
+		idx := ep.Index
+		if idx <= 0 {
+			idx = len(chapters) + 1
+		}
+		chapterTitle := strings.TrimSpace(ep.Title)
+		if chapterTitle == "" {
+			chapterTitle = fmt.Sprintf("第%d集", idx)
+		}
+		key := ep.Key
+		if key == "" {
+			key = strconv.Itoa(idx)
+		}
+		chapters = append(chapters, Chapter{ID: providerChapterID(sourceHuangguoAI, sourceID, key), Source: sourceHuangguoAI, Title: chapterTitle, VideoURL: mediaURL, PageURL: ep.URL, CurrentEpisode: rawEpisode(idx)})
+	}
+	sortProviderChapters(chapters)
+	return drama, uniqueChapters(chapters), nil
+}
+
+func huangguoAIPlaybackPageURL(base, sourceID, episode string) string {
+	base = strings.TrimRight(base, "/")
+	episode = firstNonEmpty(episode, "1")
+	if aiEpisodeNumber(episode) <= 1 {
+		return base + "/video/" + url.PathEscape(sourceID) + "/"
+	}
+	return base + "/video/" + url.PathEscape(sourceID) + "/ep-" + url.PathEscape(episode) + "/"
+}
+
+func (d *Downloader) discoverHuangguoAIRoutes(ctx context.Context, force bool) []string {
+	d.providerMu.Lock()
+	cached := append([]string(nil), d.huangguoAIRoutes...)
+	checked := d.huangguoAIRouteChecked
+	d.providerMu.Unlock()
+	if !force && len(cached) > 0 {
+		return cached
+	}
+	if !force && checked {
+		return nil
+	}
+	requestCtx := ctx
+	requestCtx = context.WithValue(requestCtx, providerTextExactURLKey{}, true)
+	if force {
+		requestCtx = context.WithValue(requestCtx, providerTextNoCacheKey{}, true)
+	}
+	body, err := d.fetchProviderText(requestCtx, huangguoAIBaseURL+"/", huangguoAIBaseURL+"/")
+	if err != nil {
+		return nil
+	}
+	routes := parseHuangguoAIRoutes(body)
+	d.providerMu.Lock()
+	d.huangguoAIRouteChecked = true
+	if len(routes) > 0 {
+		d.huangguoAIRoutes = append([]string(nil), routes...)
+		d.providerHosts[sourceHuangguoAI] = routes[0]
+	}
+	d.providerMu.Unlock()
+	return routes
+}
+
+func (d *Downloader) huangguoAIContentBaseURL(ctx context.Context) string {
+	configured := strings.TrimRight(strings.TrimSpace(d.cfg.HuangguoAIURL), "/")
+	if configured != "" && !huangguoAIIsDeprecatedRoute(configured) && !huangguoAIIsProviderRoute(configured) {
+		return configured
+	}
+	if huangguoAIIsContentRoute(configured) {
+		return configured
+	}
+	routes := d.discoverHuangguoAIRoutes(ctx, false)
+	d.providerMu.Lock()
+	preferred := d.providerHosts[sourceHuangguoAI]
+	d.providerMu.Unlock()
+	for _, route := range routes {
+		if route == preferred {
+			return strings.TrimRight(route, "/")
+		}
+	}
+	if len(routes) == 0 {
+		routes = d.discoverHuangguoAIRoutes(ctx, true)
+	}
+	for _, route := range routes {
+		if huangguoAIIsContentRoute(route) {
+			return strings.TrimRight(route, "/")
+		}
+	}
+	return strings.TrimRight(huangguoAIBaseURL, "/")
+}
+
+func huangguoAIIsContentRoute(raw string) bool {
+	return huangguoAIIsHostRoute(raw, true)
+}
+
+func huangguoAIIsProviderRoute(raw string) bool {
+	return huangguoAIIsHostRoute(raw, false)
+}
+
+func huangguoAIIsDeprecatedRoute(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Hostname() == "" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "huangguoai.com" || strings.HasSuffix(host, ".huangguoai.com")
+}
+
+func huangguoAIIsHostRoute(raw string, contentOnly bool) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Hostname() == "" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if contentOnly {
+		return huangguoAIIsContentHost(host)
+	}
+	return host == "huangguoai.ai" || huangguoAIIsContentHost(host)
+}
+
+func huangguoAIHostIn(host string, families []string) bool {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if host == "" {
+		return false
+	}
+	for _, family := range families {
+		if host == family || strings.HasSuffix(host, "."+family) {
+			return true
+		}
+	}
+	return false
+}
+
+func huangguoAIIsContentHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if huangguoAIHostIn(host, huangguoAIContentHosts) {
+		return true
+	}
+	_, found := huangguoAIDiscoveredHosts.Load(host)
+	return found
+}
+
+func huangguoAIIsKnownHost(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Hostname() == "" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "huangguoai.ai" || huangguoAIIsContentHost(host)
+}
+
+func mediaEdgeHost(raw string) string {
+	address, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(address.Hostname())
+	labels := strings.Split(host, ".")
+	if len(labels) < 3 || !strings.HasPrefix(labels[0], "tp") {
+		return ""
+	}
+	index, err := strconv.Atoi(strings.TrimPrefix(labels[0], "tp"))
+	if err != nil || index < 1 || index > 8 {
+		return ""
+	}
+	return host
+}
+
+func huangguoAIContentOrigin(raw string) (origin, host string, ok bool) {
+	parsed, err := url.Parse(html.UnescapeString(strings.TrimSpace(raw)))
+	if err != nil || parsed.Hostname() == "" {
+		return "", "", false
+	}
+	if !validImageURL(parsed) {
+		return "", "", false
+	}
+	host = strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	if mediaEdgeHost(raw) != "" || host == "" || host == "huangguoai.ai" || strings.HasSuffix(host, ".huangguoai.ai") || host == "huangguoai.pages.dev" || host == "huangguoai.gitlab.io" || huangguoAIIsDeprecatedRoute(parsed.String()) || huangguoAIHostIn(host, huangguoAIExcludedHosts) {
+		return "", "", false
+	}
+	return parsed.Scheme + "://" + parsed.Host, host, true
+}
+
+func parseHuangguoAIRoutes(rawHTML string) []string {
+	seen := map[string]bool{}
+	var routes []string
+	record := func(origin, host string) {
+		if seen[origin] {
+			return
+		}
+		seen[origin] = true
+		huangguoAIDiscoveredHosts.Store(host, true)
+		routes = append(routes, origin)
+	}
+	for _, match := range huangguoAIRouteDataPattern.FindAllStringSubmatch(rawHTML, -1) {
+		if origin, host, ok := huangguoAIContentOrigin(match[1]); ok {
+			record(origin, host)
+		}
+	}
+	for _, match := range huangguoAIRouteLinkPattern.FindAllStringSubmatch(rawHTML, -1) {
+		if origin, host, ok := huangguoAIContentOrigin(match[1]); ok && huangguoAIHostIn(host, huangguoAIContentHosts) {
+			record(origin, host)
+		}
+	}
+	return routes
+}
+
+func huangguoAISearchResultHTML(rawHTML string) string {
+	if block := huangguoClassBlock(rawHTML, "hg-search-results"); block != "" {
+		return block
+	}
+	if index := strings.Index(rawHTML, `class="hg-search-results"`); index >= 0 {
+		return rawHTML[index:]
+	}
+	if index := strings.Index(rawHTML, `class='hg-search-results'`); index >= 0 {
+		return rawHTML[index:]
+	}
+	return rawHTML
+}
+
+func (d *Downloader) searchHuangguoAI(ctx context.Context, query string, page int) ([]Drama, bool, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, false, errors.New("搜索关键词不能为空")
+	}
+	page = max(1, page)
+	escaped := url.PathEscape(query)
+	addRoute := func(routes []string, seen map[string]bool, bases *[]string) {
+		for _, route := range routes {
+			route = strings.TrimRight(strings.TrimSpace(route), "/")
+			if route == "" || seen[route] {
+				continue
+			}
+			seen[route] = true
+			*bases = append(*bases, route)
+		}
+	}
+	var lastErr error
+	var empty []Drama
+	var emptyMore bool
+	for pass := 0; pass < 2; pass++ {
+		seen := map[string]bool{}
+		var bases []string
+		d.providerMu.Lock()
+		cachedRoutes := append([]string(nil), d.huangguoAIRoutes...)
+		d.providerMu.Unlock()
+		addRoute(cachedRoutes, seen, &bases)
+		addRoute([]string{d.huangguoAIContentBaseURL(ctx)}, seen, &bases)
+		if pass == 1 {
+			bases = nil
+			seen = map[string]bool{}
+			addRoute(d.discoverHuangguoAIRoutes(ctx, true), seen, &bases)
+		}
+		for _, base := range bases {
+			address := strings.TrimRight(base, "/") + "/search/video/" + escaped + "/"
+			if page > 1 {
+				address += strconv.Itoa(page) + "/"
+			}
+			searchCtx := context.WithValue(ctx, providerTextExactURLKey{}, true)
+			body, err := d.fetchProviderText(searchCtx, address, base+"/search/")
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			block := huangguoAISearchResultHTML(body)
+			items := parseHuangguoAIDramaCards(block, address, "")
+			nextLink := fmt.Sprintf(`/search/video/%s/%d/`, escaped, page+1)
+			more := strings.Contains(body, `rel="next"`) || strings.Contains(body, "rel='next'") || strings.Contains(body, nextLink) || len(items) >= 20
+			if len(items) > 0 {
+				return items, more, nil
+			}
+			empty, emptyMore = items, more
+		}
+	}
+	if empty != nil || lastErr == nil {
+		return empty, emptyMore, nil
+	}
+	return nil, false, lastErr
+}
+
+func aiVideoInitialDataPresent(rawHTML string) bool {
+	return regexp.MustCompile(`(?is)<script\b[^>]*id=["']videoInitialData["'][^>]*>`).MatchString(rawHTML)
+}
+
+func aiEpisodeNumber(value string) int {
+	value = strings.TrimSpace(value)
+	if number, err := strconv.Atoi(value); err == nil && number > 0 {
+		return number
+	}
+	lower := strings.ToLower(value)
+	for _, prefix := range []string{"episode-", "episode_", "episode", "ep-", "ep_", "ep", "p"} {
+		if !strings.HasPrefix(lower, prefix) {
+			continue
+		}
+		number, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(lower, prefix)))
+		if err == nil && number > 0 {
+			return number
+		}
+	}
+	return episodeIndex(value, 0)
+}
+
+func aiEpisodeFromPageURL(pageURL string) string {
+	parsed, err := url.Parse(pageURL)
+	if err != nil {
+		return ""
+	}
+	segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(segments) >= 2 && segments[len(segments)-2] == "video" {
+		return "1"
+	}
+	if len(segments) > 0 {
+		last := strings.ToLower(strings.TrimSpace(segments[len(segments)-1]))
+		for _, prefix := range []string{"episode-", "episode_", "ep-", "ep_", "episode", "ep", "p"} {
+			if strings.HasPrefix(last, prefix) {
+				if number, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(last, prefix))); err == nil && number > 0 {
+					return strconv.Itoa(number)
+				}
+			}
+		}
+		if number, err := strconv.Atoi(last); err == nil && number > 0 {
+			return strconv.Itoa(number)
+		}
+	}
+	for _, key := range []string{"ep", "episode"} {
+		if number, err := strconv.Atoi(parsed.Query().Get(key)); err == nil && number > 0 {
+			return strconv.Itoa(number)
+		}
+	}
+	return ""
+}
+
+func parseAIVideoInitialDataMap(rawHTML string) (map[string]any, bool) {
+	re := regexp.MustCompile(`(?is)<script\b[^>]*id=["']videoInitialData["'][^>]*>(.*?)</script>`)
+	m := re.FindStringSubmatch(rawHTML)
+	if len(m) < 2 {
+		return nil, false
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(html.UnescapeString(m[1])), &data); err != nil {
+		return nil, false
+	}
+	return data, true
+}
+
+func validateHuangguoAIPlaybackPage(body, effectiveURL, sourceID, episode string) error {
+	data, ok := parseAIVideoInitialDataMap(body)
+	if !ok {
+		return errors.New("黄果播放页缺少分集数据")
+	}
+	actualID := cleanID(mapString(data, "id", "videoId", "video_id"))
+	if actualID == "" || actualID != cleanID(sourceID) {
+		return fmt.Errorf("黄果播放页剧集不符：请求 %s，返回 %s", sourceID, actualID)
+	}
+	actualEpisode := aiEpisodeNumber(firstNonEmpty(mapString(data, "ep", "episode"), aiEpisodeFromPageURL(effectiveURL)))
+	expectedEpisode := aiEpisodeNumber(episode)
+	if expectedEpisode > 0 && actualEpisode != expectedEpisode {
+		return fmt.Errorf("黄果播放页分集不符：请求第%d集，返回第%d集", expectedEpisode, actualEpisode)
+	}
+	return nil
+}
+
+func validateHuangguoAIDetailPage(body, effectiveURL, sourceID string) error {
+	expectedID := cleanID(sourceID)
+	if expectedID == "" {
+		return errors.New("黄果详情页缺少剧集 ID")
+	}
+	if actualID := detailIDFromString(effectiveURL); actualID != "" && actualID != expectedID {
+		return fmt.Errorf("黄果详情页剧集不符：请求 %s，返回 %s", expectedID, actualID)
+	}
+	if data, ok := parseAIVideoInitialDataMap(body); ok {
+		actualID := cleanID(mapString(data, "id", "videoId", "video_id"))
+		if actualID != expectedID {
+			return fmt.Errorf("黄果详情页剧集不符：请求 %s，返回 %s", expectedID, actualID)
+		}
+		return nil
+	}
+	if strings.Contains(strings.ToLower(body), "application/ld+json") {
+		if _, err := parseHuangguoSortDetail(body, effectiveURL, Drama{ID: providerDramaID(sourceHuangguoAI, expectedID), Source: sourceHuangguoAI, SourceID: expectedID}); err == nil {
+			return nil
+		} else {
+			return fmt.Errorf("黄果详情页剧集不符：请求 %s：%w", expectedID, err)
+		}
+	}
+	return errors.New("黄果详情页未返回有效剧集数据")
+}
+
+func parseHuangguoAIHistoryMap(rawHTML string) map[string]any {
+	match := reAIDataHistory.FindStringSubmatch(rawHTML)
+	if len(match) < 2 {
+		return nil
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(html.UnescapeString(match[1])), &data); err != nil {
+		return nil
+	}
+	return data
+}
+
+func pageOrigin(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host
+}
+
+func aiEpisodeMedia(data map[string]any, key, pageURL string) string {
+	if len(data) == 0 {
+		return ""
+	}
+	eps, _ := data["epPlaySrcs"].(map[string]any)
+	preferred := firstNonEmpty(key, strconv.Itoa(aiEpisodeNumber(key)))
+	if preferred != "" {
+		if media := normalizeProviderMediaURL(pageURL, mapString(eps, preferred, "ep-"+preferred, "episode-"+preferred)); media != "" {
+			return media
+		}
+		for episodeKey, value := range eps {
+			if aiEpisodeNumber(episodeKey) == aiEpisodeNumber(preferred) {
+				if media := normalizeProviderMediaURL(pageURL, fmt.Sprint(value)); media != "" {
+					return media
+				}
+			}
+		}
+	}
+	return normalizeProviderMediaURL(pageURL, mapString(data, "videoSrc", "videoUrl", "playUrl"))
+}
+
+func mustProviderURL(raw string) *url.URL { parsed, _ := url.Parse(raw); return parsed }

@@ -38,10 +38,14 @@ func fanguoDramaFromNode(node map[string]any, base string) Drama {
 }
 
 const fanguoDefaultKeyword = "都市"
+const xingguoCatalogPageSize = 50
+const niuguoDefaultTypeID = "5"
+
+var niuguoTypeNames = map[string]string{"5": "短剧", "1": "电影", "2": "电视剧", "4": "动漫", "3": "综艺"}
 
 func (d *Downloader) fetchFanguoCatalogPage(ctx context.Context, page int, category string) ([]Drama, bool, error) {
-	if page > 1 {
-		return nil, false, nil
+	if page < 1 {
+		page = 1
 	}
 	base := d.duanjuBaseURL(sourceFanguo)
 	keyword := strings.TrimSpace(category)
@@ -54,6 +58,7 @@ func (d *Downloader) fetchFanguoCatalogPage(ctx context.Context, page int, categ
 		"keyword":            {keyword},
 		"quickEngineVersion": {"-1"},
 		"scene":              {""},
+		"pageIndex":          {strconv.Itoa(page)},
 	}.Encode()
 	response, err := d.duanjuJSON(ctx, duanjuRequest{Source: sourceFanguo, Address: address, Referer: base + "/"})
 	if err != nil {
@@ -61,7 +66,11 @@ func (d *Downloader) fetchFanguoCatalogPage(ctx context.Context, page int, categ
 	}
 	var items []Drama
 	seen := map[string]bool{}
-	for _, block := range duanjuFindList(duanjuFindMap(response, "result"), "elements") {
+	result := duanjuFindMap(response, "result")
+	if result == nil {
+		return nil, false, errors.New("饭果未返回目录资料")
+	}
+	for _, block := range duanjuFindList(result, "elements") {
 		mapped, ok := block.(map[string]any)
 		if !ok {
 			continue
@@ -79,7 +88,11 @@ func (d *Downloader) fetchFanguoCatalogPage(ctx context.Context, page int, categ
 			items = append(items, drama)
 		}
 	}
-	return items, false, nil
+	more := duanjuMoreFlag(result)
+	if more && len(items) == 0 {
+		return nil, false, errors.New("饭果未返回应有的后续页，请重试")
+	}
+	return items, more, nil
 }
 
 func (d *Downloader) fetchFanguoDetail(ctx context.Context, sourceID string) (Drama, []Chapter, error) {
@@ -140,39 +153,16 @@ func (d *Downloader) fetchFanguoDetail(ctx context.Context, sourceID string) (Dr
 }
 
 func (d *Downloader) searchFanguo(ctx context.Context, query string) ([]Drama, error) {
-	base := d.duanjuBaseURL(sourceFanguo)
-	address := base + "/xifan/search/getSearchList?" + url.Values{
-		"reqType":            {"search"},
-		"offset":             {"0"},
-		"keyword":            {query},
-		"quickEngineVersion": {"-1"},
-		"scene":              {""},
-	}.Encode()
-	response, err := d.duanjuJSON(ctx, duanjuRequest{Source: sourceFanguo, Address: address, Referer: base + "/"})
-	if err != nil {
-		return nil, err
+	items, _, err := d.searchFanguoPage(ctx, query, 1)
+	return items, err
+}
+
+func (d *Downloader) searchFanguoPage(ctx context.Context, query string, page int) ([]Drama, bool, error) {
+	keyword := strings.TrimSpace(query)
+	if keyword == "" {
+		return nil, false, errors.New("请输入搜索关键词")
 	}
-	var items []Drama
-	seen := map[string]bool{}
-	for _, block := range duanjuFindList(duanjuFindMap(response, "result"), "elements") {
-		mapped, ok := block.(map[string]any)
-		if !ok {
-			continue
-		}
-		for _, entry := range duanjuFindList(mapped, "contents") {
-			content, ok := entry.(map[string]any)
-			if !ok {
-				continue
-			}
-			drama := fanguoDramaFromNode(duanjuFindMap(content, "duanjuVo"), base)
-			if drama.ID == "" || seen[drama.ID] {
-				continue
-			}
-			seen[drama.ID] = true
-			items = append(items, drama)
-		}
-	}
-	return items, nil
+	return d.fetchFanguoCatalogPage(ctx, page, keyword)
 }
 
 const (
@@ -224,6 +214,9 @@ func xingguoDramaFromNode(node map[string]any, base string) Drama {
 }
 
 func (d *Downloader) fetchXingguoCatalogPage(ctx context.Context, page int, category string) ([]Drama, bool, error) {
+	if page < 1 {
+		page = 1
+	}
 	base := d.duanjuBaseURL(sourceXingguo)
 	resourceID := strings.TrimSpace(category)
 	if resourceID == "" {
@@ -232,7 +225,7 @@ func (d *Downloader) fetchXingguoCatalogPage(ctx context.Context, page int, cate
 	if !webProviderNumericID.MatchString(resourceID) {
 		return nil, false, errors.New("星果分类无效")
 	}
-	address := base + "/novel-api/app/pageModel/getResourceById?" + xingguoQuery(resourceID, strconv.Itoa(page), "10").Encode()
+	address := base + "/novel-api/app/pageModel/getResourceById?" + xingguoQuery(resourceID, strconv.Itoa(page), strconv.Itoa(xingguoCatalogPageSize)).Encode()
 	response, err := d.duanjuJSON(ctx, duanjuRequest{Source: sourceXingguo, Address: address, Referer: base + "/"})
 	if err != nil {
 		return nil, false, err
@@ -248,7 +241,10 @@ func (d *Downloader) fetchXingguoCatalogPage(ctx context.Context, page int, cate
 			items = append(items, drama)
 		}
 	}
-	return items, len(items) >= 10, nil
+	if more, present := duanjuMoreFlagPresent(data); present {
+		return items, len(items) > 0 && more, nil
+	}
+	return items, len(items) >= xingguoCatalogPageSize, nil
 }
 
 func (d *Downloader) searchXingguo(ctx context.Context, query string) ([]Drama, error) {
@@ -399,11 +395,21 @@ func niuguoDramaFromNode(node map[string]any, base string) Drama {
 }
 
 func (d *Downloader) fetchNiuguoCatalogPage(ctx context.Context, page int, category string) ([]Drama, bool, error) {
+	typeID := strings.TrimSpace(category)
+	if typeID == "" {
+		typeID = niuguoDefaultTypeID
+	}
+	if _, found := niuguoTypeNames[typeID]; !found {
+		return nil, false, errors.New("牛果分类无效")
+	}
+	if page < 1 {
+		page = 1
+	}
 	base := d.duanjuBaseURL(sourceNiuguo)
 	query := url.Values{
-		"class":   {strings.TrimSpace(category)},
+		"class":   {""},
 		"order":   {"最新"},
-		"type_id": {"5"},
+		"type_id": {typeID},
 		"area":    {""},
 		"year":    {""},
 		"state":   {""},

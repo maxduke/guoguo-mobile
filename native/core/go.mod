@@ -8,6 +8,10 @@ require (
 	golang.org/x/text v0.32.0
 )
 
+require github.com/ulikunitz/xz v0.5.15
+
+require github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8
+
 require (
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/bdandy/go-errors v1.2.2 // indirect

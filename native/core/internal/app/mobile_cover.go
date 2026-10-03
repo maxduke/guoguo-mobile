@@ -55,7 +55,7 @@ func (d *Downloader) mobileCoverAddress(ctx context.Context, dramaID string) (st
 		}
 		address = bestDramaCover(drama)
 	case sourceHuangguoAI, sourceHuangguoVideo:
-		base, path := huangguoAIBaseURL, "/detail/"+url.PathEscape(id)+"/"
+		base, path := d.huangguoAIContentBaseURL(ctx), "/video/"+url.PathEscape(id)+"/"
 		if source == sourceHuangguoVideo {
 			base = huangguoVideoBaseURL
 			parts := strings.Split(id, "/")
@@ -69,16 +69,27 @@ func (d *Downloader) mobileCoverAddress(ctx context.Context, dramaID string) (st
 		} else if !rankingSourceID.MatchString(id) {
 			return "", errors.New("无效的剧集 ID")
 		}
-		body, err := d.fetchProviderText(ctx, base+path, base+"/")
+		body, effectiveURL, err := d.fetchHuangguoDetailText(ctx, base+path, base+"/", source, id)
 		if err != nil {
 			return "", err
 		}
+		if source == sourceHuangguoAI {
+			if err := validateHuangguoAIDetailPage(body, effectiveURL, id); err != nil {
+				return "", err
+			}
+			patch, err := parseHuangguoSortDetail(body, effectiveURL, Drama{ID: dramaID, Source: source, SourceID: id})
+			if err == nil {
+				address = bestDramaCover(patch)
+			}
+		}
 		poster := huangguoClassBlock(body, "hg-web-detail__poster")
-		address = resolveProviderURL(base+path, extractAttr(poster, "data-src", "data-original", "src"))
+		if address == "" {
+			address = huangguoArtworkAddress(extractAttr(poster, "data-src", "data-original", "src"), effectiveURL, body)
+		}
 		if address == "" {
 			for _, tag := range huangguoHTMLTag.FindAllString(body, -1) {
 				if strings.HasPrefix(strings.ToLower(tag), "<meta") && extractAttr(tag, "property") == "og:image" {
-					address = resolveProviderURL(base+path, extractAttr(tag, "content"))
+					address = resolveProviderURL(effectiveURL, extractAttr(tag, "content"))
 					break
 				}
 			}

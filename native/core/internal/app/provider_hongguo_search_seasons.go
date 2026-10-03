@@ -121,7 +121,9 @@ func (series *hongguoSearchSeries) add(drama Drama) bool {
 	return true
 }
 
-func hongguoSearchSeriesGroups(keyword string, dramas []Drama) []*hongguoSearchSeries {
+type hongguoSearchSeasonExtensionKey struct{}
+
+func hongguoSearchSeriesGroups(keyword string, dramas []Drama, extensions ...bool) []*hongguoSearchSeries {
 	if _, season, _, _ := hongguoSearchSeason(keyword); season > 0 {
 		return nil
 	}
@@ -146,7 +148,7 @@ func hongguoSearchSeriesGroups(keyword string, dramas []Drama) []*hongguoSearchS
 		for _, drama := range dramas {
 			group.add(drama)
 		}
-		if len(group.known) >= 2 && len(group.known) < group.maximum {
+		if len(group.known) >= 2 && len(group.known) < group.maximum || len(extensions) > 0 && extensions[0] && len(group.known) > 0 {
 			incomplete = append(incomplete, group)
 		}
 	}
@@ -194,7 +196,8 @@ func (series *hongguoSearchSeries) nextQuery(attempted map[string]bool) string {
 }
 
 func (downloader *Downloader) completeHongguoSearchSeasons(ctx context.Context, keyword string, entry *hongguoSearchEntry) bool {
-	groups := hongguoSearchSeriesGroups(keyword, entry.Dramas)
+	extend, _ := ctx.Value(hongguoSearchSeasonExtensionKey{}).(bool)
+	groups := hongguoSearchSeriesGroups(keyword, entry.Dramas, extend)
 	if len(groups) == 0 {
 		return false
 	}
@@ -233,6 +236,17 @@ func (downloader *Downloader) completeHongguoSearchSeasons(ctx context.Context, 
 			}
 		}
 	}
+	if extend {
+		extCtx, extCancel := context.WithTimeout(ctx, 5*time.Second)
+		defer extCancel()
+		limited := false
+		for _, group := range groups {
+			if !downloader.extendHongguoSearchSeasons(extCtx, group, entry, attempted, &requests) {
+				limited = true
+			}
+		}
+		return limited
+	}
 	for _, group := range groups {
 		if len(group.known) < group.maximum {
 			return true
@@ -240,3 +254,83 @@ func (downloader *Downloader) completeHongguoSearchSeasons(ctx context.Context, 
 	}
 	return false
 }
+
+func (series *hongguoSearchSeries) extensionQuery(from int, attempted map[string]bool) string {
+	if _, err := hongguoSearchKeyword(series.title); err == nil && !attempted[series.title] {
+		return series.title
+	}
+	for season := from; season <= hongguoSearchSeasonLimit; season++ {
+		nearest, distance := 0, hongguoSearchSeasonLimit+1
+		for known := 1; known <= series.maximum; known++ {
+			delta := max(known-season, season-known)
+			if series.labels[known] != "" && delta < distance {
+				nearest, distance = known, delta
+			}
+		}
+		labels := []string{hongguoSearchChineseSeason(season), strconv.Itoa(season)}
+		if _, err := strconv.Atoi(series.labels[nearest]); err == nil {
+			labels[0], labels[1] = labels[1], labels[0]
+		}
+		for _, label := range labels {
+			query := series.title + "第" + label + series.unit
+			if _, err := hongguoSearchKeyword(query); err == nil && !attempted[query] {
+				return query
+			}
+		}
+	}
+	return ""
+}
+
+func (downloader *Downloader) extendHongguoSearchSeasons(
+	ctx context.Context,
+	group *hongguoSearchSeries,
+	entry *hongguoSearchEntry,
+	attempted map[string]bool,
+	requests *int,
+) bool {
+	misses := 0
+	used := 0
+	from := group.maximum + 1
+	for used < hongguoSearchSeasonExtensionPerSeries {
+		if *requests >= hongguoSearchSeasonExtensionQueries {
+			return false
+		}
+		query := group.extensionQuery(from, attempted)
+		if query == "" {
+			return true
+		}
+		attempted[query] = true
+		(*requests)++
+		used++
+		knownBefore := len(group.known)
+		names, err := downloader.fetchHongguoSearchNames(ctx, query)
+		if err != nil {
+			return false
+		}
+		var matches []Drama
+		for _, drama := range names {
+			if group.add(drama) {
+				matches = append(matches, drama)
+			}
+		}
+		if len(matches) > 0 && len(group.known) > knownBefore {
+			misses = 0
+			entry.Dramas = mergeHongguoSearchDramas(entry.Dramas, matches)
+			reportHongguoSearchProgress(ctx, *entry)
+			from = group.maximum + 1
+			continue
+		}
+		misses++
+		if misses >= hongguoSearchSeasonExtensionMisses {
+			return true
+		}
+		from++
+	}
+	return false
+}
+
+const (
+	hongguoSearchSeasonExtensionPerSeries = 8
+	hongguoSearchSeasonExtensionQueries   = 32
+	hongguoSearchSeasonExtensionMisses    = 2
+)

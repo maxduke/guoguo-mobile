@@ -15,8 +15,6 @@ const (
 	sourceXingguo = "xingguo"
 	sourceHuaguo  = "huaguo"
 	sourceNiuguo  = "niuguo"
-	sourceWangguo = "wangguo"
-	sourceFaguo   = "faguo"
 	sourcePiguo   = "piguo"
 	sourceWuguo   = "wuguo"
 
@@ -37,8 +35,6 @@ var (
 	niuguoBaseURL   = "https://ccc.chaojichaojichanga.com:35620"
 	niuguoParseURL  = "http://ccs.jshh.gzbaoxian.com"
 	niuguoParseURL2 = "http://101.42.92.211:5560"
-	wangguoBaseURL  = "https://www.duanju2.com"
-	faguoBaseURL    = "https://www.xzyx168.com"
 	piguoBaseURL    = "https://ptt.red"
 	wuguoBaseURL    = "https://www.duanju55.com"
 )
@@ -57,15 +53,13 @@ type duanjuSourceSpec struct {
 
 var duanjuProviderCatalog = []duanjuSourceSpec{
 	{ID: sourceYaguo, Name: "芽果", Base: yaguoBaseURL, Kind: "api", Searcher: true, Paged: true},
-	{ID: sourceMaoguo, Name: "猫果", Base: maoguoBaseURL, Kind: "api", Searcher: true},
-	{ID: sourceFanguo, Name: "饭果", Base: fanguoBaseURL, Kind: "api", Searcher: true},
+	{ID: sourceMaoguo, Name: "猫果", Base: maoguoBaseURL, Kind: "api", Searcher: true, Paged: true},
+	{ID: sourceFanguo, Name: "饭果", Base: fanguoBaseURL, Kind: "api", Searcher: true, Paged: true},
 	{ID: sourceGuanguo, Name: "观果", Base: guanguoBaseURL, Kind: "api", Agent: "okhttp/5.1.0", Searcher: true, Paged: true},
 	{ID: sourceHeguo, Name: "河果", Base: heguoBaseURL, Kind: "next", Searcher: true},
 	{ID: sourceXingguo, Name: "星果", Base: xingguoBaseURL, Kind: "api", Searcher: true},
 	{ID: sourceHuaguo, Name: "花果", Base: huaguoBaseURL, Kind: "maccms", Searcher: true, Paged: true},
 	{ID: sourceNiuguo, Name: "牛果", Base: niuguoBaseURL, Kind: "api", Searcher: true, Paged: true},
-	{ID: sourceWangguo, Name: "网果", Base: wangguoBaseURL, Kind: "maccms", Searcher: true, Paged: true},
-	{ID: sourceFaguo, Name: "发果", Base: faguoBaseURL, Kind: "maccms", Searcher: true, Paged: true},
 	{ID: sourcePiguo, Name: "皮果", Base: piguoBaseURL, Kind: "maccms", Searcher: true, Paged: true, Browser: true},
 	{ID: sourceWuguo, Name: "伍果", Base: wuguoBaseURL, Kind: "maccms", Searcher: true, Paged: true},
 }
@@ -97,8 +91,6 @@ var duanjuSourceAliases = map[string]string{
 	"xingguo": "xingguo", "xingxing": sourceXingguo, "星星": sourceXingguo, "read.api.duodutek.com": sourceXingguo,
 	"huaguo": "huaguo", "huasheng": sourceHuaguo, "花生": sourceHuaguo, "www.zywest263.com": sourceHuaguo,
 	"niuguo": "niuguo", "niuniu": sourceNiuguo, "牛牛": sourceNiuguo,
-	"wangguo": "wangguo", "duanjuwangzhan": sourceWangguo, "短剧网站": sourceWangguo, "www.duanju2.com": sourceWangguo,
-	"faguo": "faguo", "168": sourceFaguo, "xzyx168": sourceFaguo, "www.xzyx168.com": sourceFaguo,
 	"piguo": "piguo", "ptt": sourcePiguo, "ptt.red": sourcePiguo,
 	"wuguo": "wuguo", "wuwu": sourceWuguo, "五五": sourceWuguo, "www.duanju55.com": sourceWuguo,
 }
@@ -158,10 +150,6 @@ func duanjuSourceForHost(host string) string {
 		return sourceHuaguo
 	case host == "ccc.chaojichaojichanga.com":
 		return sourceNiuguo
-	case host == "www.duanju2.com" || host == "duanju2.com":
-		return sourceWangguo
-	case host == "www.xzyx168.com" || host == "xzyx168.com":
-		return sourceFaguo
 	case host == "ptt.red" || host == "www.ptt.red":
 		return sourcePiguo
 	case host == "www.duanju55.com" || host == "duanju55.com":
@@ -179,13 +167,28 @@ func validDuanjuCategory(source, category string) bool {
 		return false
 	}
 	switch canonicalProviderSource(source) {
-	case sourceHeguo, sourceXingguo, sourceYaguo, sourceMaoguo, sourceNiuguo:
+	case sourceMaoguo:
+		return validMaoguoCategory(category)
+	case sourceHeguo, sourceXingguo, sourceYaguo, sourceNiuguo:
 		return webProviderNumericID.MatchString(strings.SplitN(category, "-", 2)[0])
 	case sourceFanguo, sourceGuanguo:
 		return true
 	default:
 		return true
 	}
+}
+
+func validMaoguoCategory(category string) bool {
+	body := strings.TrimPrefix(category, "-")
+	if len(body) == 0 || len(body) > 18 {
+		return false
+	}
+	for _, digit := range body {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 type duanjuCategory struct {
@@ -197,9 +200,6 @@ var duanjuStaticCategories = map[string][]duanjuCategory{
 	sourceYaguo: {
 		{ID: "1", Name: "剧场"},
 		{ID: "9", Name: "榜单"},
-	},
-	sourceMaoguo: {
-		{ID: "0", Name: "推荐"},
 	},
 	sourceFanguo: {
 		{ID: "都市", Name: "都市"},
@@ -218,11 +218,11 @@ var duanjuStaticCategories = map[string][]duanjuCategory{
 		{ID: "1291", Name: "推荐五"},
 	},
 	sourceNiuguo: {
-		{ID: "1", Name: "短剧"},
-		{ID: "2", Name: "电影"},
-		{ID: "3", Name: "电视剧"},
+		{ID: "5", Name: "短剧"},
+		{ID: "1", Name: "电影"},
+		{ID: "2", Name: "电视剧"},
 		{ID: "4", Name: "动漫"},
-		{ID: "5", Name: "综艺"},
+		{ID: "3", Name: "综艺"},
 	},
 	sourceHeguo: {
 		{ID: "462", Name: "甜宠"},
@@ -246,6 +246,16 @@ var duanjuStaticCategories = map[string][]duanjuCategory{
 		{ID: "84", Name: "甜宠"},
 		{ID: "85", Name: "恋爱"},
 		{ID: "74", Name: "其他"},
+	},
+	sourceWuguo: {
+		{ID: "都市", Name: "都市"},
+		{ID: "逆袭", Name: "逆袭"},
+		{ID: "穿越", Name: "穿越"},
+		{ID: "女频", Name: "女频"},
+		{ID: "男频", Name: "男频"},
+		{ID: "现代都市", Name: "现代都市"},
+		{ID: "小人物", Name: "小人物"},
+		{ID: "AI漫", Name: "AI漫"},
 	},
 	sourceHuaguo: {
 		{ID: "27", Name: "短剧"},

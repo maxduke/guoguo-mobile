@@ -752,6 +752,10 @@ void main() {
         player.videoPlayerController!.value.duration,
         const Duration(seconds: 2),
       );
+      // Hidden controls intentionally skip ticks; show them before asserting
+      // their displayed progress. The controller always keeps the real value.
+      await tester.tapAt(const Offset(400, 300));
+      await tester.pumpAndSettle();
       platform.positionMs = 1000;
       await tester.pump(const Duration(milliseconds: 350));
       await tester.pump(const Duration(milliseconds: 350));
@@ -769,7 +773,6 @@ void main() {
       );
       await tester.pump();
       expect(tester.widget<Slider>(find.byType(Slider)).max, 8000);
-      await tester.tapAt(const Offset(400, 300));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('暂停'));
       await tester.pump();

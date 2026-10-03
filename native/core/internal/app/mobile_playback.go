@@ -55,7 +55,7 @@ func (c *MobileClient) openMobilePlayback(choice mobilePlaybackChoice) (map[stri
 	media := choice.media[choice.index]
 	playURL := media.URL
 	var proxy *hlsProxy
-	if media.credentials != nil || media.Playlist != "" || len(choice.key) > 0 || len(media.HLSKey) > 0 {
+	if media.certificateFallback || media.credentials != nil || media.Playlist != "" || len(choice.key) > 0 || len(media.HLSKey) > 0 {
 		var err error
 		proxy, err = c.downloader.newHLSProxy(context.Background(), media, choice.key)
 		if err != nil {

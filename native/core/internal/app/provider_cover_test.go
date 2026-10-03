@@ -34,10 +34,10 @@ func TestHuangguoCoverClickUsesScopedPageMetadata(t *testing.T) {
 		name, metadata, extra, want string
 		invalid                     bool
 	}{
-		{"image object", `"image":{"url":"/synthetic-cover?fixture=1"}`, "", "https://huangguoai.com/synthetic-cover?fixture=1", false},
-		{"thumbnail list", `"thumbnailUrl":["javascript:invalid","/synthetic-thumbnail"]`, "", "https://huangguoai.com/synthetic-thumbnail", false},
+		{"image object", `"image":{"url":"/synthetic-cover?fixture=1"}`, "", "https://fixture-huangguo.example.org/synthetic-cover?fixture=1", false},
+		{"thumbnail list", `"thumbnailUrl":["javascript:invalid","/synthetic-thumbnail"]`, "", "https://fixture-huangguo.example.org/synthetic-thumbnail", false},
 		{"alternate CDN", `"image":"https://pic.tuafjz.cn/upload/synthetic.jpg?auth_key=fixture-0-0-test"`, "", "https://pic.tuafjz.cn/upload/synthetic.jpg?auth_key=fixture-0-0-test", false},
-		{"open graph", `"image":""`, `<meta content="/synthetic-og?x=1&amp;y=2" property="og:image">`, "https://huangguoai.com/synthetic-og?x=1&y=2", false},
+		{"open graph", `"image":""`, `<meta content="/synthetic-og?x=1&amp;y=2" property="og:image">`, "https://fixture-huangguo.example.org/synthetic-og?x=1&y=2", false},
 		{"new CDN", `"image":"https://new-covers.example.org/cover"`, "", "https://new-covers.example.org/cover", false},
 		{"reserved domain", `"image":"https://example.invalid/cover"`, "", "", false},
 		{"no cover", `"image":""`, "", "", false},
@@ -45,7 +45,7 @@ func TestHuangguoCoverClickUsesScopedPageMetadata(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
-				if request.URL.Path != "/detail/501/" {
+				if request.URL.Path != "/video/501/" {
 					t.Error("only textual detail pages should be requested", request.URL.Path)
 				}
 				id := "501"
@@ -55,6 +55,7 @@ func TestHuangguoCoverClickUsesScopedPageMetadata(t *testing.T) {
 				body := fmt.Sprintf(`<script type="application/ld+json">{"@graph":[{"@type":"TVSeries","url":"https://huangguoai.com/detail/%s/","name":"合成文字",%s},{"@type":"TVSeries","url":"https://huangguoai.com/detail/999/","name":"不得使用相关推荐","image":"/unrelated"}]}</script>`, id, test.metadata) + test.extra
 				return rankingHTTPResponse(request, 200, body), nil
 			})
+			d.cfg.HuangguoAIURL = "https://fixture-huangguo.example.org"
 			address, err := d.fetchDramaCoverAddress(context.Background(), Drama{ID: "huangguoai:501", Source: sourceHuangguoAI})
 			if address != test.want || (err != nil) != test.invalid {
 				t.Fatal("wrong scoped cover address", address, err)

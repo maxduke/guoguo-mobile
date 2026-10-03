@@ -35,8 +35,8 @@ func TestDuanjuRegistryKeepsDistinctIdentitiesFromExistingSources(t *testing.T) 
 	for _, source := range existing {
 		seen[source] = true
 	}
-	if len(duanjuProviderCatalog) != 12 {
-		t.Fatalf("duanju catalog should register 12 sources, got %d", len(duanjuProviderCatalog))
+	if len(duanjuProviderCatalog) != 10 {
+		t.Fatalf("duanju catalog should register 10 sources, got %d", len(duanjuProviderCatalog))
 	}
 	for _, spec := range duanjuProviderCatalog {
 		if seen[spec.ID] {
@@ -74,6 +74,9 @@ func TestDuanjuMobileFacadeRegistersEverySource(t *testing.T) {
 		if base := d.providerBaseURL(spec.ID); base != spec.Base {
 			t.Fatalf("%s base URL = %s", spec.ID, base)
 		}
+		if spec.ID == sourceMaoguo {
+			continue
+		} // Dynamic categories are verified with a synthetic HTTP fixture.
 		if _, err := adapter.categories(context.Background()); err != nil {
 			t.Fatalf("%s categories unavailable: %v", spec.ID, err)
 		}
@@ -138,7 +141,7 @@ func TestDuanjuXingguoSearchHonorsExplicitMoreFlag(t *testing.T) {
 
 func TestDuanjuSinglePageSearchTerminates(t *testing.T) {
 	d := &Downloader{providerHosts: map[string]string{}}
-	for _, source := range []string{sourceYaguo, sourceFanguo, sourceFaguo} {
+	for _, source := range []string{sourceYaguo} {
 		items, more, err := d.searchDuanjuPage(context.Background(), source, "剧", 2)
 		if err != nil || more || len(items) != 0 {
 			t.Fatalf("%s repeated a single-page search: %+v more=%v err=%v", source, items, more, err)
@@ -284,7 +287,7 @@ func TestDuanjuMaccmsParsesCardsAndPlaylist(t *testing.T) {
 	})
 	d.providerHosts[sourceWuguo] = server.URL
 
-	items, more, err := d.fetchMaccmsCatalogPage(context.Background(), sourceWuguo, 1, "/type/duanju.html")
+	items, more, err := d.fetchMaccmsCatalogPage(context.Background(), sourceWuguo, 1, "都市")
 	if err != nil || len(items) != 1 || !more {
 		t.Fatalf("maccms catalog failed: %+v %v", items, err)
 	}
@@ -405,9 +408,8 @@ func TestDuanjuMaccmsAcceptsHashedClassNamesAndWidenedEpisodes(t *testing.T) {
 
 func TestDuanjuMaccmsDetailCandidatesMatchLiveSites(t *testing.T) {
 	cases := map[string]string{
-		sourceWuguo:   "https://www.example.cn/index.php/vod/detail/id/45856.html",
-		sourceWangguo: "https://www.example.cn/vod/48478.html",
-		sourceHuaguo:  "https://www.example.cn/zywview/20523.html",
+		sourceWuguo:  "https://www.example.cn/index.php/vod/detail/id/45856.html",
+		sourceHuaguo: "https://www.example.cn/zywview/20523.html",
 	}
 	for source, want := range cases {
 		got := maccmsDetailCandidates(source, "https://www.example.cn", firstNumericTail(want))
@@ -459,7 +461,7 @@ func TestDuanjuHeguoParsesNextDataWrappedResponses(t *testing.T) {
 }
 
 func TestDuanjuSearchSupportMatchesReferenceScripts(t *testing.T) {
-	supported := []string{sourceYaguo, sourceMaoguo, sourceFanguo, sourceGuanguo, sourceHeguo, sourceXingguo, sourceHuaguo, sourceNiuguo, sourceWangguo, sourceFaguo, sourcePiguo, sourceWuguo}
+	supported := []string{sourceYaguo, sourceMaoguo, sourceFanguo, sourceGuanguo, sourceHeguo, sourceXingguo, sourceHuaguo, sourceNiuguo, sourcePiguo, sourceWuguo}
 	for _, source := range supported {
 		if !duanjuSupportsSearch(source) {
 			t.Fatalf("%s should support online search", source)
@@ -471,12 +473,12 @@ func TestDuanjuSearchSupportMatchesReferenceScripts(t *testing.T) {
 	if duanjuSupportsSearch(sourceHongguo) {
 		t.Fatal("duanju search support leaked onto an existing source")
 	}
-	for _, source := range []string{sourceYaguo, sourceGuanguo, sourceHuaguo, sourceNiuguo, sourceWangguo, sourceFaguo, sourcePiguo, sourceWuguo} {
+	for _, source := range []string{sourceYaguo, sourceMaoguo, sourceFanguo, sourceGuanguo, sourceHuaguo, sourceNiuguo, sourcePiguo, sourceWuguo} {
 		if !duanjuSupportsPaging(source) {
 			t.Fatalf("%s should support paging", source)
 		}
 	}
-	for _, source := range []string{sourceHeguo, sourceXingguo, sourceMaoguo, sourceFanguo} {
+	for _, source := range []string{sourceHeguo, sourceXingguo} {
 		if duanjuSupportsPaging(source) {
 			t.Fatalf("%s reference script is single page", source)
 		}
@@ -496,12 +498,12 @@ func TestDuanjuMaoguoSearchSignatureFollowsReferenceOrder(t *testing.T) {
 func TestDuanjuMaccmsFallsBackToDetailAnchors(t *testing.T) {
 	document, err := html.Parse(strings.NewReader(`<html><body>
 	<div class="random-hash-outer"><ul><li class="x1 y2 z3"><div class="q9 w8 e7 thumb">
-	<a class="a1 b2 v-thumb stui-vodlist__thumb lazyload" href="/xzyxvd/269321.html" title="都市古仙医" data-original="https://image.example.cn/a.jpg">
+	<a class="a1 b2 v-thumb stui-vodlist__thumb lazyload" href="/detail/269321.html" title="都市古仙医" data-original="https://image.example.cn/a.jpg">
 	<span class="c3 pic-text text-right">第216集</span></a></div></li></ul></div></body></html>`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cards := maccmsCards(document, sourceFaguo, "https://www.example.cn")
+	cards := maccmsCards(document, sourceWuguo, "https://www.example.cn")
 	if len(cards) != 1 || cards[0].SourceID != "269321" {
 		t.Fatalf("anchor fallback cards are wrong: %+v", cards)
 	}

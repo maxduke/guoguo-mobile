@@ -19,29 +19,32 @@ import (
 )
 
 type Downloader struct {
-	huangjuOnce           sync.Once
-	huangju               *huangjuAPIClient
-	yeguoOnce             sync.Once
-	yeguo                 *yeguoAPIClient
-	dsdCatalog            dsdCatalogState
-	huangdouDetails       map[string]huangdouDetailEntry
-	huangdouDetailPending map[string]*huangdouDetailCall
-	cfg                   Config
-	client                *http.Client
-	providerMu            sync.Mutex
-	providerHosts         map[string]string
-	apiMu                 sync.Mutex
-	apiBase               string
-	limiter               *requestLimiter
-	proxyRouter           *proxyRouter
-	ffmpegMu              sync.Mutex
-	ffmpegInstaller       *ffmpegInstaller
-	hongguoOnce           sync.Once
-	hongguo               *hongguoAppClient
-	legacyOnce            sync.Once
-	legacy                *legacyAPIClient
-	rankings              rankingCache
-	diagnostics           *diagnosticLog
+	huangjuOnce            sync.Once
+	huangju                *huangjuAPIClient
+	yeguoOnce              sync.Once
+	yeguo                  *yeguoAPIClient
+	dsdCatalog             dsdCatalogState
+	maoguoCatalog          maoguoCatalogCache
+	huangguoAIRoutes       []string
+	huangguoAIRouteChecked bool
+	huangdouDetails        map[string]huangdouDetailEntry
+	huangdouDetailPending  map[string]*huangdouDetailCall
+	cfg                    Config
+	client                 *http.Client
+	providerMu             sync.Mutex
+	providerHosts          map[string]string
+	apiMu                  sync.Mutex
+	apiBase                string
+	limiter                *requestLimiter
+	proxyRouter            *proxyRouter
+	ffmpegMu               sync.Mutex
+	ffmpegInstaller        *ffmpegInstaller
+	hongguoOnce            sync.Once
+	hongguo                *hongguoAppClient
+	legacyOnce             sync.Once
+	legacy                 *legacyAPIClient
+	rankings               rankingCache
+	diagnostics            *diagnosticLog
 }
 
 func NewDownloader(cfg Config) *Downloader {

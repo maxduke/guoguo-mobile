@@ -17,6 +17,7 @@ class SourceProvider implements ProviderClient {
     String method, [
     Map<String, dynamic> args = const {},
   ]) {
+    if (method == 'cancelSearch') return Future.value({});
     calls.add({'method': method, ...args});
     if (method == 'categories') {
       return Future.value({
@@ -72,7 +73,7 @@ void main() {
         restored.offline = true;
         expect(restored.source, source);
         expect(restored.library.single.id, '${source.name}:catalog');
-        expect(restored.source.rankings, isFalse);
+        expect(restored.source.rankings, isTrue);
         store.dispose();
         restored.dispose();
       },
@@ -80,7 +81,7 @@ void main() {
   }
 
   testWidgets(
-    'eighteen sources remain accessible and new sources paginate online search',
+    'sixteen sources remain accessible and new sources paginate online search',
     (tester) async {
       tester.view.physicalSize = const Size(320, 740);
       tester.view.devicePixelRatio = 1;
@@ -95,7 +96,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      expect(find.text('榜单'), findsNothing);
+      expect(find.text('榜单'), findsOneWidget);
       expect(find.widgetWithText(ChoiceChip, '帝果'), findsOneWidget);
       final lastSource = find.widgetWithText(ChoiceChip, '伍果');
       await tester.ensureVisible(lastSource);

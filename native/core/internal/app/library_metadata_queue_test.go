@@ -54,7 +54,7 @@ func TestPrimaryCatalogReturnsBeforeOptionalMetadataForAllSources(t *testing.T) 
 					return rankingHTTPResponse(request, 200, fmt.Sprintf(`{"data":{"video_data":{"series_id_str":%q,"series_title":"详情标题","hot_score":20019,"series_play_cnt":10019}}}`, id)), nil
 				case "/api/drama/detail":
 					return rankingHTTPResponse(request, 200, fmt.Sprintf(`{"data":{"id":%q,"name":"详情标题","issue_date":"2026-03-16","click":10019}}`, id)), nil
-				case "/detail/" + id + "/":
+				case "/video/" + id + "/":
 					body := fmt.Sprintf(`<script type="application/ld+json">{"@type":"WebPage","url":"https://huangguoai.com/detail/%s/","name":"详情标题","datePublished":"2026-03-16"}</script><div class="hg-web-detail__meta">10019次播放</div>`, id)
 					return rankingHTTPResponse(request, 200, body), nil
 				default:
@@ -62,6 +62,7 @@ func TestPrimaryCatalogReturnsBeforeOptionalMetadataForAllSources(t *testing.T) 
 					return rankingHTTPResponse(request, 404, ""), nil
 				}
 			})
+			d.cfg.HuangguoAIURL = "https://fixture-huangguo.example.org"
 			old := Drama{ID: providerDramaID(source, "7498612570866076734"), Source: source, Title: "历史条目"}
 			fresh := Drama{ID: providerDramaID(source, id), Source: source, Title: "列表标题", Heat: "20019", Views: "0"}
 			if source == sourceHongguo {

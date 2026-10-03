@@ -15,6 +15,7 @@ class _RankingsPageState extends State<RankingsPage> {
   late final DramaSource source = widget.store.source;
   List<Map<String, dynamic>> boards = [], rows = [];
   String? selected, error;
+  String kind = "ranking", description = "";
   bool loading = true, hasMore = false;
   int page = 1, generation = 0;
   @override
@@ -73,6 +74,8 @@ class _RankingsPageState extends State<RankingsPage> {
           ),
         );
         hasMore = result['hasMore'] == true;
+        kind = result['kind'] as String? ?? 'ranking';
+        description = result['description'] as String? ?? '';
         page = nextPage;
         final warning = result['warning'] as String?;
         if (warning != null && warning.isNotEmpty) error = warning;
@@ -123,6 +126,14 @@ class _RankingsPageState extends State<RankingsPage> {
                 selected: widget.store.hideVip,
                 onSelected: (value) =>
                     perform(context, () => widget.store.setHideVip(value)),
+              ),
+            if (description.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                child: Text(description),
               ),
             if (loading) const LinearProgressIndicator(),
             if (error != null)
@@ -186,39 +197,40 @@ class _RankingsPageState extends State<RankingsPage> {
                                         fit: StackFit.expand,
                                         children: [
                                           Poster(drama, radius: 10),
-                                          Positioned(
-                                            top: 0,
-                                            left: 0,
-                                            child: Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 9,
-                                                    vertical: 4,
-                                                  ),
-                                              decoration: BoxDecoration(
-                                                color: index < 3
-                                                    ? Theme.of(
-                                                        context,
-                                                      ).colorScheme.primary
-                                                    : Colors.black87,
-                                                borderRadius:
-                                                    const BorderRadius.only(
-                                                      topLeft: Radius.circular(
-                                                        10,
-                                                      ),
-                                                      bottomRight:
-                                                          Radius.circular(10),
+                                          if (kind == "ranking" &&
+                                              (row["rank"] as int? ?? 0) > 0)
+                                            Positioned(
+                                              top: 0,
+                                              left: 0,
+                                              child: Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 9,
+                                                      vertical: 4,
                                                     ),
-                                              ),
-                                              child: Text(
-                                                '${row['rank']}',
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontWeight: FontWeight.w800,
+                                                decoration: BoxDecoration(
+                                                  color: index < 3
+                                                      ? Theme.of(
+                                                          context,
+                                                        ).colorScheme.primary
+                                                      : Colors.black87,
+                                                  borderRadius:
+                                                      const BorderRadius.only(
+                                                        topLeft:
+                                                            Radius.circular(10),
+                                                        bottomRight:
+                                                            Radius.circular(10),
+                                                      ),
+                                                ),
+                                                child: Text(
+                                                  '${row['rank']}',
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.w800,
+                                                  ),
                                                 ),
                                               ),
                                             ),
-                                          ),
                                         ],
                                       ),
                                     ),

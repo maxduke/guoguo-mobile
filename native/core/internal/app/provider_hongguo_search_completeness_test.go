@@ -43,7 +43,7 @@ func hongguoSearchCompletenessFixtures() (string, string) {
 	names = append(names, names[1],
 		map[string]any{"name": "无限叠加攻击小说", "word_type": "title", "keyword": "7358413860274965529", "video_data": map[string]any{"series_id": "7358413860274965529"}},
 		map[string]any{"name": hongguoSeasonSearchTitle + "第六季", "word_type": "short_play_name", "keyword": "7681547176396213272"},
-		map[string]any{"name": "没有剧集元数据", "word_type": "short_play_name", "keyword": "7000000000000000999", "video_data": map[string]any{"episode_cnt": 10}},
+		map[string]any{"name": "缺少series_id的剧集", "word_type": "short_play_name", "keyword": "7000000000000000999", "video_data": map[string]any{"episode_cnt": 10}},
 	)
 	page, _ := json.Marshal(map[string]any{"loaderData": map[string]any{"search_(keyword)/page": map[string]any{"query": hongguoSeasonSearchQuery, "isSuccess": true, "totalCount": 203, "searchList": rows}}})
 	suggestions, _ := json.Marshal(map[string]any{"suggest_list": names})
@@ -70,7 +70,7 @@ func TestHongguoSearchCompletesMissingSeasonsBeyondFirstTen(t *testing.T) {
 		}
 	})
 	result, err := d.searchHongguoDramas(context.Background(), hongguoSeasonSearchQuery)
-	if err != nil || len(result.Dramas) != 27 || result.Total != 203 || !result.Limited || result.Warning != "" {
+	if err != nil || len(result.Dramas) != 28 || result.Total != 203 || !result.Limited || result.Warning != "" {
 		t.Fatalf("wrong search coverage: %d / %d, limited=%v warning=%q err=%v", len(result.Dramas), result.Total, result.Limited, result.Warning, err)
 	}
 	byID := map[string]Drama{}
@@ -88,7 +88,10 @@ func TestHongguoSearchCompletesMissingSeasonsBeyondFirstTen(t *testing.T) {
 			t.Errorf("missing/corrupt season %d: ID %s, episodes %s", i+1, id, got)
 		}
 	}
-	for _, id := range []string{"7358413860274965529", "7681547176396213272", "7000000000000000999"} {
+	if row := byID["hongguo:7000000000000000999"]; row.Title != "缺少series_id的剧集" || fmt.Sprint(row.EpisodeCount) != "10" {
+		t.Fatal("keyword ID fallback lost metadata", row)
+	}
+	for _, id := range []string{"7358413860274965529", "7681547176396213272"} {
 		if _, found := byID["hongguo:"+id]; found {
 			t.Error("novel or unverified candidate became a drama", id)
 		}
@@ -136,7 +139,7 @@ func TestHongguoSearchPartialFailureRetainsResultsAndAllowsRetry(t *testing.T) {
 			}
 			failed.Store(false)
 			result, err = d.searchHongguoDramas(context.Background(), hongguoSeasonSearchQuery)
-			if err != nil || len(result.Dramas) != 27 || result.Warning != "" {
+			if err != nil || len(result.Dramas) != 28 || result.Warning != "" {
 				t.Fatal("retry did not complete the failed search branch", err)
 			}
 		})
@@ -180,7 +183,7 @@ func TestHongguoSearchConcurrentRequestsShareBothBranches(t *testing.T) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			if result, err := d.searchHongguoDramas(context.Background(), hongguoSeasonSearchQuery); err != nil || len(result.Dramas) != 27 {
+			if result, err := d.searchHongguoDramas(context.Background(), hongguoSeasonSearchQuery); err != nil || len(result.Dramas) != 28 {
 				t.Error("concurrent search failed", err)
 			}
 		}()
@@ -219,7 +222,7 @@ func TestHongguoSearchCanceledOwnerDoesNotStrandAnotherBrowser(t *testing.T) {
 	waiter := make(chan error, 1)
 	go func() {
 		result, err := d.searchHongguoDramas(context.Background(), hongguoSeasonSearchQuery)
-		if err == nil && len(result.Dramas) != 27 {
+		if err == nil && len(result.Dramas) != 28 {
 			err = fmt.Errorf("wrong number of results: %d", len(result.Dramas))
 		}
 		waiter <- err
@@ -250,7 +253,7 @@ func TestLibrarySearchCompletenessResponseAndPersistence(t *testing.T) {
 		Limited bool    `json:"limited"`
 		Saved   bool    `json:"saved"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil || w.Code != 200 || response.Query != hongguoSeasonSearchQuery || len(response.Data) != 27 || !response.Saved || !response.Limited || len(a.dramas) != 27 {
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil || w.Code != 200 || response.Query != hongguoSeasonSearchQuery || len(response.Data) != 28 || !response.Saved || !response.Limited || len(a.dramas) != 28 {
 		t.Fatal("search response/import lost completed results", w.Code, err)
 	}
 }

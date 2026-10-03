@@ -14,10 +14,10 @@ func TestHuangguoHistoryRepairsOnlyAfterManualUpdate(t *testing.T) {
 	var calls atomic.Int32
 	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
 		calls.Add(1)
-		if request.Context().Value(backgroundCatalogKey{}) != true || !strings.HasPrefix(request.URL.Path, "/detail/") {
+		if request.Context().Value(backgroundCatalogKey{}) != true || !strings.HasPrefix(request.URL.Path, "/video/") {
 			t.Errorf("unexpected foreground or non-detail request: %s", request.URL.Path)
 		}
-		id := strings.Trim(strings.TrimPrefix(request.URL.Path, "/detail/"), "/")
+		id := strings.Trim(strings.TrimPrefix(request.URL.Path, "/video/"), "/")
 		if id != "501" && id != "502" && id != "503" {
 			t.Errorf("unexpected historical ID: %s", id)
 		}
@@ -25,9 +25,10 @@ func TestHuangguoHistoryRepairsOnlyAfterManualUpdate(t *testing.T) {
 		if id == "503" {
 			episodes = "新上架"
 		}
-		body := fmt.Sprintf(`<script type="application/ld+json">{"@type":"WebPage","url":"https://huangguoai.com/detail/%s/","name":"正确剧名%s","datePublished":"2026-09-14"}</script><div class="hg-web-detail__meta"><span><em>8.7</em>分</span>%s · 100次播放</div>`, id, id, episodes)
+		body := fmt.Sprintf(`<script type="application/ld+json">{"@type":"WebPage","url":"https://huangguoai.com/video/%s/","name":"正确剧名%s","datePublished":"2026-09-14"}</script><div class="hg-web-detail__meta"><span><em>8.7</em>分</span>%s · 100次播放</div>`, id, id, episodes)
 		return rankingHTTPResponse(request, 200, body), nil
 	})
+	d.cfg.HuangguoAIURL = "https://fixture-huangguo.example"
 	oldState := &sortMetadataState{Version: sortMetadataVersion, CheckedAt: time.Now()}
 	rows := []Drama{
 		{ID: "huangguoai:501", Source: sourceHuangguoAI, Title: `class=“hg-search__submit” type=“submit” title=“搜索” aria-label=“搜索”> 搜索记录 清除 暂无搜索记录`, OnlineDate: "2026-09-14", Views: "100次播放", TotalEpisode: 12, SortMetadata: oldState},

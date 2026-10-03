@@ -16,13 +16,15 @@ import (
 )
 
 type MobileClient struct {
-	downloader *Downloader
-	mu         sync.Mutex
-	proxies    map[string]*hlsProxy
-	playbacks  map[string]mobilePlaybackChoice
-	covers     coverImageCache
-	catalogMu  sync.Mutex
-	known      []Drama
+	canceledSearches map[string]mobileCanceledRead
+	downloader       *Downloader
+	mu               sync.Mutex
+	proxies          map[string]*hlsProxy
+	playbacks        map[string]mobilePlaybackChoice
+	searches         map[string]*mobileSearchRead
+	covers           coverImageCache
+	catalogMu        sync.Mutex
+	known            []Drama
 }
 
 func NewMobileClient(directory string) (*MobileClient, error) {
@@ -48,6 +50,9 @@ func NewMobileClient(directory string) (*MobileClient, error) {
 }
 
 type mobileRequest struct {
+	Path           string                     `json:"path"`
+	OutputPath     string                     `json:"outputPath"`
+	RequestID      string                     `json:"requestId"`
 	Category       string                     `json:"category"`
 	Recommendation hongguoRecommendationQuery `json:"recommendation"`
 	Method         string                     `json:"method"`
@@ -89,6 +94,20 @@ func (c *MobileClient) Call(raw string) (string, error) {
 	defer cancel()
 	var value any
 	switch request.Method {
+	case "coreInfo":
+		value = map[string]any{"protocol": mobileProtocol, "sourceDigest": mobileSourceDigest, "version": mobileBuildVersion}
+	case "libraryImport":
+		result, err := c.importLibrary(ctx, request)
+		if err != nil {
+			return "", publicError(err)
+		}
+		value = result
+	case "libraryExport":
+		result, err := c.exportLibrary(ctx, request)
+		if err != nil {
+			return "", publicError(err)
+		}
+		value = result
 	case "cover":
 		source, _, _ := splitProviderDramaID(request.ID)
 		cacheKey := request.URL
@@ -234,7 +253,33 @@ func (c *MobileClient) Call(raw string) (string, error) {
 			return "", publicError(err)
 		}
 		value = map[string]any{"items": items}
+	case "searchProgress":
+		value = c.searchProgress(request, false)
+	case "cancelSearch":
+		value = c.searchProgress(request, true)
 	case "search":
+		searchCtx, read, beginErr := c.beginSearch(ctx, request)
+		if beginErr != nil {
+			return "", beginErr
+		}
+		ctx = searchCtx
+		defer func() {
+			if read != nil {
+				c.mu.Lock()
+				if c.searches[request.RequestID] == read {
+					read.done = true
+				}
+				c.mu.Unlock()
+			}
+		}()
+		if request.Source == "huangguo" {
+			items, more, err := c.downloader.searchHuangguoAI(ctx, request.Query, request.Page)
+			if err != nil {
+				return "", publicError(err)
+			}
+			value = map[string]any{"items": mobileDramas(items), "hasMore": more, "scope": "huangguoai"}
+			break
+		}
 		if adapter, ok := c.downloader.mobileSource(request.Source); ok {
 			result, err := c.sourcePage(ctx, request, adapter)
 			if err != nil {
@@ -246,7 +291,9 @@ func (c *MobileClient) Call(raw string) (string, error) {
 		if request.Source != "hongguo" {
 			return "", errors.New("当前站源尚未接入联网搜索，可继续使用本地筛选")
 		}
-		rows, err := c.downloader.searchHongguoDramas(ctx, request.Query)
+		rows, err := c.downloader.searchHongguoDramasProgress(context.WithValue(ctx, hongguoSearchSeasonExtensionKey{}, true), request.Query, func(entry hongguoSearchEntry) {
+			c.updateSearch(request.RequestID, read, map[string]any{"items": mobileDramas(entry.Dramas), "warning": entry.Warning, "limited": entry.Limited, "total": entry.Total}, false)
+		})
 		if err != nil {
 			return "", publicError(err)
 		}
@@ -286,9 +333,9 @@ func (c *MobileClient) Call(raw string) (string, error) {
 		}
 		rows := make([]map[string]any, 0, len(result.Items))
 		for _, item := range result.Items {
-			rows = append(rows, map[string]any{"rank": item.Rank, "drama": mobileDramas([]Drama{item.Drama})[0]})
+			rows = append(rows, map[string]any{"rank": item.Rank, "position": item.Position, "drama": mobileDramas([]Drama{item.Drama})[0]})
 		}
-		value = map[string]any{"items": rows, "hasMore": result.HasMore, "warning": result.Warning}
+		value = map[string]any{"items": rows, "hasMore": result.HasMore, "warning": result.Warning, "kind": result.Kind, "description": result.Description}
 	case "resolve":
 		if request.Chapter.ID == "" {
 			return "", errors.New("缺少分集 ID")
@@ -300,6 +347,10 @@ func (c *MobileClient) Call(raw string) (string, error) {
 		choice, err := mobilePlaybackChoices(media, key, request.Quality)
 		if err != nil {
 			return "", err
+		}
+		choice, err = c.prepareMobileChoice(ctx, choice)
+		if err != nil {
+			return "", publicError(err)
 		}
 		value, err = c.openMobilePlayback(choice)
 		if err != nil {
@@ -338,6 +389,10 @@ func (c *MobileClient) Call(raw string) (string, error) {
 func (c *MobileClient) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	for id, read := range c.searches {
+		read.cancel()
+		delete(c.searches, id)
+	}
 	c.playbacks = nil
 	for id, proxy := range c.proxies {
 		proxy.Close()

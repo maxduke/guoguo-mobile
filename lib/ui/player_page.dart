@@ -1,4 +1,7 @@
 import 'episode_grid.dart';
+import 'throttled_builder.dart';
+import 'detail_page.dart';
+import '../domain/catalog_query.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -274,11 +277,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (!item.preparer.streaming || timeline == null || controller == null) {
       return;
     }
+    var completed = timeline.value.complete;
     void synchronize() {
       if (!mounted || generation != _generation || !identical(_active, item)) {
         return;
       }
       final snapshot = timeline.value;
+      if (snapshot.complete != completed) {
+        completed = snapshot.complete;
+        setState(() {});
+      }
       if (snapshot.duration <= Duration.zero) return;
       // EVENT HLS initially has an indefinite native duration. BetterPlayer
       // only receives duration at initialization and clamps seeks to that value.
@@ -1018,6 +1026,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<void> _sheet(Widget child) async {
+    if (_modal || !mounted) return;
     _modal = true;
     _hideTimer?.cancel();
     await showModalBottomSheet<void>(
@@ -1077,7 +1086,42 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       ),
     ),
   );
+  Future<void> _showRelated() async {
+    final rows = relatedSeries(widget.drama, [
+      ...widget.store.catalogs.values.expand((rows) => rows),
+      ...widget.store.searchCache.dramas,
+      ...widget.store.favorites.values,
+      ...widget.store.history.values.map((record) => record.drama),
+    ]);
+    Drama? selected;
+    await _sheet(
+      SizedBox(
+        height: math.min(500, MediaQuery.sizeOf(context).height * .75),
+        child: rows.isEmpty
+            ? const Center(child: Text('暂未找到同系列作品'))
+            : ListView.builder(
+                itemCount: rows.length,
+                itemBuilder: (context, index) => ListTile(
+                  title: Text(rows[index].title),
+                  subtitle: Text(rows[index].source.label),
+                  onTap: () {
+                    selected = rows[index];
+                    Navigator.pop(context);
+                  },
+                ),
+              ),
+      ),
+    );
+    if (selected != null && mounted) {
+      await _player.pause();
+      if (mounted) {
+        await openDrama(context, widget.store, widget.downloads, selected!);
+      }
+    }
+  }
+
   Future<void> _showMore() async {
+    var relatedRequested = false;
     final item = _active;
     await _sheet(
       ConstrainedBox(
@@ -1087,6 +1131,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         child: ListView(
           shrinkWrap: true,
           children: [
+            ListTile(
+              leading: const Icon(Icons.video_library_outlined),
+              title: const Text('相关剧集'),
+              subtitle: const Text('按标题匹配同系列作品'),
+              onTap: () {
+                relatedRequested = true;
+                Navigator.pop(context);
+              },
+            ),
             StatefulBuilder(
               builder: (context, update) => SwitchListTile(
                 title: const Text('自动播放下一集'),
@@ -1204,6 +1257,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         ),
       ),
     );
+    if (relatedRequested && mounted) await _showRelated();
   }
 
   Widget _page(BuildContext context, int index) {
@@ -1245,7 +1299,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      _error!,
+                      _error!.length > 600
+                          ? "${_error!.substring(0, 600)}…"
+                          : _error!,
+                      maxLines: 8,
+                      overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.white),
                     ),
@@ -1308,9 +1366,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
     return controller == null
         ? build()
-        : ValueListenableBuilder(
-            valueListenable: controller,
-            builder: (context, value, child) => build(),
+        : ThrottledValueBuilder(
+            listenable: controller,
+            active: _controls && !_locked,
+            immediate: (previous, current) =>
+                previous.isPlaying != current.isPlaying ||
+                previous.isBuffering != current.isBuffering ||
+                previous.hasError != current.hasError ||
+                previous.duration != current.duration ||
+                (previous.position - current.position).abs() >
+                    const Duration(milliseconds: 1500),
+            builder: (_) => build(),
           );
   }
 

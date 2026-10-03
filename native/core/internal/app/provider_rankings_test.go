@@ -80,7 +80,7 @@ func TestHuangguoRankingKeepsCardArtworkAlongsideJSONLDOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Items) == 0 || result.Items[0].Drama.Cover != "https://huangguoai.com/upload_01/art.jpg" {
+	if len(result.Items) == 0 || result.Items[0].Drama.Cover != huangguoAIBaseURL+"/upload_01/art.jpg" {
 		t.Fatalf("ranking artwork not preserved: %+v", result.Items)
 	}
 }

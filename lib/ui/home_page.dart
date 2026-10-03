@@ -38,6 +38,18 @@ class _HomePageState extends State<HomePage> {
   bool _searchHasMore = false;
   String? _searchError, _searchNotice;
   Timer? _suggestionTimer;
+  String? _activeSearchId, _activeSearchQuery;
+  DramaSource? _activeSearchSource;
+  void _cancelSearch() {
+    final id = _activeSearchId;
+    if (id != null) {
+      unawaited(
+        store.cancelSearch(_activeSearchSource!, _activeSearchQuery!, id),
+      );
+    }
+    _activeSearchId = null;
+  }
+
   List<String> _suggestions = [];
   List<Drama>? _remoteResults;
   CatalogSort _sort = CatalogSort.recommended;
@@ -57,6 +69,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    _cancelSearch();
     _suggestionTimer?.cancel();
     _search.removeListener(_queryChanged);
     _search.dispose();
@@ -65,6 +78,7 @@ class _HomePageState extends State<HomePage> {
 
   void _open(Drama drama) => openDrama(context, store, widget.downloads, drama);
   void _queryChanged() {
+    _cancelSearch();
     _suggestionTimer?.cancel();
     final generation = ++_searchGeneration;
     setState(() {
@@ -109,6 +123,11 @@ class _HomePageState extends State<HomePage> {
     _suggestionTimer?.cancel();
     final generation = ++_searchGeneration;
     final source = store.source;
+    _cancelSearch();
+    final id = 'home-$generation-${DateTime.now().microsecondsSinceEpoch}';
+    _activeSearchId = id;
+    _activeSearchQuery = text.trim();
+    _activeSearchSource = source;
     FocusScope.of(context).unfocus();
     setState(() {
       _query = text.trim();
@@ -119,7 +138,23 @@ class _HomePageState extends State<HomePage> {
     });
     if (!source.onlineSearch || store.offline) return;
     try {
-      final result = await store.searchCatalog(source, text, page: page);
+      final result = await store.searchCatalog(
+        source,
+        text,
+        page: page,
+        requestId: id,
+        onPartial: (partial) {
+          if (!mounted ||
+              generation != _searchGeneration ||
+              source != store.source) {
+            return;
+          }
+          setState(() {
+            _remoteResults = partial.items;
+            _searchNotice = "正在补全结果…";
+          });
+        },
+      );
       if (mounted &&
           generation == _searchGeneration &&
           source == store.source) {
@@ -137,6 +172,8 @@ class _HomePageState extends State<HomePage> {
               ? result.warning
               : result.limited
               ? '已合并名称检索与官网结果；上游未提供完整分页，可用完整剧名继续查找。'
+              : source == DramaSource.huangguo
+              ? '在线检索范围：黄果 AI'
               : null;
         });
       }

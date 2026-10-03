@@ -1,4 +1,8 @@
 import 'dart:convert';
+import 'dart:async';
+
+import 'search_cache.dart';
+export 'search_cache.dart' show CatalogSearchResult;
 
 import 'package:flutter/material.dart';
 
@@ -6,18 +10,6 @@ import '../domain/models.dart';
 import '../domain/playback_diagnostic.dart';
 import '../platform/provider_client.dart';
 import 'storage.dart';
-
-class CatalogSearchResult {
-  const CatalogSearchResult(
-    this.items, {
-    this.warning = '',
-    this.limited = false,
-    this.hasMore = false,
-  });
-  final List<Drama> items;
-  final String warning;
-  final bool limited, hasMore;
-}
 
 class SourceCategory {
   const SourceCategory(this.id, this.name);
@@ -69,6 +61,10 @@ class AppStore extends ChangeNotifier {
   final Map<String, List<Episode>> episodeCache = {};
   final Map<String, Drama> favorites = {};
   final Map<String, WatchRecord> history = {};
+  final libraryChanges = ChangeNotifier();
+  final searchCache = SearchCache();
+  final Map<String, Future<CatalogSearchResult>> _searchRequests = {};
+  int _searchSerial = 0;
   final Map<DramaSource, String> sourceErrors = {};
   final Set<DramaSource> loadingSources = {};
   final Map<DramaSource, int> catalogPages = {};
@@ -181,7 +177,9 @@ class AppStore extends ChangeNotifier {
 
   Future<void> load() async {
     final state = await storage.read();
+    if (state != null) discardDeletedSources(state);
     if (state == null) return;
+    searchCache.restore(state["searchCache"] as Map? ?? {});
     if (state['version'] != 1) throw const FormatException('本地数据版本不受支持，已保留原文件');
     // Parse the entire document before mutating state.
     final backup = RecordBackup.fromJson(
@@ -299,11 +297,12 @@ class AppStore extends ChangeNotifier {
     'progressivePreparation': progressivePreparation,
     'playbackSpeed': playbackSpeed,
     'hideVip': hideVip,
-    'recentSearches': recentSearches,
+    'recentSearches': List<String>.of(recentSearches),
     'records': RecordBackup(
       favorites.values.toList(),
       history.values.toList(),
     ).toJson(),
+    'searchCache': searchCache.toJson(),
     'catalogs': {
       for (final entry in catalogs.entries)
         entry.key.name: entry.value.map((v) => v.toJson()).toList(),
@@ -467,30 +466,112 @@ class AppStore extends ChangeNotifier {
     DramaSource target,
     String query, {
     int page = 1,
+    String? requestId,
+    ValueChanged<CatalogSearchResult>? onPartial,
   }) async {
-    if (query.trim().isEmpty) {
-      return CatalogSearchResult(catalogs[target] ?? []);
+    query = query.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (query.isEmpty) return CatalogSearchResult(catalogs[target] ?? []);
+    final key = '${target.name}|$query|$page';
+    final cached = searchCache.read(key, now());
+    if (cached != null) {
+      onPartial?.call(cached.result);
+      if (cached.fresh || offline) return cached.result;
     }
     if (offline) throw const ProviderException('当前离线，可继续搜索已缓存的短剧');
-    final response = await provider.call('search', {
+    // Independent owners with progress/cancellation must not share request IDs.
+    final pending = _searchRequests[key];
+    if (requestId == null && onPartial == null && pending != null) {
+      return pending;
+    }
+    final id =
+        requestId ?? 'store-${++_searchSerial}-${now().microsecondsSinceEpoch}';
+    final operation = _searchCatalog(target, query, page, id, onPartial);
+    if (requestId == null && onPartial == null) {
+      _searchRequests[key] = operation;
+    }
+    try {
+      return await operation;
+    } finally {
+      if (identical(_searchRequests[key], operation)) {
+        _searchRequests.remove(key);
+      }
+    }
+  }
+
+  CatalogSearchResult _searchResult(
+    Map<String, dynamic> response,
+    DramaSource target,
+  ) => CatalogSearchResult(
+    _parseRows(response, target),
+    warning: response['warning'] as String? ?? '',
+    limited: response['limited'] == true,
+    hasMore: response['hasMore'] == true,
+    total: response['total'] as int? ?? 0,
+  );
+
+  Future<CatalogSearchResult> _searchCatalog(
+    DramaSource target,
+    String query,
+    int page,
+    String id,
+    ValueChanged<CatalogSearchResult>? onPartial,
+  ) async {
+    Timer? timer;
+    bool polling = false, completed = false;
+    final args = {
       'source': target.name,
-      'query': query.trim(),
+      'query': query,
       'page': page,
-    });
-    final incoming = _parseRows(response, target);
-    final result = CatalogSearchResult(
-      incoming,
-      warning: response['warning'] as String? ?? '',
-      limited: response['limited'] == true,
-      hasMore: response['hasMore'] == true,
-    );
-    recentSearches.remove(query.trim());
-    recentSearches.insert(0, query.trim());
-    if (recentSearches.length > 10) recentSearches.removeLast();
-    _mergeCatalog(target, incoming);
-    await persist();
-    notifyListeners();
-    return result;
+      'requestId': id,
+    };
+    if (target == DramaSource.hongguo && onPartial != null) {
+      timer = Timer.periodic(const Duration(milliseconds: 700), (_) async {
+        if (polling || completed) return;
+        polling = true;
+        try {
+          final response = await provider.call('searchProgress', args);
+          if (!completed &&
+              response['source'] == target.name &&
+              response['query'] == query) {
+            final partial = _searchResult(response, target);
+            if (partial.items.isNotEmpty) onPartial(partial);
+          }
+        } catch (_) {
+          /* The final search call owns errors. */
+        } finally {
+          polling = false;
+        }
+      });
+    }
+    try {
+      final response = await provider.call('search', args);
+      completed = true;
+      final result = _searchResult(response, target);
+      searchCache.put('${target.name}|$query|$page', result, now());
+      recentSearches.remove(query);
+      recentSearches.insert(0, query);
+      if (recentSearches.length > 10) recentSearches.removeLast();
+      _mergeCatalog(target, result.items);
+      await persist();
+      notifyListeners();
+      return result;
+    } finally {
+      completed = true;
+      timer?.cancel();
+      unawaited(cancelSearch(target, query, id));
+    }
+  }
+
+  Future<void> cancelSearch(DramaSource target, String query, String id) async {
+    try {
+      await provider.call('cancelSearch', {
+        'source': target.name,
+        'query': query.trim().replaceAll(RegExp(r'\s+'), ' '),
+        'requestId': id,
+      });
+    } catch (_) {
+      /* Cancellation is best effort on detached platforms. */
+    }
   }
 
   Future<void> saveRecommendations(List<Drama> incoming) async {
@@ -724,7 +805,7 @@ class AppStore extends ChangeNotifier {
 
   Future<void> saveWatch(WatchRecord record) async {
     history[record.drama.key] = record;
-    notifyListeners();
+    libraryChanges.notifyListeners();
     await persist();
   }
 
@@ -732,6 +813,123 @@ class AppStore extends ChangeNotifier {
     history.remove(key);
     notifyListeners();
     await persist();
+  }
+
+  Future<Map<String, int>> importLibraryRows(List<Drama> rows) async {
+    final previous = Map<DramaSource, List<Drama>>.of(catalogs);
+    final installed = <DramaSource, List<Drama>>{};
+    final previousSlices = <String, List<Drama>?>{};
+    final grouped = <DramaSource, List<Drama>>{};
+    var imported = 0, mergedCount = 0;
+    for (final row in rows) {
+      if (row.id.isEmpty || row.title.isEmpty) {
+        throw const FormatException('剧库包含无效条目');
+      }
+      grouped.putIfAbsent(row.source, () => []).add(row);
+    }
+    for (final entry in grouped.entries) {
+      final merged = {
+        for (final row in catalogs[entry.key] ?? <Drama>[]) row.key: row,
+      };
+      for (var row in entry.value) {
+        if (row.source == DramaSource.xingguo) {
+          String baseId(Drama d) => d.id.split('@').first;
+          final matches = merged.values
+              .where((d) => baseId(d) == baseId(row))
+              .toList();
+          if (matches.length == 1) {
+            row = Drama.fromJson({...row.toJson(), 'id': matches.single.id});
+          }
+        }
+        final old = merged[row.key];
+        if (old == null) {
+          imported++;
+        } else {
+          mergedCount++;
+        }
+        merged[row.key] = old == null
+            ? row
+            : old.merge(
+                Drama(
+                  id: old.id,
+                  source: old.source,
+                  title: old.title == old.id ? row.title : '',
+                  description: old.description.isEmpty ? row.description : '',
+                  cover: old.cover.isEmpty ? row.cover : '',
+                  category: old.category.isEmpty || old.category == '未分类'
+                      ? row.category
+                      : '',
+                  episodes: old.episodes == 0 ? row.episodes : 0,
+                  heat: old.heat.isEmpty ? row.heat : '',
+                  date: old.date.isEmpty ? row.date : '',
+                  status: old.status.isEmpty ? row.status : '',
+                  vip: old.vip ?? row.vip,
+                  tags: old.tags.isEmpty ? row.tags : const [],
+                ),
+              );
+      }
+      catalogs[entry.key] = merged.values.toList();
+      installed[entry.key] = catalogs[entry.key]!;
+      if (entry.key.remoteCategories) {
+        final key = _sliceKey(entry.key, '');
+        previousSlices[key] = _slices[key]?.items;
+        final slice = _slices.putIfAbsent(key, _CatalogSlice.new);
+        slice.items = catalogs[entry.key]!;
+      }
+    }
+    try {
+      await persist();
+    } catch (_) {
+      // Undo only this import. A refresh that completed while saving keeps its
+      // own rows, including changes to sources outside the imported batch.
+      for (final entry in installed.entries) {
+        List<Drama> undo(List<Drama> current, List<Drama>? before) {
+          final originals = {
+            for (final row in before ?? <Drama>[]) row.key: row,
+          };
+          final additions = {for (final row in entry.value) row.key: row};
+          return [
+            for (final row in current)
+              if (!identical(row, additions[row.key]))
+                row
+              else if (originals.containsKey(row.key))
+                originals[row.key]!,
+          ];
+        }
+
+        final current = catalogs[entry.key];
+        if (current != null) {
+          if (identical(current, entry.value) && previous[entry.key] == null) {
+            catalogs.remove(entry.key);
+          } else {
+            catalogs[entry.key] = undo(current, previous[entry.key]);
+          }
+        }
+        final key = _sliceKey(entry.key, '');
+        final slice = _slices[key];
+        if (previousSlices.containsKey(key) && slice != null) {
+          if (identical(slice.items, entry.value) &&
+              previousSlices[key] == null) {
+            _slices.remove(key);
+          } else {
+            slice.items = undo(slice.items, previousSlices[key]);
+          }
+        }
+      }
+      rethrow;
+    }
+    notifyListeners();
+    return {
+      'imported': imported,
+      'merged': mergedCount,
+      'total': catalogs.values.fold<int>(0, (sum, rows) => sum + rows.length),
+    };
+  }
+
+  @override
+  void dispose() {
+    libraryChanges.dispose();
+    super.dispose();
   }
 
   String exportBackup() => const JsonEncoder.withIndent('  ').convert(
@@ -742,9 +940,9 @@ class AppStore extends ChangeNotifier {
       throw const FormatException('备份文件超过 20 MB');
     }
     try {
-      return RecordBackup.fromJson(
-        Map<String, dynamic>.from(jsonDecode(raw) as Map),
-      );
+      final decoded = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      discardDeletedSources(decoded);
+      return RecordBackup.fromJson(decoded);
     } catch (_) {
       throw const FormatException('备份损坏或格式不兼容，原记录未修改');
     }
@@ -779,4 +977,46 @@ class AppStore extends ChangeNotifier {
       }
     }
   }
+}
+
+bool isDeletedDramaSource(Object? source) =>
+    source == 'wangguo' || source == 'faguo';
+
+// Dropped sources are deliberately discarded; no historical identity migration.
+void discardDeletedSources(Map<String, dynamic> state) {
+  bool removed(Object? source) => isDeletedDramaSource(source);
+  final records = state['records'] as Map? ?? state;
+  for (final name in ['favorites', 'history']) {
+    final list = records[name];
+    if (list is List) {
+      list.removeWhere(
+        (row) =>
+            removed(name == 'history' ? row['drama']['source'] : row['source']),
+      );
+    }
+  }
+  for (final name in [
+    'catalogs',
+    'selectedCategories',
+    'sourceCategories',
+    'pages',
+    'hasMore',
+  ]) {
+    final values = state[name];
+    if (values is Map) values.removeWhere((key, _) => removed(key));
+  }
+  for (final name in [
+    'categorySlices',
+    'episodes',
+    'episodeUpdatedAt',
+    'episodeSeenIds',
+  ]) {
+    final values = state[name];
+    if (values is Map) {
+      values.removeWhere(
+        (key, _) => removed('$key'.split(RegExp(r'[:|]')).first),
+      );
+    }
+  }
+  if (removed(state['source'])) state['source'] = 'hongguo';
 }
