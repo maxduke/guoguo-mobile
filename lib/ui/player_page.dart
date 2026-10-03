@@ -352,10 +352,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _attachTimeline(item, generation);
       _health.reset();
       await _applyVideoFit();
-      if (item.preparer.streaming) start = Duration.zero;
+      // The private EVENT playlist declares its start. Seeking during native
+      // initialization can race play because the plugin returns before AVPlayer
+      // finishes seeking. Resume/scrub on complete media still uses seekTo.
+      if (item.preparer.streaming) start = null;
       final value = _player.videoPlayerController?.value;
       final duration = value?.duration ?? Duration.zero;
-      if (start == null &&
+      if (!item.preparer.streaming &&
+          start == null &&
           duration > Duration.zero &&
           value!.position >= duration - const Duration(milliseconds: 300)) {
         start = Duration.zero;

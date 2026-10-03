@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -309,7 +310,15 @@ class ProgressiveMedia {
           return;
         }
         // Atomic replacement allows this request to read one complete snapshot.
-        final bytes = await file.readAsBytes();
+        final text = await file.readAsString();
+        // EVENT clients otherwise choose a point near the growing live edge.
+        // Declare the episode start so no asynchronous startup seek is needed.
+        final bytes = utf8.encode(
+          text.replaceFirst(
+            '#EXTM3U\n',
+            '#EXTM3U\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n',
+          ),
+        );
         response.contentLength = bytes.length;
         if (request.method == 'GET') response.add(bytes);
         return;

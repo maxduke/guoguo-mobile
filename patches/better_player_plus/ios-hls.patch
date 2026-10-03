@@ -1,0 +1,79 @@
+--- a/ios/better_player_plus/Sources/better_player_plus/BetterPlayer.swift
++++ b/ios/better_player_plus/Sources/better_player_plus/BetterPlayer.swift
+@@ -203,7 +203,7 @@
+         }
+     }
+ 
+-    public func setDataSourceURL(_ url: URL, key: String?, certificateUrl: String?, licenseUrl: String?, headers: [AnyHashable: Any], useCache: Bool, cacheKey: String?, cacheManager: CacheManager, overriddenDuration: Int, videoExtension: String?) {
++    public func setDataSourceURL(_ url: URL, key: String?, certificateUrl: String?, licenseUrl: String?, headers: [AnyHashable: Any], useCache: Bool, cacheKey: String?, cacheManager: CacheManager, overriddenDuration: Int, videoExtension: String?, formatHint: String? = nil) {
+         self.overriddenDuration = 0
+         var finalHeaders = headers
+         if finalHeaders["dummy"] == nil {} // keep dictionary type stable
+@@ -231,31 +231,31 @@
+         if #available(iOS 10.0, *), overriddenDuration > 0 {
+             self.overriddenDuration = overriddenDuration
+         }
+-        setDataSourcePlayerItem(item, key: key)
+-    }
+-
+-    private func setDataSourcePlayerItem(_ item: AVPlayerItem, key: String?) {
++        setDataSourcePlayerItem(item, key: key, useVideoComposition: GuoguoMediaPolicy.allowsVideoComposition(formatHint: formatHint, url: url))
++    }
++
++    private func setDataSourcePlayerItem(_ item: AVPlayerItem, key: String?, useVideoComposition: Bool) {
+         self.key = key
+         self.stalledCount = 0
+         self.isStalledCheckStarted = false
+         self.playerRate = 1
+         player.replaceCurrentItem(with: item)
+ 
+-        let asset = item.asset
+-        asset.loadValuesAsynchronously(forKeys: ["tracks"]) {
+-            if asset.statusOfValue(forKey: "tracks", error: nil) == .loaded {
+-                let tracks = asset.tracks(withMediaType: .video)
+-                if let videoTrack = tracks.first {
++        // HLS cannot use AVPlayerItem.videoComposition. Its duration also grows
++        // while the EVENT playlist is being written; AVPlayerLayer renders it.
++        if useVideoComposition {
++            let asset = item.asset
++            asset.loadValuesAsynchronously(forKeys: ["tracks"]) {
++                if asset.statusOfValue(forKey: "tracks", error: nil) == .loaded,
++                   let videoTrack = asset.tracks(withMediaType: .video).first {
+                     videoTrack.loadValuesAsynchronously(forKeys: ["preferredTransform"]) { [weak self] in
+-                        guard let self = self, !self.disposed else { return }
+-                        if videoTrack.statusOfValue(forKey: "preferredTransform", error: nil) == .loaded {
++                        DispatchQueue.main.async {
++                            guard let self = self, !self.disposed,
++                                  self.player.currentItem === item,
++                                  videoTrack.statusOfValue(forKey: "preferredTransform", error: nil) == .loaded else { return }
++                            let seconds = CMTimeGetSeconds(asset.duration)
++                            guard seconds.isFinite, seconds > 0 else { return }
+                             self.preferredTransform = self.fixTransform(videoTrack)
+-                            // Skip the video composition in the Simulator: an AVPlayerItem
+-                            // with a videoComposition renders black there (audio keeps
+-                            // playing) — the compositing render path has no working
+-                            // implementation in the Simulator. AVPlayerLayer applies
+-                            // preferredTransform on its own, so rotated videos still
+-                            // display correctly; devices keep the composition unchanged.
+                             #if !targetEnvironment(simulator)
+                             let videoComposition = self.getVideoComposition(transform: self.preferredTransform, asset: asset, videoTrack: videoTrack)
+                             item.videoComposition = videoComposition
+--- a/ios/better_player_plus/Sources/better_player_plus/SwiftBetterPlayerPlugin.swift
++++ b/ios/better_player_plus/Sources/better_player_plus/SwiftBetterPlayerPlugin.swift
+@@ -244,6 +244,7 @@
+             let cacheKey = dataSource["cacheKey"] as? String
+             let maxCacheSize = dataSource["maxCacheSize"] as? NSNumber
+             let videoExtension = dataSource["videoExtension"] as? String
++            let formatHint = dataSource["formatHint"] as? String
+             let overriddenDuration = (dataSource["overriddenDuration"] as? NSNumber)?.intValue ?? 0
+ 
+             let useCache = (dataSource["useCache"] as? NSNumber)?.boolValue ?? false
+@@ -258,7 +259,7 @@
+                 }
+                 player.setDataSourceAsset(assetPath, key: key, certificateUrl: certificateUrl, licenseUrl: licenseUrl, cacheKey: cacheKey, cacheManager: cacheManager, overriddenDuration: overriddenDuration)
+             } else if let uriArg = uriArg, let url = URL(string: uriArg) {
+-                player.setDataSourceURL(url, key: key, certificateUrl: certificateUrl, licenseUrl: licenseUrl, headers: headers, useCache: useCache, cacheKey: cacheKey, cacheManager: cacheManager, overriddenDuration: overriddenDuration, videoExtension: videoExtension)
++                player.setDataSourceURL(url, key: key, certificateUrl: certificateUrl, licenseUrl: licenseUrl, headers: headers, useCache: useCache, cacheKey: cacheKey, cacheManager: cacheManager, overriddenDuration: overriddenDuration, videoExtension: videoExtension, formatHint: formatHint)
+             } else {
+                 result(FlutterMethodNotImplemented)
+                 return

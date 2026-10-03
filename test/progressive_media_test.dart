@@ -183,9 +183,19 @@ void main() {
 
       final playlist = await _request(url);
       expect(playlist.statusCode, HttpStatus.ok);
+      final content = await playlist.transform(SystemEncoding().decoder).join();
       expect(
-        await playlist.transform(SystemEncoding().decoder).join(),
-        contains('segment_00000.m4s'),
+        content,
+        startsWith('#EXTM3U\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n'),
+      );
+      expect(content, contains('segment_00000.m4s'));
+      final playlistHead = await _request(url, method: 'HEAD');
+      expect(playlistHead.contentLength, playlist.contentLength);
+      expect(await playlistHead.toList(), isEmpty);
+      // The writer's atomic snapshot is unchanged by the served start hint.
+      expect(
+        await File('${dir.path}/index.m3u8').readAsString(),
+        _openPlaylist,
       );
 
       final segment = url.resolve('segment_00000.m4s');

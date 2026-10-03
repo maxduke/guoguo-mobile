@@ -106,7 +106,7 @@ class _NativePlayer {
         ids.add(args?['textureId']);
         final source = args?['dataSource'] as Map;
         sources.add(source['uri'] as String);
-        formats.add(source['videoFormat']);
+        formats.add(source['formatHint']);
         authors.add(source['author']);
         await beforeInitialized?.call(sources.length);
         scheduleMicrotask(
@@ -288,6 +288,55 @@ void main() {
   final originalOverrides = HttpOverrides.current;
   setUpAll(() => HttpOverrides.global = _PlaylistOverrides());
   tearDownAll(() => HttpOverrides.global = originalOverrides);
+
+  testWidgets(
+    'progressive startup declares HLS and plays without an initial seek',
+    (tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final platform = _NativePlayer()
+        ..hlsDurationMs = 0
+        ..install();
+      addTearDown(platform.uninstall);
+      final store = AppStore(storage: MemoryStorage(), provider: _Routes())
+        ..progressivePreparation = true
+        ..prefetch = false;
+      final downloads = _OnlineDownloads(store);
+      final job = _ProgressivePreparer();
+      addTearDown(() {
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: 'fixture',
+              source: DramaSource.hongguo,
+              title: '原生起播',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+            ],
+            initialIndex: 0,
+            preparerFactory: () => job,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(platform.formats, ['hls']);
+      expect(platform.seeks, isEmpty);
+      expect(platform.plays, isNotEmpty);
+      final player = tester
+          .widget<BetterPlayer>(find.byType(BetterPlayer))
+          .controller;
+      expect(player.isPlaying(), isTrue);
+      expect(player.videoPlayerController!.value.position, Duration.zero);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    },
+  );
 
   for (final mode in [
     'playing stall',
