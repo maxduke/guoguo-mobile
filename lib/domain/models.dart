@@ -179,6 +179,8 @@ class ResolvedMedia {
     : url = json['url'] as String,
       remoteUrl = json['remoteUrl'] as String,
       expiresAt = json['expiresAt'] as int? ?? 0,
+      prefetchedBytes = json['prefetchedBytes'] as int? ?? 0,
+      prefetchMs = json['prefetchMs'] as int? ?? 0,
       session = json['session'] as String? ?? '',
       contentKey = json['contentKey'] as String? ?? '',
       headers = Map<String, String>.from(json['headers'] as Map? ?? {}),
@@ -192,6 +194,7 @@ class ResolvedMedia {
   final Map<String, String> headers;
   final List<int> qualities;
   final int quality, routeIndex, routeCount, expiresAt;
+  final int prefetchedBytes, prefetchMs;
   bool freshAt(DateTime now) =>
       expiresAt == 0 || now.millisecondsSinceEpoch + 5000 < expiresAt;
   bool get hasAlternative => session.isNotEmpty && routeIndex + 1 < routeCount;

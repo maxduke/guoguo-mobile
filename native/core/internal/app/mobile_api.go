@@ -21,6 +21,7 @@ type MobileClient struct {
 	mu               sync.Mutex
 	proxies          map[string]*hlsProxy
 	playbacks        map[string]mobilePlaybackChoice
+	prefetches       map[string]*mobilePrefetchRead
 	searches         map[string]*mobileSearchRead
 	covers           coverImageCache
 	catalogMu        sync.Mutex
@@ -369,11 +370,24 @@ func (c *MobileClient) Call(raw string) (string, error) {
 		if err != nil {
 			return "", publicError(err)
 		}
+	case "prefetch":
+		result, err := c.prefetchPlayback(ctx, request.ID)
+		if err != nil {
+			return "", publicError(err)
+		}
+		value = result
+	case "cancelPrefetch":
+		c.cancelPlaybackPrefetch(request.ID)
+		value = map[string]any{"ok": true}
 	case "release":
 		c.mu.Lock()
 		proxy := c.proxies[request.ID]
 		delete(c.proxies, request.ID)
 		delete(c.playbacks, request.ID)
+		if read := c.prefetches[request.ID]; read != nil {
+			read.cancel()
+			delete(c.prefetches, request.ID)
+		}
 		c.mu.Unlock()
 		if proxy != nil {
 			proxy.Close()
@@ -394,6 +408,10 @@ func (c *MobileClient) Close() {
 		delete(c.searches, id)
 	}
 	c.playbacks = nil
+	for id, read := range c.prefetches {
+		read.cancel()
+		delete(c.prefetches, id)
+	}
 	for id, proxy := range c.proxies {
 		proxy.Close()
 		delete(c.proxies, id)

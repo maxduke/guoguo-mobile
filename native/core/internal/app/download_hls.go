@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -26,23 +27,31 @@ type hlsAsset struct {
 }
 
 type hlsProxy struct {
-	credentials *providerMediaCredentials
-	client      *http.Client
-	server      *http.Server
-	base        string
-	referer     string
-	key         []byte
-	mediaKey    []byte
-	mu          sync.Mutex
-	assets      map[string]hlsAsset
-	assetIDs    map[string]string
-	failure     error
-	root        string
-	retries     int
-	host        string
-	diagnostic  func(diagnosticEvent)
-	query       string
-	acquire     func(context.Context) (func(), error)
+	ctx           context.Context
+	cancel        context.CancelFunc
+	closed        bool
+	prefetched    map[string]prefetchedMedia
+	prefetchMu    sync.Mutex
+	prefetchRun   bool
+	prefetchStats mediaPrefetchStats
+	reusedBytes   atomic.Int64
+	credentials   *providerMediaCredentials
+	client        *http.Client
+	server        *http.Server
+	base          string
+	referer       string
+	key           []byte
+	mediaKey      []byte
+	mu            sync.Mutex
+	assets        map[string]hlsAsset
+	assetIDs      map[string]string
+	failure       error
+	root          string
+	retries       int
+	host          string
+	diagnostic    func(diagnosticEvent)
+	query         string
+	acquire       func(context.Context) (func(), error)
 }
 
 var hlsURIAttribute = regexp.MustCompile(`URI="([^"]+)"`)
@@ -56,7 +65,9 @@ func (d *Downloader) newHLSProxy(ctx context.Context, media providerMedia, key [
 	if err != nil {
 		return nil, fmt.Errorf("创建本地 HLS 转发失败: %w", err)
 	}
+	ctx, cancel := context.WithCancel(ctx)
 	proxy := &hlsProxy{
+		ctx: ctx, cancel: cancel, prefetched: make(map[string]prefetchedMedia),
 		client:     mediaHTTPClient(&http.Client{Transport: d.client.Transport}, media),
 		base:       "http://" + listener.Addr().String() + "/" + nonce + "/",
 		referer:    media.Referer,
@@ -90,6 +101,9 @@ func (d *Downloader) newHLSProxy(ctx context.Context, media providerMedia, key [
 
 func playbackRootAsset(media providerMedia) hlsAsset {
 	asset := hlsAsset{remote: media.URL, body: []byte(media.Playlist), playlist: media.Playlist != ""}
+	if parsed, err := url.Parse(media.URL); err == nil && !asset.playlist && path.Ext(parsed.Path) == "" {
+		asset.extension = ".mp4"
+	}
 	if asset.playlist && !strings.Contains(media.Playlist, "#EXT-X-ENDLIST") && !strings.Contains(media.Playlist, "#EXT-X-STREAM-INF:") {
 		asset.body = nil
 	}
@@ -102,6 +116,13 @@ type bufferedMediaBody struct {
 }
 
 func (proxy *hlsProxy) Close() {
+	if proxy.cancel != nil {
+		proxy.cancel()
+	}
+	proxy.mu.Lock()
+	proxy.closed = true
+	proxy.prefetched = nil
+	proxy.mu.Unlock()
 	if proxy.client != nil {
 		proxy.client.CloseIdleConnections()
 	}
@@ -268,6 +289,18 @@ func (proxy *hlsProxy) ServeHTTP(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	body := asset.body
+	if len(body) == 0 {
+		proxy.mu.Lock()
+		cached, exists := proxy.prefetched[request.URL.Path]
+		proxy.mu.Unlock()
+		if exists {
+			if cached.playlist {
+				body, asset.remote, asset.playlist = cached.data, cached.remote, true
+			} else if proxy.servePrefetched(writer, request, asset, cached) {
+				return
+			}
+		}
+	}
 	if len(body) == 0 {
 		if proxy.acquire != nil {
 			release, err := proxy.acquire(request.Context())

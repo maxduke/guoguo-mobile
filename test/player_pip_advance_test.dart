@@ -192,7 +192,54 @@ class _Routes implements ProviderClient {
   };
 }
 
+class _PrefetchRoutes extends _Routes {
+  _PrefetchRoutes({this.hold = false});
+  final bool hold;
+  final warmed = <String>[];
+  final cancelledPrefetches = <String>[];
+  final plans = <String, Map<String, dynamic>>{};
+  Completer<Map<String, dynamic>>? warming;
+
+  @override
+  Map<String, dynamic> plan(int index) => {
+    ...super.plan(index),
+    'contentKey': '0123456789abcdef0123456789abcdef',
+  };
+
+  Map<String, dynamic> cached(String session) => {
+    ...plans[session]!,
+    'url': 'http://127.0.0.1:43210/cache-$session.mp4',
+    'prefetchedBytes': 4096,
+    'prefetchMs': 12,
+  };
+
+  @override
+  Future<Map<String, dynamic>> call(
+    String method, [
+    Map<String, dynamic> arguments = const {},
+  ]) async {
+    final session = arguments['id'] as String? ?? '';
+    if (method == 'prefetch') {
+      warmed.add(session);
+      if (hold) return (warming = Completer<Map<String, dynamic>>()).future;
+      return cached(session);
+    }
+    if (method == 'cancelPrefetch') {
+      cancelledPrefetches.add(session);
+      if (warming != null && !warming!.isCompleted) {
+        warming!.complete(cached(session));
+      }
+      return {};
+    }
+    final result = await super.call(method, arguments);
+    if (method == 'resolve') plans[result['session'] as String] = result;
+    return result;
+  }
+}
+
 class _ProgressivePreparer extends MediaPreparer {
+  int preparations = 0;
+  ResolvedMedia? preparedMedia;
   bool requested = false, cancelled = false, disposed = false;
   bool produced = false;
   ValueNotifier<ProgressiveTimeline>? preparedTimeline;
@@ -211,6 +258,8 @@ class _ProgressivePreparer extends MediaPreparer {
     ResolvedMedia media, {
     bool progressive = false,
   }) async {
+    preparations++;
+    preparedMedia = media;
     requested = progressive;
     await readyGate?.future;
     return progressive
@@ -235,6 +284,96 @@ void main() {
   final originalOverrides = HttpOverrides.current;
   setUpAll(() => HttpOverrides.global = _PlaylistOverrides());
   tearDownAll(() => HttpOverrides.global = originalOverrides);
+
+  for (final mode in ['ready', 'promote', 'network eviction', 'cellular']) {
+    testWidgets('bounded encrypted prefetch $mode defers media preparation', (
+      tester,
+    ) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final platform = _NativePlayer()
+        ..followSeeks = true
+        ..install();
+      addTearDown(platform.uninstall);
+      if (mode == 'cellular') {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              _NativePlayer.connectivity,
+              (_) async => ['mobile'],
+            );
+      }
+      final provider = _PrefetchRoutes(
+        hold: mode == 'promote' || mode == 'network eviction',
+      );
+      final store = AppStore(storage: MemoryStorage(), provider: provider);
+      final downloads = _OnlineDownloads(store);
+      final first = _ProgressivePreparer(), next = _ProgressivePreparer();
+      var created = 0;
+      addTearDown(() {
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: 'fixture',
+              source: DramaSource.hongguo,
+              title: '首段预取',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+              Episode.fromJson({'id': '2'}, 1),
+            ],
+            initialIndex: 0,
+            preparerFactory: () => created++ == 0 ? first : next,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final player = tester
+          .widget<BetterPlayer>(find.byType(BetterPlayer))
+          .controller;
+      platform.emit('bufferingUpdate', {
+        'values': [
+          [0, 30000],
+        ],
+      });
+      await player.seekTo(const Duration(seconds: 8));
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump();
+      expect(first.preparations, 1);
+      expect(next.preparations, 0);
+      expect(provider.resolves, mode == 'cellular' ? 1 : 2);
+      expect(provider.warmed, mode == 'cellular' ? isEmpty : ['session-2-0']);
+      if (mode == 'ready' || mode == 'promote') {
+        platform.emit('completed');
+        await tester.pumpAndSettle();
+        expect(next.preparations, 1);
+        expect(next.preparedMedia!.url, contains('cache-session-2-0.mp4'));
+        expect(next.preparedMedia!.prefetchedBytes, 4096);
+        expect(provider.resolves, 2);
+        expect(provider.cancelledPrefetches, contains('session-2-0'));
+        expect(provider.releases, isNot(contains('session-2-0')));
+      } else if (mode == 'network eviction') {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .handlePlatformMessage(
+              _NativePlayer.connectivityStatus.name,
+              const StandardMethodCodec().encodeSuccessEnvelope(['mobile']),
+              (_) {},
+            );
+        await tester.pumpAndSettle();
+        expect(provider.cancelledPrefetches, contains('session-2-0'));
+        expect(provider.releases, contains('session-2-0'));
+        expect(provider.releases, isNot(contains('session-1-0')));
+        expect(next.preparations, 0);
+      }
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    });
+  }
 
   for (final trigger in [
     'error',

@@ -18,9 +18,12 @@ class PlaybackDiagnostic {
     required this.elapsedMs,
     this.preparation = 'direct',
     this.compatibilityFallback = false,
+    this.prefetchBytes = 0,
+    this.prefetchMs = 0,
   });
   final DramaSource source;
   final int episode, resolveMs, prepareMs, setupMs, waitMs, elapsedMs;
+  final int prefetchBytes, prefetchMs;
   final DateTime at;
   final PlaybackResult result;
   final bool local, preloaded;
@@ -40,6 +43,8 @@ class PlaybackDiagnostic {
     'elapsedMs': elapsedMs,
     'preparation': preparation,
     'compatibilityFallback': compatibilityFallback,
+    'prefetchBytes': prefetchBytes,
+    'prefetchMs': prefetchMs,
   };
   factory PlaybackDiagnostic.fromJson(Map<String, dynamic> json) =>
       PlaybackDiagnostic(
@@ -63,11 +68,14 @@ class PlaybackDiagnostic {
             ? json['preparation'] as String
             : 'direct',
         compatibilityFallback: json['compatibilityFallback'] == true,
+        prefetchBytes: json['prefetchBytes'] as int? ?? 0,
+        prefetchMs: json['prefetchMs'] as int? ?? 0,
       );
 }
 
 class PreparationTiming {
   int resolveMs = 0, prepareMs = 0, setupMs = 0;
+  int prefetchBytes = 0, prefetchMs = 0;
   bool local = false, compatibilityFallback = false;
   String preparation = 'direct';
 }
@@ -105,6 +113,8 @@ class PlaybackAttempt {
       elapsedMs: clock.elapsedMilliseconds,
       preparation: timing.preparation,
       compatibilityFallback: timing.compatibilityFallback,
+      prefetchBytes: timing.prefetchBytes,
+      prefetchMs: timing.prefetchMs,
     );
   }
 }

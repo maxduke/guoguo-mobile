@@ -37,7 +37,7 @@ class CoreIdentityTests(unittest.TestCase):
             manifest = root / 'manifest.json'
             core_identity.write_manifest(artifact, manifest, 'ios', root)
             document = json.loads(manifest.read_text())
-            self.assertEqual(document['protocol'], 2)
+            self.assertEqual(document['protocol'], 3)
             (artifact / 'extra').write_bytes(b'unexpected')
             with self.assertRaises(ValueError):
                 core_identity.verify(artifact, manifest, 'ios', root)

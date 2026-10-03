@@ -12,6 +12,10 @@
 
 [发现页预览](screenshots/recommendations-light.png) · [深色发现页](screenshots/recommendations-dark.png) · [新版详情页](screenshots/detail-phone-light.png) · [平板详情页](screenshots/detail-tablet-dark.png)
 
+## 0.11.0 首段预取
+
+下一集后台准备改为解析地址及有限首段预取，每个播放会话最多读取 4 MiB 媒体数据、持续 6 秒、发起 8 次请求（含重定向）。选中该集后复用已有数据，再按现有方式准备加密媒体。继续遵守 Wi-Fi 偏好；取消、退出和释放会话时清理。播放诊断区分地址准备与首段缓存，详细边界见 [实施记录](docs/media-prefetch-2026-10-03.md)。
+
 ## 0.10.0 上游更新
 
 吸收 guoapp `0.2.79+2086` 的站源修复、榜单入口、黄果 AI 在线搜索与受限媒体证书回退，新增红果渐进搜索、搜索缓存、JSON/XZ 剧库互通、同系列入口及显示层刷新节流。移除网果、发果，现有站源为十六个。完整范围、取舍和验证边界见 [本轮实施记录](docs/upstream-refresh-2026-10-03.md)。

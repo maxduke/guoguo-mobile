@@ -3,20 +3,32 @@ import 'dart:async';
 class EpisodeCancelled implements Exception {}
 
 class EpisodeCancellation {
+  EpisodeCancellation({this.background = false});
+  bool background;
   bool cancelled = false;
   void Function()? onCancel;
+  void Function()? onForeground;
   void check() {
     if (cancelled) throw EpisodeCancelled();
   }
 
   void cancel() {
+    if (cancelled) return;
     cancelled = true;
     onCancel?.call();
+  }
+
+  void promote() {
+    if (!background || cancelled) return;
+    background = false;
+    onForeground?.call();
   }
 }
 
 class _Entry<T> {
-  final cancellation = EpisodeCancellation();
+  _Entry({required bool background})
+    : cancellation = EpisodeCancellation(background: background);
+  final EpisodeCancellation cancellation;
   late Future<T> future;
   T? value;
   Timer? deadline;
@@ -42,10 +54,13 @@ class EpisodeBuffer<T> {
       }
     }
     if (existing != null) {
-      if (backgroundTimeout == null) existing.deadline?.cancel();
+      if (backgroundTimeout == null) {
+        existing.deadline?.cancel();
+        existing.cancellation.promote();
+      }
       return existing.future;
     }
-    final entry = _Entry<T>();
+    final entry = _Entry<T>(background: backgroundTimeout != null);
     _entries[index] = entry;
     final result = Completer<T>();
     entry.future = result.future;
