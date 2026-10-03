@@ -87,6 +87,7 @@ class _NativePlayer {
   );
   int hlsDurationMs = 30000, positionMs = 0;
   bool followSeeks = false;
+  Future<void> Function(int)? beforeInitialized;
   final seeks = <int>[];
   final sources = <String>[];
   final formats = <Object?>[];
@@ -107,6 +108,7 @@ class _NativePlayer {
         sources.add(source['uri'] as String);
         formats.add(source['videoFormat']);
         authors.add(source['author']);
+        await beforeInitialized?.call(sources.length);
         scheduleMicrotask(
           () => emit('initialized', {
             'duration': (source['uri'] as String).endsWith('.m3u8')
@@ -284,6 +286,74 @@ void main() {
   final originalOverrides = HttpOverrides.current;
   setUpAll(() => HttpOverrides.global = _PlaylistOverrides());
   tearDownAll(() => HttpOverrides.global = originalOverrides);
+
+  for (final mode in ['failure', 'rapid selection']) {
+    testWidgets('session source handoff survives $mode', (tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final gate = Completer<void>();
+      final platform = _NativePlayer()
+        ..beforeInitialized = (number) async {
+          if (number != 1) return;
+          if (mode == 'failure') {
+            throw PlatformException(
+              code: 'fixture',
+              message: 'source setup failed',
+            );
+          }
+          await gate.future;
+        }
+        ..install();
+      addTearDown(platform.uninstall);
+      final provider = _Routes();
+      final store = AppStore(storage: MemoryStorage(), provider: provider)
+        ..prefetch = false;
+      final downloads = _OnlineDownloads(store);
+      addTearDown(() {
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: 'fixture',
+              source: DramaSource.hongguo,
+              title: '交接',
+            ),
+            episodes: [
+              for (var i = 1; i <= 3; i++)
+                Episode.fromJson({'id': '$i'}, i - 1),
+            ],
+            initialIndex: 0,
+          ),
+        ),
+      );
+      if (mode == 'rapid selection') {
+        await tester.pump();
+        expect(platform.sources, hasLength(1));
+        await tester.drag(find.byType(EpisodePager), const Offset(0, -500));
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.drag(find.byType(EpisodePager), const Offset(0, -500));
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(provider.resolves, 3);
+        expect(platform.sources, hasLength(1));
+        gate.complete();
+        await tester.pumpAndSettle();
+        expect(platform.authors, ['果果 · 第 1 集', '果果 · 第 3 集']);
+        expect(provider.releases, contains('session-1-0'));
+      } else {
+        await tester.pumpAndSettle();
+        expect(provider.fallbacks, 1);
+        expect(platform.sources.last, contains('route1.mp4'));
+      }
+      expect(platform.sources, hasLength(2));
+      expect(platform.plays, hasLength(1));
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    });
+  }
 
   for (final mode in ['ready', 'promote', 'network eviction', 'cellular']) {
     testWidgets('bounded encrypted prefetch $mode defers media preparation', (
