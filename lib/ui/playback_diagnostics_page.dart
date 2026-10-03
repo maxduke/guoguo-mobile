@@ -80,7 +80,11 @@ class PlaybackDiagnosticsPage extends StatelessWidget {
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     Text(
-                      '${sample.at.toLocal().toString().split('.').first} · ${sample.local ? '本地视频' : '在线视频'}${sample.preloaded ? ' · 已预备' : ''}',
+                      '${sample.at.toLocal().toString().split('.').first} · ${sample.local ? '本地视频' : '在线视频'}${sample.preloaded
+                          ? sample.local
+                                ? ' · 已准备本地文件'
+                                : ' · 已提前准备地址'
+                          : ''}',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     Text(
@@ -94,9 +98,13 @@ class PlaybackDiagnosticsPage extends StatelessWidget {
                     Text(
                       '解析 ${sample.resolveMs} ms · 媒体准备 ${sample.prepareMs} ms\n播放器准备 ${sample.setupMs} ms · 本次等待准备 ${sample.waitMs} ms\n${sample.result == PlaybackResult.started ? '到进度开始前进' : '到结束'} ${sample.elapsedMs} ms',
                     ),
-                    if (sample.preloaded)
-                      const Text(
-                        '预备阶段耗时来自缓存，本次等待单独计时。',
+                    if (sample.preloaded || sample.prefetchBytes > 0)
+                      Text(
+                        sample.prefetchBytes > 0
+                            ? '预取缓存 ${(sample.prefetchBytes / 1024).toStringAsFixed(0)} KiB · 预取 ${sample.prefetchMs} ms；本次等待单独计时。'
+                            : sample.local
+                            ? '本地准备耗时来自缓存，本次等待单独计时。'
+                            : '本次未缓存媒体首段；地址解析耗时来自预备阶段，本次等待单独计时。',
                         style: TextStyle(fontSize: 12),
                       ),
                   ],

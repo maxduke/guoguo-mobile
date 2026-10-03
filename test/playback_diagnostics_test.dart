@@ -14,16 +14,24 @@ void main() {
             preloaded: false,
           )
           ..timing.preparation = 'complete'
+          ..timing.prefetchBytes = 4096
+          ..timing.prefetchMs = 60
           ..timing.compatibilityFallback = true;
     final json = attempt.finish(PlaybackResult.started)!.toJson();
     final restored = PlaybackDiagnostic.fromJson(json);
     expect(restored.preparation, 'complete');
     expect(restored.compatibilityFallback, isTrue);
+    expect(restored.prefetchBytes, 4096);
+    expect(restored.prefetchMs, 60);
     json.remove('preparation');
     json.remove('compatibilityFallback');
+    json.remove('prefetchBytes');
+    json.remove('prefetchMs');
     final legacy = PlaybackDiagnostic.fromJson(json);
     expect(legacy.preparation, 'direct');
     expect(legacy.compatibilityFallback, isFalse);
+    expect(legacy.prefetchBytes, 0);
+    expect(legacy.prefetchMs, 0);
   });
 
   test(
@@ -62,6 +70,8 @@ void main() {
         'elapsedMs',
         'preparation',
         'compatibilityFallback',
+        'prefetchBytes',
+        'prefetchMs',
       });
       await restored.clearPlaybackDiagnostics();
       expect(storage.value!['playbackDiagnostics'], isEmpty);

@@ -42,9 +42,11 @@ void main() {
   ) async {
     final pending = Completer<String>();
     late EpisodeCancellation token;
+    var promotions = 0;
     final buffer = EpisodeBuffer<String>(
       load: (_, cancellation) {
         token = cancellation;
+        token.onForeground = () => promotions++;
         return pending.future;
       },
       release: (_) async {},
@@ -55,6 +57,9 @@ void main() {
     );
     await tester.pump(const Duration(seconds: 10));
     final selected = buffer.prepare(1);
+    buffer.prepare(1);
+    expect(token.background, isFalse);
+    expect(promotions, 1);
     expect(identical(preload, selected), isTrue);
     await tester.pump(const Duration(seconds: 10));
     expect(token.cancelled, isFalse);

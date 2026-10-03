@@ -56,12 +56,20 @@ class PlayerPage extends StatefulWidget {
 }
 
 class _Playable {
-  _Playable(this.preparer, this.media, this.path, this.timing);
+  _Playable(
+    this.preparer,
+    this.media,
+    this.path,
+    this.timing, {
+    this.deferred = false,
+  });
   final DateTime created = DateTime.now();
   final PreparationTiming timing;
   final MediaPreparer preparer;
   final ResolvedMedia? media;
-  final String path;
+  String path;
+  bool deferred;
+  Future<void>? preparing;
 }
 
 class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
@@ -172,9 +180,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     final stage = Stopwatch();
     var stageName = 'local';
     final preparer = widget.preparerFactory?.call() ?? MediaPreparer();
-    cancellation.onCancel = () =>
-        unawaited(preparer.cancel().catchError((Object _) {}));
     ResolvedMedia? media = _resolved.remove(index);
+    void cancelPrefetch() => unawaited(
+      widget.store.provider.cancelPrefetch(media).catchError((Object _) {}),
+    );
+    cancellation.onForeground = cancelPrefetch;
+    cancellation.onCancel = () {
+      cancelPrefetch();
+      unawaited(preparer.cancel().catchError((Object _) {}));
+    };
     try {
       cancellation.check();
       var path = await widget.downloads.localFile(
@@ -198,6 +212,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         timing.resolveMs = stage.elapsedMilliseconds;
         stage.reset();
         stageName = 'prepare';
+        cancellation.check();
+        if (cancellation.background) {
+          // Address resolution and a bounded prefix are sufficient in the
+          // background. Decryption/remuxing starts only after selection.
+          stageName = 'prefetch';
+          media = await widget.store.provider.prefetch(media);
+          cancellation.check();
+          timing.prefetchBytes = media.prefetchedBytes;
+          timing.prefetchMs = media.prefetchMs;
+          return _Playable(preparer, media, media.url, timing, deferred: true);
+        }
         _phase(
           index,
           media.contentKey.isEmpty ? '正在连接视频…' : '正在准备视频，首次播放可能稍久…',
@@ -233,6 +258,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           timing.resolveMs = stage.elapsedMilliseconds;
         case 'prepare':
           timing.prepareMs = stage.elapsedMilliseconds;
+        case 'prefetch':
+          timing.prefetchMs = stage.elapsedMilliseconds;
       }
       try {
         await preparer.dispose();
@@ -244,6 +271,40 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       rethrow;
     }
   }
+
+  Future<void> _prepareSelected(_Playable item, int index) =>
+      item.preparing ??= () async {
+        if (!item.deferred) return;
+        final media = item.media!;
+        _phase(
+          index,
+          media.contentKey.isEmpty ? '正在连接视频…' : '正在准备视频，首次播放可能稍久…',
+        );
+        final stage = Stopwatch()..start();
+        try {
+          item.path = await item.preparer.prepare(
+            media,
+            progressive:
+                widget.store.progressivePreparation &&
+                !_forceComplete.contains(index) &&
+                _foreground &&
+                !_pipActive,
+          );
+          item.deferred = false;
+          item.timing.preparation = item.preparer.streaming
+              ? 'progressive'
+              : media.contentKey.isEmpty
+              ? 'direct'
+              : 'complete';
+          item.timing.compatibilityFallback =
+              item.preparer.fellBack || _compatibilityFallback.contains(index);
+        } catch (_) {
+          if (identical(_buffer.peek(index), item)) _buffer.evict(index);
+          rethrow;
+        } finally {
+          item.timing.prepareMs = stage.elapsedMilliseconds;
+        }
+      }();
 
   Future<void> _releaseMedia(ResolvedMedia? media) async {
     try {
@@ -394,6 +455,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       attempt.timing = _timings[index] ?? PreparationTiming();
       final item = await pending;
       attempt.timing = item.timing;
+      if (!mounted || generation != _generation) return;
+      await _prepareSelected(item, index);
       attempt.waitMs = attempt.clock.elapsedMilliseconds;
       if (!mounted || generation != _generation) return;
       await _paused;

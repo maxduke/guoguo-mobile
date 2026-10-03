@@ -15,7 +15,7 @@ class NativeProviderClient implements ProviderClient {
     await _channel.invokeMethod<void>('initialize', {'directory': directory});
     try {
       final info = await call('coreInfo');
-      if (info['protocol'] != 2) {
+      if (info['protocol'] != 3) {
         throw const ProviderException('站源组件版本不匹配，请安装最新完整版本');
       }
     } catch (_) {
@@ -73,6 +73,14 @@ extension ProviderOperations on ProviderClient {
   );
   Future<ResolvedMedia> fallback(ResolvedMedia media) async =>
       ResolvedMedia.fromJson(await call('fallback', {'id': media.session}));
+
+  Future<ResolvedMedia> prefetch(ResolvedMedia media) async =>
+      ResolvedMedia.fromJson(await call('prefetch', {'id': media.session}));
+
+  Future<void> cancelPrefetch(ResolvedMedia? media) async {
+    if (media == null || media.session.isEmpty) return;
+    await call('cancelPrefetch', {'id': media.session});
+  }
 
   Future<void> release(ResolvedMedia? media) async {
     if (media == null || media.session.isEmpty) return;

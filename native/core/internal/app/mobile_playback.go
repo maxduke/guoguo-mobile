@@ -9,11 +9,12 @@ import (
 )
 
 type mobilePlaybackChoice struct {
-	media     []providerMedia
-	key       []byte
-	qualities []int
-	index     int
-	created   time.Time
+	media            []providerMedia
+	key              []byte
+	qualities        []int
+	index            int
+	created          time.Time
+	prefetchCanceled bool
 }
 
 func mobilePlaybackChoices(media providerMedia, key []byte, quality int) (mobilePlaybackChoice, error) {
@@ -53,7 +54,6 @@ func (c *MobileClient) openMobilePlayback(choice mobilePlaybackChoice) (map[stri
 		return nil, errors.New("没有其他可用播放线路")
 	}
 	media := choice.media[choice.index]
-	playURL := media.URL
 	var proxy *hlsProxy
 	if media.certificateFallback || media.credentials != nil || media.Playlist != "" || len(choice.key) > 0 || len(media.HLSKey) > 0 {
 		var err error
@@ -61,9 +61,9 @@ func (c *MobileClient) openMobilePlayback(choice mobilePlaybackChoice) (map[stri
 		if err != nil {
 			return nil, err
 		}
-		playURL = proxy.root
 	}
 	session := randomHex(16)
+	choice.prefetchCanceled = false
 	c.mu.Lock()
 	if c.playbacks == nil {
 		c.playbacks = make(map[string]mobilePlaybackChoice)
@@ -80,6 +80,15 @@ func (c *MobileClient) openMobilePlayback(choice mobilePlaybackChoice) (map[stri
 		c.proxies[session] = proxy
 	}
 	c.mu.Unlock()
+	return mobilePlaybackResult(session, choice, proxy), nil
+}
+
+func mobilePlaybackResult(session string, choice mobilePlaybackChoice, proxy *hlsProxy) map[string]any {
+	media := choice.media[choice.index]
+	playURL := media.URL
+	if proxy != nil {
+		playURL = proxy.root
+	}
 	expires := int64(0)
 	if media.credentials != nil && !media.credentials.expires.IsZero() {
 		expires = media.credentials.expires.UnixMilli()
@@ -92,5 +101,5 @@ func (c *MobileClient) openMobilePlayback(choice mobilePlaybackChoice) (map[stri
 		"hls": media.Playlist != "", "castDirect": proxy == nil && len(media.CENCKey) == 0,
 		"contentKey": hex.EncodeToString(media.CENCKey),
 		"routeIndex": choice.index, "routeCount": len(choice.media),
-	}, nil
+	}
 }

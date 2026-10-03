@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PROTOCOL = 2
+PROTOCOL = 3
 
 
 def source_digest(root=ROOT):

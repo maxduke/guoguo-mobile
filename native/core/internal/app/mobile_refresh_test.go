@@ -208,7 +208,7 @@ func TestMobileHongguoSeasonExtensionStopsAfterTwoMisses(t *testing.T) {
 func TestMobileCoreInfoUsesCurrentBridgeProtocol(t *testing.T) {
 	c := &MobileClient{}
 	body, err := c.Call(`{"method":"coreInfo"}`)
-	if err != nil || !strings.Contains(body, `"protocol":2`) || !strings.Contains(body, `"sourceDigest":`) {
+	if err != nil || !strings.Contains(body, `"protocol":3`) || !strings.Contains(body, `"sourceDigest":`) {
 		t.Fatal(body, err)
 	}
 }
