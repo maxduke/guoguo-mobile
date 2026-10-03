@@ -10,15 +10,17 @@ import (
 )
 
 type providerMedia struct {
-	credentials *providerMediaCredentials
-	URL         string
-	Referer     string
-	Duration    time.Duration
-	Playlist    string
-	HLSKey      []byte
-	CENCKey     []byte
-	Quality     int
-	Variants    []providerMedia
+	certificateOrigin   string
+	certificateFallback bool
+	credentials         *providerMediaCredentials
+	URL                 string
+	Referer             string
+	Duration            time.Duration
+	Playlist            string
+	HLSKey              []byte
+	CENCKey             []byte
+	Quality             int
+	Variants            []providerMedia
 }
 
 func (d *Downloader) providerBaseURL(source string) string {
@@ -61,7 +63,7 @@ func providerSourceForURL(raw string) string {
 		return sourceYeguo
 	case host == "dsd.com.se" || host == "www.dsd.com.se":
 		return sourceDSD
-	case host == "huangguoai.com" || strings.HasSuffix(host, ".ediayikma.cc") || strings.HasSuffix(host, ".agdkczeyx.cc"):
+	case huangguoAIIsKnownHost(raw) || host == "huangguoai.com" || strings.HasSuffix(host, ".ediayikma.cc") || strings.HasSuffix(host, ".agdkczeyx.cc"):
 		return sourceHuangguoAI
 	case host == "huangguo.video":
 		return sourceHuangguoVideo
@@ -80,6 +82,9 @@ func (d *Downloader) providerURLCandidates(raw string) []string {
 		return []string{raw}
 	}
 	parsed, _ := url.Parse(raw)
+	if source == sourceHuangguoAI && huangguoAIIsContentHost(parsed.Hostname()) {
+		return []string{raw}
+	}
 	d.providerMu.Lock()
 	preferred := d.providerHosts[source]
 	d.providerMu.Unlock()
@@ -126,7 +131,7 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 			}
 			matched := false
 			for _, fresh := range chapters {
-				if fresh.ID == chapter.ID {
+				if fresh.ID == chapter.ID || fresh.EpisodeString(task.Index) == chapter.EpisodeString(task.Index) {
 					chapter = fresh
 					matched = true
 					break
@@ -137,7 +142,7 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 			}
 		}
 	}
-	media := providerMedia{URL: chapter.VideoURL, Referer: firstNonEmpty(chapter.Referer, d.providerBaseURL(chapter.Source)+"/")}
+	media := providerMedia{certificateFallback: chapter.Source == sourceHuangguoAI || chapter.Source == sourceHuangguoVideo, URL: chapter.VideoURL, Referer: firstNonEmpty(chapter.Referer, d.providerBaseURL(chapter.Source)+"/")}
 	if chapter.Source == sourceHuangdou {
 		_, sourceID, valid := splitProviderDramaID(task.DramaID)
 		if valid {
@@ -154,7 +159,19 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 		}
 	}
 	if chapter.PageURL != "" && (chapter.Source == sourceHuangguoAI || chapter.Source == sourceHuangguoVideo) {
-		body, pageURL, err := d.fetchProviderTextURL(ctx, chapter.PageURL, media.Referer)
+		pageCtx := ctx
+		if chapter.Source == sourceHuangguoAI {
+			_, sourceID, valid := splitProviderDramaID(task.DramaID)
+			if !valid {
+				return providerMedia{}, fmt.Errorf("黄果播放缺少剧集身份")
+			}
+			episode := chapter.EpisodeString(task.Index)
+			pageCtx = context.WithValue(ctx, providerTextValidatorKey{}, providerTextValidator(func(body, effectiveURL string) error {
+				return validateHuangguoAIPlaybackPage(body, effectiveURL, sourceID, episode)
+			}))
+			chapter.PageURL = huangguoAIPlaybackPageURL(d.huangguoAIContentBaseURL(ctx), sourceID, episode)
+		}
+		body, pageURL, err := d.fetchProviderTextURL(pageCtx, chapter.PageURL, media.Referer)
 		if err != nil {
 			return providerMedia{}, err
 		}
@@ -172,9 +189,16 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 	if !isProviderHTTPMediaURL(media.URL) {
 		return providerMedia{}, fmt.Errorf("%s 未返回有效播放地址，请刷新章节或确认站点访问权限", chapter.Source)
 	}
+	if media.certificateFallback {
+		media.certificateOrigin = media.URL
+	}
 	parsed, _ := url.Parse(media.URL)
 	if strings.HasSuffix(strings.ToLower(parsed.Path), ".m3u8") {
-		playlist, finalURL, err := d.fetchProviderTextURL(ctx, media.URL, media.Referer)
+		client := mediaHTTPClient(d.client, media)
+		if media.certificateFallback {
+			defer client.CloseIdleConnections()
+		}
+		playlist, finalURL, err := d.fetchMediaPlaylistWithClient(ctx, media.URL, media.Referer, client)
 		if err != nil {
 			return providerMedia{}, fmt.Errorf("获取播放列表失败: %w", err)
 		}

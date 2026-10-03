@@ -220,10 +220,17 @@ func (downloader *Downloader) fetchHongguoSearchNames(ctx context.Context, keywo
 	dramas := make([]Drama, 0, len(records))
 	for _, record := range records {
 
-		if record.WordType != "short_play_name" || !hongguoNumericID.MatchString(mapString(record.VideoData, "series_id_str", "series_id")) {
+		if record.WordType != "short_play_name" || len(record.VideoData) == 0 {
 			continue
 		}
-		drama := hongguoDramaFromAny(map[string]any{"video_data": record.VideoData, "name": record.Name, "keyword": record.Keyword}, "短剧")
+		row := cloneHongguoMap(record.VideoData)
+		if !hongguoNumericID.MatchString(mapString(row, "series_id_str", "series_id")) {
+			if !hongguoNumericID.MatchString(mapString(map[string]any{"keyword": record.Keyword}, "keyword")) {
+				continue
+			}
+			row["series_id"] = record.Keyword
+		}
+		drama := hongguoDramaFromAny(map[string]any{"video_data": row, "name": record.Name, "keyword": record.Keyword}, "短剧")
 		if drama.ID != "" && drama.DisplayTitle() != drama.SourceID {
 			dramas = append(dramas, drama)
 		}
@@ -299,4 +306,12 @@ func (downloader *Downloader) fetchHongguoSearchPage(ctx context.Context, keywor
 		entry.Total = len(entry.Dramas)
 	}
 	return entry, nil
+}
+
+func cloneHongguoMap(row map[string]any) map[string]any {
+	copy := make(map[string]any, len(row))
+	for key, value := range row {
+		copy[key] = value
+	}
+	return copy
 }

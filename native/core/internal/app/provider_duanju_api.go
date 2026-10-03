@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/base64"
@@ -8,10 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -117,38 +120,194 @@ func maoguoDramaFromNode(node map[string]any, base string) Drama {
 	}
 }
 
+// The mobile API uses page numbers; Maoguo uses opaque next_id cursors.
+// Each downloader keeps bounded, expiring cursor chains isolated by endpoint and tag.
+type maoguoCatalogCache struct {
+	mu       sync.Mutex
+	sessions map[string]*maoguoCatalogSession
+}
+
+type maoguoCatalogSession struct {
+	gate    chan struct{}
+	usedAt  time.Time      // protected by cache.mu
+	cursors map[int]string // request cursor for each page; empty after page 1 means end
+	seenIDs map[string]int
+}
+
+func (d *Downloader) maoguoSession(base, tagID string) *maoguoCatalogSession {
+	cache := &d.maoguoCatalog
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.sessions == nil {
+		cache.sessions = map[string]*maoguoCatalogSession{}
+	}
+	now := time.Now()
+	for key, session := range cache.sessions {
+		if now.Sub(session.usedAt) > 30*time.Minute {
+			delete(cache.sessions, key)
+		}
+	}
+	key := base + "|" + tagID
+	if session := cache.sessions[key]; session != nil {
+		session.usedAt = now
+		return session
+	}
+	if len(cache.sessions) >= 8 {
+		oldestKey := ""
+		oldest := now
+		for key, session := range cache.sessions {
+			if session.usedAt.Before(oldest) {
+				oldestKey, oldest = key, session.usedAt
+			}
+		}
+		delete(cache.sessions, oldestKey)
+	}
+	session := &maoguoCatalogSession{gate: make(chan struct{}, 1), usedAt: now}
+	cache.sessions[key] = session
+	return session
+}
+
 func (d *Downloader) fetchMaoguoCatalogPage(ctx context.Context, page int, category string) ([]Drama, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if page < 1 {
+		page = 1
+	}
+	if page > 100 {
+		return nil, false, errors.New("猫果页码超出范围，请刷新目录")
+	}
+	tagID := strings.TrimSpace(category)
+	if tagID == "" {
+		tagID = "0"
+	}
+	if !validMaoguoCategory(tagID) {
+		return nil, false, errors.New("猫果分类无效")
+	}
+	base := d.duanjuBaseURL(sourceMaoguo)
+	session := d.maoguoSession(base, tagID)
+	select {
+	case session.gate <- struct{}{}:
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
+	}
+	defer func() { <-session.gate }()
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	cursor := ""
+	if page > 1 {
+		var found bool
+		cursor, found = session.cursors[page]
+		if !found {
+			return nil, false, errors.New("猫果分页游标已失效，请从第一页刷新目录")
+		}
+		if cursor == "" {
+			return nil, false, nil
+		}
+	}
 	headers, err := duanjuMaoguoHeaders()
 	if err != nil {
 		return nil, false, err
 	}
-	base := d.duanjuBaseURL(sourceMaoguo)
-	tagID := strings.TrimSpace(category)
-	if tagID != "" && !webProviderNumericID.MatchString(tagID) {
-		tagID = "0"
+	values := url.Values{"tag_id": {tagID}, "playlet_privacy": {"1"}, "operation": {"1"}}
+	signText := "operation=1playlet_privacy=1tag_id=" + tagID
+	if cursor != "" {
+		values.Set("next_id", cursor)
+		signText = "next_id=" + cursor + signText
 	}
-	if tagID == "" {
-		tagID = "0"
-	}
-	if page > 1 {
-		signature := duanjuMD5("next_id=" + strconv.Itoa(page) + "operation=1playlet_privacy=1tag_id=" + tagID + duanjuMaoguoKey)
-		address := fmt.Sprintf("%s/api/v1/playlet/index?tag_id=%s&playlet_privacy=1&operation=1&next_id=%d&sign=%s",
-			base, tagID, page, signature)
-		response, err := d.duanjuJSON(ctx, duanjuRequest{Source: sourceMaoguo, Address: address, Referer: base + "/", Headers: headers})
-		if err != nil {
-			return nil, false, err
-		}
-		items := maoguoCatalogItems(duanjuFindMap(response, "data"), base)
-		return items, len(items) > 0, nil
-	}
-	signature := duanjuMD5("operation=1playlet_privacy=1tag_id=" + tagID + duanjuMaoguoKey)
-	address := fmt.Sprintf("%s/api/v1/playlet/index?tag_id=%s&playlet_privacy=1&operation=1&sign=%s", base, tagID, signature)
-	response, err := d.duanjuJSON(ctx, duanjuRequest{Source: sourceMaoguo, Address: address, Referer: base + "/", Headers: headers})
+	values.Set("sign", duanjuMD5(signText+duanjuMaoguoKey))
+	response, err := d.maoguoIndexJSON(ctx, duanjuRequest{Source: sourceMaoguo, Address: base + "/api/v1/playlet/index?" + values.Encode(), Referer: base + "/", Headers: headers})
 	if err != nil {
 		return nil, false, err
 	}
-	items := maoguoCatalogItems(duanjuFindMap(response, "data"), base)
-	return items, false, nil
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	data := duanjuFindMap(response, "data")
+	if data == nil {
+		return nil, false, errors.New("猫果未返回目录资料")
+	}
+	next := duanjuFindString(data, "next_id")
+	if next == "0" {
+		next = ""
+	}
+	if len(next) > 128 || strings.ContainsAny(next, "\x00\r\n") {
+		return nil, false, errors.New("猫果返回了无效分页游标")
+	}
+	if page > 1 && next != "" {
+		for priorPage, priorCursor := range session.cursors {
+			if priorPage <= page && priorCursor == next {
+				return nil, false, errors.New("猫果分页游标重复，请刷新目录")
+			}
+		}
+	}
+	rows := maoguoCatalogItems(data, base)
+	items := make([]Drama, 0, len(rows))
+	seen := map[string]bool{}
+	for _, drama := range rows {
+		if seen[drama.ID] {
+			continue
+		}
+		seen[drama.ID] = true
+		if page > 1 {
+			if prior, found := session.seenIDs[drama.ID]; found && prior < page {
+				continue
+			}
+		}
+		items = append(items, drama)
+	}
+	if len(items) == 0 && (len(rows) > 0 || next != "") {
+		return nil, false, errors.New("猫果返回重复或空的后续页，请刷新目录")
+	}
+	priorCount := 0
+	for _, prior := range session.seenIDs {
+		if prior < page {
+			priorCount++
+		}
+	}
+	if priorCount+len(items) > 8192 {
+		return nil, false, errors.New("猫果目录加载已达上限，请刷新目录")
+	}
+	if page == 1 {
+		session.cursors = map[int]string{1: ""}
+		session.seenIDs = map[string]int{}
+	}
+	// A successfully refreshed page invalidates all later pages in its chain.
+	for laterPage := range session.cursors {
+		if laterPage > page+1 {
+			delete(session.cursors, laterPage)
+		}
+	}
+	for id, priorPage := range session.seenIDs {
+		if priorPage >= page {
+			delete(session.seenIDs, id)
+		}
+	}
+	for _, drama := range items {
+		session.seenIDs[drama.ID] = page
+	}
+	session.cursors[page+1] = next
+	return items, next != "", nil
+}
+
+// Numeric cursors may exceed float64's integer precision; retain the exact JSON number.
+func (d *Downloader) maoguoIndexJSON(ctx context.Context, request duanjuRequest) (map[string]any, error) {
+	payload, err := d.duanjuDo(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	var response map[string]any
+	if err := decoder.Decode(&response); err != nil {
+		return nil, errors.New("猫果返回的数据格式无法识别")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, errors.New("猫果返回的数据格式无法识别")
+	}
+	return response, nil
 }
 
 func maoguoCatalogItems(data map[string]any, base string) []Drama {
@@ -243,24 +402,33 @@ func (d *Downloader) fetchMaoguoCategories(ctx context.Context) ([]nativeCategor
 		return nil, err
 	}
 	base := d.duanjuBaseURL(sourceMaoguo)
-	signature := duanjuMD5("operation=1" + duanjuMaoguoKey)
-	address := fmt.Sprintf("%s/api/v1/playlet/tag/list?operation=1&sign=%s", base, signature)
-	response, err := d.duanjuJSON(ctx, duanjuRequest{Source: sourceMaoguo, Address: address, Referer: base + "/", Headers: headers})
+	signature := duanjuMD5("operation=1playlet_privacy=1tag_id=0" + duanjuMaoguoKey)
+	address := fmt.Sprintf("%s/api/v1/playlet/index?tag_id=0&playlet_privacy=1&operation=1&sign=%s", base, signature)
+	response, err := d.maoguoIndexJSON(ctx, duanjuRequest{Source: sourceMaoguo, Address: address, Referer: base + "/", Headers: headers})
 	if err != nil {
 		return nil, err
 	}
-	var categories []nativeCategory
-	for _, entry := range duanjuFindList(duanjuFindMap(response, "data"), "list") {
+	categories := []nativeCategory{{ID: "0", Name: "推荐"}}
+	seen := map[string]bool{}
+	for _, entry := range duanjuFindList(duanjuFindMap(response, "data"), "tag_items") {
 		node, ok := entry.(map[string]any)
 		if !ok {
 			continue
 		}
 		id := duanjuFindString(node, "tag_id", "id")
 		name := duanjuFindString(node, "tag_name", "name", "title")
-		if id == "" || name == "" || len([]rune(name)) > 24 {
+		if !validMaoguoCategory(id) || seen[id] || name == "" || len([]rune(name)) > 24 {
 			continue
 		}
-		categories = append(categories, nativeCategory{ID: id, Name: name})
+		seen[id] = true
+		if id == "0" {
+			categories[0].Name = name
+		} else {
+			categories = append(categories, nativeCategory{ID: id, Name: name})
+		}
+	}
+	if len(seen) == 0 {
+		return nil, errors.New("猫果分类列表为空，请稍后刷新")
 	}
 	return categories, nil
 }

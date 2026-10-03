@@ -28,7 +28,7 @@ type maccmsSourceProfile struct {
 
 var maccmsEpisodeLink = regexp.MustCompile(`(?i)/(?:vod/)?play/|/vodplay/|/drama-play|episode_id=`)
 
-var maccmsDetailLink = regexp.MustCompile(`(?i)/(?:index\.php/vod/)?(?:detail|vod|show|view|movie|drama|zywview|xzyxvd)/`)
+var maccmsDetailLink = regexp.MustCompile(`(?i)/(?:index\.php/vod/)?(?:detail|vod|show|view|movie|drama|zywview)/`)
 
 func maccmsEpisodeNodes(document *html.Node) []*html.Node {
 	var nodes []*html.Node
@@ -262,35 +262,18 @@ func (d *Downloader) fetchMaccmsCatalogPage(ctx context.Context, source string, 
 			}
 			address = fmt.Sprintf("%s/search.html?page=%d&searchtype=5&tid=%s&year=", base, page, url.QueryEscape(class))
 		}
-	case sourceFaguo:
-		class := strings.TrimSpace(category)
-		if class == "" {
-			address = fmt.Sprintf("%s/xzyxvt/%dzmn.html", base, page)
-		} else if strings.Contains(class, "zmn") {
-			address = base + strings.SplitN(class, "zmn", 2)[0] + strconv.Itoa(page) + "zmn.html"
-		} else {
-			return nil, false, errors.New("发果分类无效")
-		}
 	case sourceWuguo:
 		class := strings.TrimSpace(category)
 		if class == "" {
-			if page > 1 {
-				return nil, false, nil
-			}
-			address = base + "/"
-		} else {
-			address = fmt.Sprintf("%s%s/page/%d.html", base, strings.TrimSuffix(class, ".html"), page)
+			class = duanjuFirstCategory(sourceWuguo)
 		}
-	case sourceWangguo:
-		class := strings.TrimSpace(category)
-		if class == "" {
-			if page > 1 {
-				return nil, false, nil
-			}
-			address = fmt.Sprintf("%s/show/duanju-----------.html", base)
-		} else {
-			address = fmt.Sprintf("%s%s%d---.html", base, strings.SplitN(class, "---.html", 2)[0], page)
+		if !validDuanjuCategory(sourceWuguo, class) {
+			return nil, false, errors.New("伍果分类已变化，请刷新分类")
 		}
+		if page < 1 {
+			page = 1
+		}
+		address = fmt.Sprintf("%s/index.php/vod/search/class/%s/page/%d.html", base, url.PathEscape(class), page)
 	case sourcePiguo:
 		class := strings.TrimSpace(category)
 		if class == "" {
@@ -310,7 +293,7 @@ func (d *Downloader) fetchMaccmsCatalogPage(ctx context.Context, source string, 
 	}
 	items := maccmsCards(document, source, base)
 	_ = finalURL
-	return items, len(items) > 0 && !(category == "" && (source == sourceWuguo || source == sourceWangguo)), nil
+	return items, len(items) > 0, nil
 }
 
 func (d *Downloader) fetchMaccmsDetail(ctx context.Context, source, sourceID string) (Drama, []Chapter, error) {
@@ -363,22 +346,10 @@ func (d *Downloader) fetchMaccmsDetail(ctx context.Context, source, sourceID str
 
 func maccmsDetailCandidates(source, base, sourceID string) []string {
 	switch source {
-	case sourceFaguo:
-		return []string{
-			fmt.Sprintf("%s/xzyxvd/%s.html", base, sourceID),
-			fmt.Sprintf("%s/detail/%s.html", base, sourceID),
-			fmt.Sprintf("%s/voddetail/%s.html", base, sourceID),
-		}
 	case sourceWuguo:
 		return []string{
 			fmt.Sprintf("%s/index.php/vod/detail/id/%s.html", base, sourceID),
 			fmt.Sprintf("%s/dramaDetail/%s.html", base, sourceID),
-			fmt.Sprintf("%s/detail/%s.html", base, sourceID),
-		}
-	case sourceWangguo:
-		return []string{
-			fmt.Sprintf("%s/vod/%s.html", base, sourceID),
-			fmt.Sprintf("%s/index.php/vod/detail/id/%s.html", base, sourceID),
 			fmt.Sprintf("%s/detail/%s.html", base, sourceID),
 		}
 	case sourcePiguo:
@@ -531,15 +502,8 @@ func (d *Downloader) searchMaccmsPage(ctx context.Context, source, query string,
 	switch source {
 	case sourceHuaguo:
 		address = fmt.Sprintf("%s/search.html?searchword=%s&page=%d", base, url.QueryEscape(query), page)
-	case sourceFaguo:
-		if page > 1 {
-			return nil, false, nil
-		}
-		address = fmt.Sprintf("%s/xzyxvc/%s-wdyswzqun1num.html", base, url.PathEscape(query))
 	case sourceWuguo:
 		address = fmt.Sprintf("%s/index.php/vod/search/page/%d/wd/%s.html", base, page, url.PathEscape(query))
-	case sourceWangguo:
-		address = fmt.Sprintf("%s/search/%s----------%d---.html", base, url.PathEscape(query), page)
 	case sourcePiguo:
 		address = fmt.Sprintf("%s/q/%s?page=%d", base, url.PathEscape(query), page)
 	default:
@@ -550,7 +514,7 @@ func (d *Downloader) searchMaccmsPage(ctx context.Context, source, query string,
 		return nil, false, err
 	}
 	items := maccmsCards(document, source, base)
-	return items, source != sourceFaguo && len(items) > 0, nil
+	return items, len(items) > 0, nil
 }
 
 func maccmsPlayerURL(body string) string {

@@ -13,6 +13,14 @@ class NativeProviderClient implements ProviderClient {
   static const _channel = MethodChannel('guoguo/core');
   Future<void> initialize(String directory) async {
     await _channel.invokeMethod<void>('initialize', {'directory': directory});
+    try {
+      final info = await call('coreInfo');
+      if (info['protocol'] != 2) {
+        throw const ProviderException('站源组件版本不匹配，请安装最新完整版本');
+      }
+    } catch (_) {
+      throw const ProviderException('站源组件版本不匹配，请安装最新完整版本');
+    }
   }
 
   @override

@@ -13,8 +13,6 @@ enum DramaSource {
   xingguo('星果', '发现新的故事'),
   huaguo('花果', '更多短剧随心看'),
   niuguo('牛果', '发现更多好故事'),
-  wangguo('网果', '精彩故事继续看'),
-  faguo('发果', '更多短剧随心看'),
   piguo('皮果', '发现新的故事'),
   wuguo('伍果', '精彩故事继续看');
 
@@ -25,8 +23,9 @@ enum DramaSource {
     hongguo || huangguo || huangdou => false,
     _ => true,
   };
-  bool get onlineSearch => this == hongguo || remoteCategories;
-  bool get rankings => !remoteCategories;
+  bool get onlineSearch =>
+      this == hongguo || this == huangguo || remoteCategories;
+  bool get rankings => true;
   static DramaSource parse(Object? value) => values.firstWhere(
     (source) => source.name == value,
     orElse: () => throw const FormatException('未知站源'),

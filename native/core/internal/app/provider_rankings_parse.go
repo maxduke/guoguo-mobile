@@ -137,7 +137,7 @@ func parseHuangdouRanking(decoded any, page int) (rankingPage, error) {
 	return result, nil
 }
 
-func parseHuangguoRanking(body string, board rankingBoard) (rankingPage, error) {
+func parseHuangguoRanking(body string, board rankingBoard, pageURLs ...string) (rankingPage, error) {
 	failure := errors.New("黄果未返回有效榜单，可能是页面结构变化")
 	for _, match := range rankingJSONLD.FindAllStringSubmatch(body, -1) {
 		var schema struct {
@@ -165,10 +165,10 @@ func parseHuangguoRanking(body string, board rankingBoard) (rankingPage, error) 
 			seen, previous := map[string]bool{}, 0
 			for _, item := range graph.Items {
 				parsed, err := url.Parse(item.URL)
-				if err != nil || !strings.HasPrefix(parsed.Path, "/detail/") {
+				if err != nil || (!strings.HasPrefix(parsed.Path, "/detail/") && !strings.HasPrefix(parsed.Path, "/video/")) {
 					return rankingPage{}, failure
 				}
-				id := strings.TrimSuffix(strings.TrimPrefix(parsed.Path, "/detail/"), "/")
+				id := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(parsed.Path, "/detail/"), "/video/"), "/")
 				if !rankingSourceID.MatchString(id) || strings.TrimSpace(item.Name) == "" || item.Position <= previous || seen[id] {
 					return rankingPage{}, failure
 				}
@@ -176,7 +176,7 @@ func parseHuangguoRanking(body string, board rankingBoard) (rankingPage, error) 
 				drama := Drama{ID: providerDramaID(sourceHuangguoAI, id), Source: sourceHuangguoAI, SourceID: id, Title: item.Name, Name: item.Name}
 				result.Items = append(result.Items, rankingItem{Rank: item.Position, Drama: drama})
 			}
-			enrichHuangguoRankingCovers(body, board.path, &result)
+			enrichHuangguoRankingCovers(body, board.path, &result, pageURLs...)
 			return result, nil
 		}
 	}
@@ -186,7 +186,7 @@ func parseHuangguoRanking(body string, board rankingBoard) (rankingPage, error) 
 // The JSON-LD ranking is the authoritative order, while the adjacent HTML
 // cards carry the actual artwork URL. Keeping the two responsibilities apart
 // makes the parser resilient to cosmetic changes in card markup.
-func enrichHuangguoRankingCovers(body, boardPath string, result *rankingPage) {
+func enrichHuangguoRankingCovers(body, boardPath string, result *rankingPage, pageURLs ...string) {
 	if len(result.Items) == 0 {
 		return
 	}
@@ -195,6 +195,9 @@ func enrichHuangguoRankingCovers(body, boardPath string, result *rankingPage) {
 		byID[item.Drama.SourceID] = index
 	}
 	pageURL := huangguoAIBaseURL + "/ranks/" + boardPath + "/"
+	if len(pageURLs) > 0 {
+		pageURL = pageURLs[0]
+	}
 	for _, match := range huangguoRankingCardStart.FindAllStringIndex(body, -1) {
 		block := huangguoElementBlock(body, match[0], match[1], "div")
 		id := cleanID(extractAttr(block, "data-track-id"))

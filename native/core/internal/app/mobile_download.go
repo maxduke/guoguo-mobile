@@ -34,6 +34,10 @@ func (c *MobileClient) downloadPlan(ctx context.Context, request mobileRequest) 
 	if err != nil {
 		return mobileDownloadPlan{}, publicError(err)
 	}
+	media, err = c.downloader.prepareMobileMedia(providerMediaContext(ctx, media.credentials), media)
+	if err != nil {
+		return mobileDownloadPlan{}, publicError(err)
+	}
 	plan, err := c.planMobileMedia(providerMediaContext(ctx, media.credentials), media, key)
 	if err != nil {
 		return plan, err
@@ -69,6 +73,10 @@ func (c *MobileClient) planMobileMedia(ctx context.Context, media providerMedia,
 		return plan, nil
 	}
 	plan.Input, plan.Process = "index.m3u8", true
+	client := mediaHTTPClient(c.downloader.client, media)
+	if media.certificateFallback {
+		defer client.CloseIdleConnections()
+	}
 	seen := map[string]string{media.URL: plan.Input}
 	var playlist func(string, string, string, int) error
 	playlist = func(remote, raw, name string, depth int) error {
@@ -77,11 +85,7 @@ func (c *MobileClient) planMobileMedia(ctx context.Context, media providerMedia,
 		}
 		if raw == "" {
 			var err error
-			if media.credentials != nil {
-				raw, remote, err = c.downloader.fetchMediaPlaylist(ctx, remote, media.Referer)
-			} else {
-				raw, remote, err = c.downloader.fetchProviderTextURL(ctx, remote, media.Referer)
-			}
+			raw, remote, err = c.downloader.fetchMediaPlaylistWithClient(ctx, remote, media.Referer, client)
 			if err != nil {
 				return err
 			}

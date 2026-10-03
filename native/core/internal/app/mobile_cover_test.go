@@ -27,6 +27,7 @@ func TestMobileSavedDramaCoverRecovery(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer c.Close()
+				c.downloader.cfg.HuangguoAIURL = "https://fixture-huangguo.example.org"
 				details, images := 0, 0
 				c.downloader.client.Transport = rankingTransport(func(r *http.Request) (*http.Response, error) {
 					switch r.URL.Path {
@@ -35,9 +36,9 @@ func TestMobileSavedDramaCoverRecovery(t *testing.T) {
 					case "/api/drama/detail":
 						details++
 						return rankingHTTPResponse(r, 200, `{"data":{"id":"target","name":"fixture","img_y":"https://pic.zdmhyg.cn/art"}}`), nil
-					case "/detail/target/":
+					case "/video/target/":
 						details++
-						return rankingHTTPResponse(r, 200, `<img data-src="https://pic.zdmhyg.cn/wrong"><div class="hg-web-detail__poster"><img src="placeholder.png" data-src="https://pic.zdmhyg.cn/art"></div>`), nil
+						return rankingHTTPResponse(r, 200, `<script id="videoInitialData">{"id":"target","ep":1}</script><img data-src="https://pic.zdmhyg.cn/wrong"><div class="hg-web-detail__poster"><img src="placeholder.png" data-src="https://pic.zdmhyg.cn/art"></div>`), nil
 					case "/art":
 						images++
 						return rankingHTTPResponse(r, 200, plain.String()), nil

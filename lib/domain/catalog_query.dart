@@ -142,3 +142,19 @@ List<Drama> queryCatalog(
   });
   return rows;
 }
+
+List<Drama> relatedSeries(Drama current, Iterable<Drama> candidates) {
+  String base(String title) =>
+      searchText(title).replaceFirst(RegExp(r'第[零〇一二两三四五六七八九十百\d]+[季部]$'), '');
+  final title = base(current.title);
+  if (title.isEmpty) return [];
+  final rows = {
+    for (final row in candidates)
+      if (row.key != current.key &&
+          row.source == current.source &&
+          base(row.title) == title)
+        row.key: row,
+  }.values.toList();
+  rows.sort((a, b) => naturalTitleCompare(a.title, b.title));
+  return rows.take(100).toList();
+}

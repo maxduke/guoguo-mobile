@@ -148,14 +148,17 @@ func (d *Downloader) fetchDramaSortMetadata(ctx context.Context, drama Drama) (D
 		return patch, nil
 	case sourceHuangguoAI, sourceHuangguoVideo:
 		pageURL, err := huangguoSortDetailURL(source, id)
+		if source == sourceHuangguoAI {
+			pageURL = huangguoAIPlaybackPageURL(d.huangguoAIContentBaseURL(ctx), id, "1")
+		}
 		if err != nil {
 			return patch, err
 		}
-		body, err := d.fetchProviderText(ctx, pageURL, providerRefererForURL(pageURL, ""))
+		body, effectiveURL, err := d.fetchHuangguoDetailText(ctx, pageURL, providerRefererForURL(pageURL, ""), source, id)
 		if err != nil {
 			return patch, err
 		}
-		return parseHuangguoSortDetail(body, pageURL, patch)
+		return parseHuangguoSortDetail(body, effectiveURL, patch)
 	}
 	return patch, errors.New("该站源暂无资料补齐接口")
 }
@@ -174,7 +177,7 @@ func huangguoSortDetailURL(source, id string) (string, error) {
 	if source != sourceHuangguoAI || !rankingSourceID.MatchString(id) {
 		return "", errors.New("无效的黄果剧集 ID")
 	}
-	return huangguoAIBaseURL + "/detail/" + url.PathEscape(id) + "/", nil
+	return huangguoAIBaseURL + "/video/" + url.PathEscape(id) + "/", nil
 }
 
 func parseHongguoSortDetail(body, id string) (Drama, error) {
@@ -205,6 +208,57 @@ func parseHuangguoSortDetail(body, pageURL string, patch Drama) (Drama, error) {
 	}
 	expected, _ := url.Parse(pageURL)
 	matched := false
+	playerTitle := false
+	playerCover := false
+	if patch.Source == sourceHuangguoAI {
+		if data, ok := parseAIVideoInitialDataMap(body); ok {
+			actualID := cleanID(mapString(data, "id", "videoId", "video_id"))
+			expectedID := cleanID(firstNonEmpty(patch.SourceID, detailIDFromString(pageURL)))
+			if actualID != "" && actualID == expectedID {
+				matched = true
+				if title := firstNonEmpty(mapString(data, "title", "name", "videoTitle", "video_title"), patch.Title); title != "" && !huangguoTitleNeedsRepair(title, patch.SourceID) {
+					patch.Title = title
+					patch.Name = title
+					playerTitle = true
+				}
+				for _, key := range []string{"coverSrc", "posterSrc", "coverUrl", "posterUrl", "cover", "poster"} {
+					if address := huangguoArtworkAddress(data[key], pageURL, body); address != "" {
+						patch.Cover, patch.CoverURL = address, address
+						playerCover = true
+						break
+					}
+				}
+				for _, key := range []string{"episodeCount", "episode_count", "totalEpisode", "total_episode", "totalEpisodes", "episodes"} {
+					if count, err := strconv.Atoi(mapString(data, key)); err == nil && count > 0 {
+						patch.TotalEpisode, patch.EpisodeCount = count, count
+						break
+					}
+				}
+			}
+		}
+		if data := parseHuangguoAIHistoryMap(body); data != nil {
+			actualID := cleanID(mapString(data, "id", "videoId", "video_id"))
+			expectedID := cleanID(firstNonEmpty(patch.SourceID, detailIDFromString(pageURL)))
+			if actualID != "" && actualID == expectedID {
+				matched = true
+				if title := firstNonEmpty(mapString(data, "title", "name"), patch.Title); !playerTitle && title != "" && !huangguoTitleNeedsRepair(title, patch.SourceID) {
+					patch.Title = title
+					patch.Name = title
+				}
+				if !playerCover && bestDramaCover(patch) == "" {
+					if address := huangguoArtworkAddress(firstNonEmpty(mapString(data, "cover"), mapString(data, "coverSrc"), mapString(data, "posterSrc")), pageURL, body); address != "" {
+						patch.Cover, patch.CoverURL = address, address
+					}
+				}
+				for _, key := range []string{"total", "episode", "episodes", "episodeCount", "episode_count"} {
+					if count := episodeIndex(mapString(data, key), 0); count > 0 {
+						patch.TotalEpisode, patch.EpisodeCount = count, count
+						break
+					}
+				}
+			}
+		}
+	}
 	for _, block := range rankingJSONLD.FindAllStringSubmatch(body, -1) {
 		var graph struct {
 			Graph []entry `json:"@graph"`
@@ -218,13 +272,22 @@ func parseHuangguoSortDetail(body, pageURL string, patch Drama) (Drama, error) {
 				continue
 			}
 			actual, err := url.Parse(firstNonEmpty(row.URL, row.ID))
-			if err != nil || actual.Host != "" && !strings.EqualFold(actual.Host, expected.Host) && providerSourceForURL(actual.String()) != patch.Source || strings.TrimRight(actual.Path, "/") != strings.TrimRight(expected.Path, "/") || row.Name == "" || patch.Source == sourceHuangguoAI && huangguoTitleNeedsRepair(row.Name, patch.SourceID) {
+			if err != nil || !huangguoSortDetailIdentityMatches(actual, expected, patch) || row.Name == "" || patch.Source == sourceHuangguoAI && huangguoTitleNeedsRepair(row.Name, patch.SourceID) {
 				continue
 			}
 			matched = true
-			patch.Title = row.Name
-			if address := firstNonEmpty(providerCoverAddress(row.Image, pageURL), providerCoverAddress(row.Thumbnail, pageURL)); address != "" {
-				patch.Cover, patch.CoverURL = address, address
+			if !playerTitle {
+				patch.Title = row.Name
+				patch.Name = row.Name
+			}
+			if !playerCover {
+				if address := firstNonEmpty(providerCoverAddress(row.Image, pageURL), providerCoverAddress(row.Thumbnail, pageURL)); address != "" {
+					patch.Cover, patch.CoverURL = address, address
+				}
+			} else if bestDramaCover(patch) == "" {
+				if address := firstNonEmpty(providerCoverAddress(row.Image, pageURL), providerCoverAddress(row.Thumbnail, pageURL)); address != "" {
+					patch.Cover, patch.CoverURL = address, address
+				}
 			}
 			if date := providerReleaseDate(firstNonEmpty(row.Uploaded, row.Published)); date != "" && (patch.OnlineDate == "" || row.Type == "VideoObject") {
 				patch.OnlineDate = date
@@ -256,6 +319,35 @@ func parseHuangguoSortDetail(body, pageURL string, patch Drama) (Drama, error) {
 		if count := episodeIndex(episode, 0); count > 0 {
 			patch.TotalEpisode, patch.EpisodeCount = count, count
 		}
+		if count := episodeIndex(extractDescription(body), 0); count > 0 && valueEmpty(patch.TotalEpisode) {
+			patch.TotalEpisode, patch.EpisodeCount = count, count
+		}
 	}
 	return patch, nil
+}
+
+func huangguoSortDetailIdentityMatches(actual, expected *url.URL, patch Drama) bool {
+	if actual == nil || expected == nil {
+		return false
+	}
+	if actual.Host != "" && !strings.EqualFold(actual.Host, expected.Host) && providerSourceForURL(actual.String()) != patch.Source {
+		return false
+	}
+	if patch.Source == sourceHuangguoAI {
+		expectedID := firstNonEmpty(patch.SourceID, detailIDFromString(expected.String()))
+		return detailIDFromString(actual.String()) == expectedID
+	}
+	return strings.TrimRight(actual.Path, "/") == strings.TrimRight(expected.Path, "/")
+}
+
+func huangguoDetailMetadata(body, pageURL, source, sourceID string) Drama {
+	drama := Drama{ID: providerDramaID(source, sourceID), Source: source, SourceID: sourceID,
+		Title: firstNonEmpty(extractPageTitle(body), "短剧"), Desc: extractDescription(body), Tags: extractTags(body)}
+	if patch, err := parseHuangguoSortDetail(body, pageURL, drama); err == nil {
+		drama = patch
+	}
+	drama.Name, drama.Intro = drama.Title, drama.Desc
+	meta := cleanText(huangguoClassBlock(huangguoNonContent.ReplaceAllString(body, ""), "hg-web-detail__meta"))
+	drama.ReleaseStatus = releaseStatusFromRemark(meta)
+	return drama
 }

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"html"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -45,14 +46,17 @@ func (d *Downloader) fetchDramaCoverAddress(ctx context.Context, drama Drama) (s
 		return providerCoverAddress(bestDramaCover(huangdouDramaFromMap(row)), ""), nil
 	case sourceHuangguoAI, sourceHuangguoVideo:
 		pageURL, err := huangguoSortDetailURL(source, id)
+		if source == sourceHuangguoAI {
+			pageURL = huangguoAIPlaybackPageURL(d.huangguoAIContentBaseURL(ctx), id, "1")
+		}
 		if err != nil {
 			return "", err
 		}
-		body, err := d.fetchProviderText(ctx, pageURL, providerRefererForURL(pageURL, ""))
+		body, effectiveURL, err := d.fetchHuangguoDetailText(ctx, pageURL, providerRefererForURL(pageURL, ""), source, id)
 		if err != nil {
 			return "", err
 		}
-		patch, err := parseHuangguoSortDetail(body, pageURL, Drama{ID: drama.ID, Source: source, SourceID: id})
+		patch, err := parseHuangguoSortDetail(body, effectiveURL, Drama{ID: drama.ID, Source: source, SourceID: id})
 		return bestDramaCover(patch), err
 	}
 	return "", errors.New("该站源暂无封面补齐接口")
@@ -89,3 +93,65 @@ func providerCoverAddress(value any, pageURL string) string {
 	}
 	return ""
 }
+
+func huangguoCDNBaseURL(rawHTML string) string {
+	match := huangguoCDNDomain.FindStringSubmatch(rawHTML)
+	if len(match) < 2 {
+		return ""
+	}
+	raw := strings.TrimSpace(html.UnescapeString(strings.ReplaceAll(match[1], `\/`, `/`)))
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "//") {
+		raw = "https:" + raw
+	} else if !strings.Contains(raw, "://") {
+		raw = "https://" + strings.TrimLeft(raw, "/")
+	}
+	address, err := url.Parse(raw)
+	if err != nil || !validImageURL(address) {
+		return ""
+	}
+	address.Path = ""
+	address.RawQuery = ""
+	address.Fragment = ""
+	return strings.TrimRight(address.String(), "/") + "/"
+}
+
+func huangguoArtworkAddress(value any, pageURL, rawHTML string) string {
+	switch item := value.(type) {
+	case []any:
+		for _, value := range item {
+			if address := huangguoArtworkAddress(value, pageURL, rawHTML); address != "" {
+				return address
+			}
+		}
+	case map[string]any:
+		for _, key := range []string{"url", "src", "path", "cover", "coverUrl", "cover_url", "image", "pic", "poster", "thumbnailUrl"} {
+			if address := huangguoArtworkAddress(item[key], pageURL, rawHTML); address != "" {
+				return address
+			}
+		}
+	case string:
+		raw := strings.TrimSpace(html.UnescapeString(strings.ReplaceAll(item, `\/`, `/`)))
+		if raw == "" {
+			return ""
+		}
+		address, err := url.Parse(raw)
+		if err != nil {
+			return ""
+		}
+		if address.IsAbs() || strings.HasPrefix(raw, "//") {
+			return providerCoverAddress(raw, pageURL)
+		}
+		if base := huangguoCDNBaseURL(rawHTML); base != "" {
+			if resolved := providerCoverAddress(raw, base); resolved != "" {
+				return resolved
+			}
+		}
+		return providerCoverAddress(raw, pageURL)
+	}
+	return ""
+}
+
+var huangguoCDNDomain = regexp.MustCompile(`(?is)(?:["']?cdnDomain["']?)\s*[:=]\s*["']([^"']+)["']`)

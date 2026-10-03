@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 abstract interface class LocalStorage {
   Future<Map<String, dynamic>?> read();
@@ -21,8 +22,9 @@ class FileStorage implements LocalStorage {
 
   @override
   Future<void> write(Map<String, dynamic> value) {
-    final snapshot = jsonEncode(value);
+    final detached = _detachJson(value) as Map<String, dynamic>;
     final operation = _pending.catchError((Object _) {}).then((_) async {
+      final snapshot = await encodeJsonInBackground(detached);
       await directory.create(recursive: true);
       final temporary = File('${_file.path}.tmp');
       await temporary.writeAsString(snapshot, flush: true);
@@ -33,6 +35,10 @@ class FileStorage implements LocalStorage {
   }
 }
 
+// Keep the isolate closure outside storage instances and their pending Futures.
+Future<String> encodeJsonInBackground(Object? value) =>
+    Isolate.run(() => jsonEncode(value));
+
 class MemoryStorage implements LocalStorage {
   Map<String, dynamic>? value;
   @override
@@ -41,4 +47,14 @@ class MemoryStorage implements LocalStorage {
   Future<void> write(Map<String, dynamic> next) async {
     value = Map<String, dynamic>.from(jsonDecode(jsonEncode(next)) as Map);
   }
+}
+
+Object? _detachJson(Object? value) {
+  if (value is Map<String, dynamic>) {
+    return {
+      for (final entry in value.entries) entry.key: _detachJson(entry.value),
+    };
+  }
+  if (value is List) return [for (final item in value) _detachJson(item)];
+  return value;
 }

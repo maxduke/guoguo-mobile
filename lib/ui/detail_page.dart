@@ -163,7 +163,7 @@ class _DetailPageState extends State<DetailPage> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: widget.store,
+      listenable: Listenable.merge([widget.store, widget.store.libraryChanges]),
       builder: (context, _) => Scaffold(
         appBar: AppBar(title: Text(drama.source.label)),
         body: SafeArea(

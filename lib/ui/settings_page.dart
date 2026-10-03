@@ -10,6 +10,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../data/app_store.dart';
+import '../data/library_exchange.dart';
 import '../data/download_store.dart';
 import '../data/cover_cache.dart';
 import 'components.dart';
@@ -90,6 +91,94 @@ class _SettingsPageState extends State<SettingsPage> {
           context,
         ).showSnackBar(const SnackBar(content: Text('记录已合并')));
       }
+    }
+  }
+
+  bool _exchangingLibrary = false;
+  Future<void> _library(BuildContext context, {required bool importing}) async {
+    if (_exchangingLibrary) return;
+    setState(() => _exchangingLibrary = true);
+    final exchange = LibraryExchange(store);
+    File? copied;
+    try {
+      final directory = await getTemporaryDirectory();
+      if (importing) {
+        final selected = await FilePicker.pickFile(
+          type: FileType.custom,
+          allowedExtensions: ['json', 'xz'],
+        );
+        if (selected == null) return;
+        final length = await selected.length();
+        if (length == null || length > LibraryExchange.maxBytes) {
+          throw const FormatException('剧库文件超过 32 MB 或无法读取');
+        }
+        copied = File(
+          '${directory.path}/.guoguo-import-${DateTime.now().microsecondsSinceEpoch}',
+        );
+        final sink = copied.openWrite();
+        var copiedBytes = 0;
+        try {
+          await for (final chunk in selected.readAsByteStream()) {
+            copiedBytes += chunk.length;
+            if (copiedBytes > LibraryExchange.maxBytes) {
+              throw const FormatException('剧库文件超过 32 MB');
+            }
+            sink.add(chunk);
+          }
+          await sink.flush();
+        } finally {
+          await sink.close();
+        }
+        final preview = await exchange.inspect(copied);
+        if (!context.mounted) return;
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('合并剧库'),
+            content: Text(
+              '可导入 ${preview.items.length} 部剧集；跳过 ${preview.skipped} 条不支持站源和 ${preview.rejected} 条无效记录。\n\n按剧集身份补全资料，保留现有条目，不包含视频文件。',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('合并导入'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) return;
+        final result = await exchange.merge(preview);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '新增 ${result['imported']} 部，合并 ${result['merged']} 部',
+              ),
+            ),
+          );
+        }
+      } else {
+        final file = await exchange.export(directory);
+        if (!context.mounted) return;
+        final box = context.findRenderObject() as RenderBox?;
+        final origin = box == null
+            ? const Rect.fromLTWH(0, 0, 1, 1)
+            : box.localToGlobal(Offset.zero) & box.size;
+        await SharePlus.instance.share(
+          ShareParams(
+            files: [XFile(file.path, mimeType: 'application/x-xz')],
+            subject: '果果剧库',
+            sharePositionOrigin: origin,
+          ),
+        );
+      }
+    } finally {
+      if (copied != null && await copied.exists()) await copied.delete();
+      if (mounted) setState(() => _exchangingLibrary = false);
     }
   }
 
@@ -192,6 +281,36 @@ class _SettingsPageState extends State<SettingsPage> {
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => perform(context, () => _import(context)),
                     ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              _heading(context, '剧库互通'),
+              Card(
+                child: Column(
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.library_add_outlined),
+                      title: const Text('导入剧库 JSON / XZ'),
+                      subtitle: const Text('先预览，再补全现有剧集资料'),
+                      enabled: !_exchangingLibrary,
+                      onTap: () => perform(
+                        context,
+                        () => _library(context, importing: true),
+                      ),
+                    ),
+                    const Divider(height: 1, indent: 56),
+                    ListTile(
+                      leading: const Icon(Icons.ios_share),
+                      title: const Text('导出剧库 XZ'),
+                      subtitle: const Text('供果果与真果·鉴互通，不包含视频'),
+                      enabled: !_exchangingLibrary,
+                      onTap: () => perform(
+                        context,
+                        () => _library(context, importing: false),
+                      ),
+                    ),
+                    if (_exchangingLibrary) const LinearProgressIndicator(),
                   ],
                 ),
               ),

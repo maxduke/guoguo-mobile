@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -56,7 +57,7 @@ func (d *Downloader) newHLSProxy(ctx context.Context, media providerMedia, key [
 		return nil, fmt.Errorf("创建本地 HLS 转发失败: %w", err)
 	}
 	proxy := &hlsProxy{
-		client:     &http.Client{Transport: d.client.Transport},
+		client:     mediaHTTPClient(&http.Client{Transport: d.client.Transport}, media),
 		base:       "http://" + listener.Addr().String() + "/" + nonce + "/",
 		referer:    media.Referer,
 		key:        key,
@@ -95,7 +96,15 @@ func playbackRootAsset(media providerMedia) hlsAsset {
 	return asset
 }
 
+type bufferedMediaBody struct {
+	io.Reader
+	io.Closer
+}
+
 func (proxy *hlsProxy) Close() {
+	if proxy.client != nil {
+		proxy.client.CloseIdleConnections()
+	}
 	if proxy.server != nil {
 		_ = proxy.server.Close()
 	}
@@ -308,10 +317,17 @@ func (proxy *hlsProxy) ServeHTTP(writer http.ResponseWriter, request *http.Reque
 			proxy.fail(writer, request, fmt.Errorf("HLS 资源请求失败: %s HTTP %d", upstream.URL.Hostname(), response.StatusCode))
 			return
 		}
-		if asset.playlist || strings.Contains(response.Header.Get("Content-Type"), "mpegurl") {
+		sniffedPlaylist := false
+		if !asset.playlist && request.Method != http.MethodHead && response.StatusCode == http.StatusOK && path.Ext(upstream.URL.Path) != ".mp4" && path.Ext(upstream.URL.Path) != ".ts" {
+			buffered := bufio.NewReader(response.Body)
+			prefix, _ := buffered.Peek(7)
+			sniffedPlaylist = string(prefix) == "#EXTM3U"
+			response.Body = &bufferedMediaBody{Reader: buffered, Closer: response.Body}
+		}
+		if asset.playlist || sniffedPlaylist || strings.Contains(response.Header.Get("Content-Type"), "mpegurl") {
 			defer response.Body.Close()
-			body, err = io.ReadAll(io.LimitReader(response.Body, providerMaxBodyBytes+1))
-			if err != nil || len(body) > providerMaxBodyBytes {
+			body, err = io.ReadAll(io.LimitReader(response.Body, (4<<20)+1))
+			if err != nil || len(body) > 4<<20 {
 				proxy.fail(writer, request, errors.New("读取 HLS 播放列表失败或内容过大"))
 				return
 			}

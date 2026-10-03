@@ -10,39 +10,77 @@ import (
 )
 
 const rankingCacheTTL = 5 * time.Minute
+const (
+	rankingKindRanking        = "ranking"
+	rankingKindRecommendation = "recommendation"
+	rankingKindCatalog        = "catalog"
+)
 
 type rankingBoard struct {
 	ID          string `json:"id"`
 	Source      string `json:"source"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Kind        string `json:"kind"`
 	path        string
 	upstreamKey string
 }
 
 var rankingBoards = []rankingBoard{
-	{ID: "hongguo-hot", Source: sourceHongguo, Name: "总热播榜", Description: "红果观看、互动等综合热度；每日更新。", path: "hot-drama", upstreamKey: "hongguo"},
-	{ID: "hongguo-real", Source: sourceHongguo, Name: "真人剧榜", Description: "红果真人剧热播榜；每日更新。", path: "hot-real-drama", upstreamKey: "real"},
-	{ID: "hongguo-comic", Source: sourceHongguo, Name: "漫剧榜", Description: "红果漫剧热播榜；每日更新。", path: "hot-comic-drama", upstreamKey: "comic"},
-	{ID: "hongguo-ai", Source: sourceHongguo, Name: "AI剧榜", Description: "红果 AI 剧热播榜；每日更新。", path: "hot-ai-drama", upstreamKey: "ai"},
-	{ID: "huangdou-all", Source: sourceHuangdou, Name: "总榜", Description: "黄豆短剧总榜，保留站点返回的顺序。", upstreamKey: "all"},
-	{ID: "huangdou-mogai", Source: sourceHuangdou, Name: "魔改榜", Description: "黄豆站点魔改榜。", upstreamKey: "mogai"},
-	{ID: "huangdou-search", Source: sourceHuangdou, Name: "搜索榜", Description: "黄豆站点搜索榜。", upstreamKey: "search"},
-	{ID: "huangdou-favorite", Source: sourceHuangdou, Name: "收藏榜", Description: "黄豆站点收藏榜。", upstreamKey: "favorite"},
-	{ID: "huangdou-finish", Source: sourceHuangdou, Name: "完结榜", Description: "黄豆站点完结榜。", upstreamKey: "finish"},
-	{ID: "huangguo-hot", Source: "huangguo", Name: "热播榜", Description: "黄果站点热播 TOP 20；每日更新。", path: "hot"},
-	{ID: "huangguo-recommend", Source: "huangguo", Name: "推荐榜", Description: "黄果站点推荐 TOP 20。", path: "recommend"},
-	{ID: "huangguo-potential", Source: "huangguo", Name: "潜力榜", Description: "黄果站点潜力 TOP 20。", path: "potential"},
+	{ID: "hongguo-hot", Source: sourceHongguo, Name: "总热播榜", Kind: rankingKindRanking, Description: "红果观看、互动等综合热度；每日更新。", path: "hot-drama", upstreamKey: "hongguo"},
+	{ID: "hongguo-real", Source: sourceHongguo, Name: "真人剧榜", Kind: rankingKindRanking, Description: "红果真人剧热播榜；每日更新。", path: "hot-real-drama", upstreamKey: "real"},
+	{ID: "hongguo-comic", Source: sourceHongguo, Name: "漫剧榜", Kind: rankingKindRanking, Description: "红果漫剧热播榜；每日更新。", path: "hot-comic-drama", upstreamKey: "comic"},
+	{ID: "hongguo-ai", Source: sourceHongguo, Name: "AI剧榜", Kind: rankingKindRanking, Description: "红果 AI 剧热播榜；每日更新。", path: "hot-ai-drama", upstreamKey: "ai"},
+	{ID: "huangdou-all", Source: sourceHuangdou, Name: "总榜", Kind: rankingKindRanking, Description: "黄豆短剧总榜，保留站点返回的顺序。", upstreamKey: "all"},
+	{ID: "huangdou-mogai", Source: sourceHuangdou, Name: "魔改榜", Kind: rankingKindRanking, Description: "黄豆站点魔改榜。", upstreamKey: "mogai"},
+	{ID: "huangdou-search", Source: sourceHuangdou, Name: "搜索榜", Kind: rankingKindRanking, Description: "黄豆站点搜索榜。", upstreamKey: "search"},
+	{ID: "huangdou-favorite", Source: sourceHuangdou, Name: "收藏榜", Kind: rankingKindRanking, Description: "黄豆站点收藏榜。", upstreamKey: "favorite"},
+	{ID: "huangdou-finish", Source: sourceHuangdou, Name: "完结榜", Kind: rankingKindRanking, Description: "黄豆站点完结榜。", upstreamKey: "finish"},
+	{ID: "huangguo-hot", Source: "huangguo", Name: "热播榜", Kind: rankingKindRanking, Description: "黄果站点热播 TOP 20；每日更新。", path: "hot"},
+	{ID: "huangguo-recommend", Source: "huangguo", Name: "推荐榜", Kind: rankingKindRanking, Description: "黄果站点推荐 TOP 20。", path: "recommend"},
+	{ID: "huangguo-potential", Source: "huangguo", Name: "潜力榜", Kind: rankingKindRanking, Description: "黄果站点潜力 TOP 20。", path: "potential"},
+	{ID: "huangju-hot", Source: sourceHuangju, Name: "热门目录", Kind: rankingKindCatalog, Description: "剧果目录热门顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。"},
+	{ID: "huangju-new", Source: sourceHuangju, Name: "最新目录", Kind: rankingKindCatalog, Description: "剧果最新目录顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: huangjuNewestCategory},
+	{ID: "yeguo-recommend", Source: sourceYeguo, Name: "目录", Kind: rankingKindCatalog, Description: "野果默认目录顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。"},
+	{ID: "dsd-catalog", Source: sourceDSD, Name: "目录", Kind: rankingKindCatalog, Description: "帝果分类目录聚合顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。"},
+	{ID: "yaguo-rank", Source: sourceYaguo, Name: "榜单", Kind: rankingKindRanking, Description: "芽果站点官方一级榜单，按源站返回顺序展示。", path: "9"},
+	{ID: "yaguo-theater", Source: sourceYaguo, Name: "剧场目录", Kind: rankingKindCatalog, Description: "芽果剧场默认顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "1"},
+	{ID: "maoguo-recommend", Source: sourceMaoguo, Name: "推荐", Kind: rankingKindRecommendation, Description: "猫果推荐顺序，按源站返回顺序展示，序号为当前页推荐位置，不代表官方排名。", path: "0"},
+	{ID: "fanguo-urban", Source: sourceFanguo, Name: "都市目录", Kind: rankingKindCatalog, Description: "饭果都市分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "都市"},
+	{ID: "fanguo-sweet", Source: sourceFanguo, Name: "甜宠目录", Kind: rankingKindCatalog, Description: "饭果甜宠分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "甜宠"},
+	{ID: "fanguo-counter", Source: sourceFanguo, Name: "逆袭目录", Kind: rankingKindCatalog, Description: "饭果逆袭分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "逆袭"},
+	{ID: "guanguo-catalog", Source: sourceGuanguo, Name: "目录", Kind: rankingKindCatalog, Description: "观果默认目录顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。"},
+	{ID: "heguo-sweet", Source: sourceHeguo, Name: "甜宠目录", Kind: rankingKindCatalog, Description: "河果甜宠分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "462"},
+	{ID: "heguo-xianxia", Source: sourceHeguo, Name: "古装仙侠目录", Kind: rankingKindCatalog, Description: "河果古装仙侠分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "1102"},
+	{ID: "heguo-romance", Source: sourceHeguo, Name: "现代言情目录", Kind: rankingKindCatalog, Description: "河果现代言情分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "1145"},
+	{ID: "xingguo-recommend", Source: sourceXingguo, Name: "推荐", Kind: rankingKindRecommendation, Description: "星果推荐位顺序，按源站返回顺序展示，序号为当前页推荐位置，不代表官方排名。", path: "1287"},
+	{ID: "huaguo-drama", Source: sourceHuaguo, Name: "短剧目录", Kind: rankingKindCatalog, Description: "花果短剧分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "27"},
+	{ID: "niuguo-drama", Source: sourceNiuguo, Name: "短剧目录", Kind: rankingKindCatalog, Description: "牛果短剧分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "5"},
+	{ID: "niuguo-movie", Source: sourceNiuguo, Name: "电影目录", Kind: rankingKindCatalog, Description: "牛果电影分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "1"},
+	{ID: "niuguo-tv", Source: sourceNiuguo, Name: "电视剧目录", Kind: rankingKindCatalog, Description: "牛果电视剧分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "2"},
+	{ID: "niuguo-anime", Source: sourceNiuguo, Name: "动漫目录", Kind: rankingKindCatalog, Description: "牛果动漫分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "4"},
+	{ID: "niuguo-variety", Source: sourceNiuguo, Name: "综艺目录", Kind: rankingKindCatalog, Description: "牛果综艺分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "3"},
+	{ID: "piguo-hit", Source: sourcePiguo, Name: "爽剧目录", Kind: rankingKindCatalog, Description: "皮果爽剧分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "67"},
+	{ID: "piguo-romance", Source: sourcePiguo, Name: "言情目录", Kind: rankingKindCatalog, Description: "皮果言情分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "68"},
+	{ID: "piguo-costume", Source: sourcePiguo, Name: "古装目录", Kind: rankingKindCatalog, Description: "皮果古装分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "73"},
+	{ID: "wuguo-urban", Source: sourceWuguo, Name: "都市目录", Kind: rankingKindCatalog, Description: "伍果都市分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "都市"},
+	{ID: "wuguo-counter", Source: sourceWuguo, Name: "逆袭目录", Kind: rankingKindCatalog, Description: "伍果逆袭分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "逆袭"},
+	{ID: "wuguo-travel", Source: sourceWuguo, Name: "穿越目录", Kind: rankingKindCatalog, Description: "伍果穿越分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "穿越"},
+	{ID: "wuguo-female", Source: sourceWuguo, Name: "女频目录", Kind: rankingKindCatalog, Description: "伍果女频分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "女频"},
+	{ID: "wuguo-male", Source: sourceWuguo, Name: "男频目录", Kind: rankingKindCatalog, Description: "伍果男频分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "男频"},
 }
 
 type rankingItem struct {
-	Rank   int    `json:"rank"`
-	Drama  Drama  `json:"drama"`
-	Metric string `json:"metric,omitempty"`
+	Rank     int    `json:"rank,omitempty"`
+	Position int    `json:"position,omitempty"`
+	Drama    Drama  `json:"drama"`
+	Metric   string `json:"metric,omitempty"`
 }
 
 type rankingPage struct {
 	BoardID     string        `json:"boardId"`
+	Kind        string        `json:"kind"`
+	Description string        `json:"description"`
 	Page        int           `json:"page"`
 	Items       []rankingItem `json:"items"`
 	HasMore     bool          `json:"hasMore"`
@@ -113,6 +151,7 @@ func (d *Downloader) loadRankingPage(ctx context.Context, board rankingBoard, pa
 	defer cache.mu.Unlock()
 	if err == nil {
 		result.BoardID, result.Page, result.FetchedAt = board.ID, page, time.Now()
+		result.Kind, result.Description = board.Kind, board.Description
 		if refresh && page == 1 {
 			for cachedKey, old := range cache.pages {
 				if old.BoardID == board.ID {
@@ -157,13 +196,53 @@ func (d *Downloader) fetchRankingPage(ctx context.Context, board rankingBoard, p
 		if page != 1 {
 			return rankingPage{}, errors.New("该榜单只有一页")
 		}
-		pageURL := huangguoAIBaseURL + "/ranks/" + board.path + "/"
-		body, err := d.fetchProviderText(ctx, pageURL, huangguoAIBaseURL+"/")
+		base := d.huangguoAIContentBaseURL(ctx)
+		pageURL := base + "/ranks/" + board.path + "/"
+		body, pageURL, err := d.fetchProviderTextURL(ctx, pageURL, base+"/")
 		if err != nil {
 			return rankingPage{}, err
 		}
-		return parseHuangguoRanking(body, board)
+		return parseHuangguoRanking(body, board, pageURL)
+	case sourceHuangju, sourceYeguo, sourceDSD:
+		return d.fetchCatalogRankingPage(ctx, board, page)
 	default:
+		if isDuanjuProviderSource(board.Source) {
+			return d.fetchCatalogRankingPage(ctx, board, page)
+		}
 		return rankingPage{}, fmt.Errorf("不支持的榜单站源 %s", board.Source)
 	}
+}
+
+func (d *Downloader) fetchCatalogRankingPage(ctx context.Context, board rankingBoard, page int) (rankingPage, error) {
+	if page < 1 || page > 100 {
+		return rankingPage{}, errors.New("榜单页码超出范围")
+	}
+	var items []Drama
+	var more bool
+	var err error
+	switch board.Source {
+	case sourceHuangju:
+		items, more, err = d.fetchHuangjuCatalogPage(ctx, page, board.path, "")
+	case sourceYeguo:
+		items, more, err = d.fetchYeguoCatalogPage(ctx, page, board.path, "")
+	case sourceDSD:
+		items, more, err = d.fetchDSDCatalogPage(ctx, page, board.path, "")
+	default:
+		if !isDuanjuProviderSource(board.Source) {
+			return rankingPage{}, fmt.Errorf("不支持的目录站源 %s", board.Source)
+		}
+		items, more, err = d.fetchDuanjuCatalogPage(ctx, board.Source, page, board.path)
+	}
+	if err != nil {
+		return rankingPage{}, err
+	}
+	result := rankingPage{BoardID: board.ID, Page: page, Kind: board.Kind, Description: board.Description, Items: make([]rankingItem, 0, len(items)), HasMore: more}
+	for index, drama := range items {
+		item := rankingItem{Position: index + 1, Drama: drama}
+		if board.Kind == rankingKindRanking {
+			item.Rank, item.Position = index+1, 0
+		}
+		result.Items = append(result.Items, item)
+	}
+	return result, nil
 }
