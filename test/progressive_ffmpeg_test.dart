@@ -52,7 +52,7 @@ Future<ProcessResult> _run(String ffmpeg, List<String> args) async {
 void main() {
   final ffmpeg = Platform.environment['GUOGUO_FFMPEG'];
   test(
-    'CENC stream opens before completion and decodes to the source frames',
+    'CENC audio/video stream opens with headroom and decodes to the source frames',
     () async {
       final dir = await Directory.systemTemp.createTemp('progressive-ffmpeg-');
       addTearDown(() async {
@@ -70,6 +70,10 @@ void main() {
         'lavfi',
         '-i',
         'testsrc2=size=180x320:rate=10',
+        '-f',
+        'lavfi',
+        '-i',
+        'sine=frequency=440:sample_rate=48000',
         '-t',
         '8',
         '-c:v',
@@ -84,6 +88,10 @@ void main() {
         '20',
         '-sc_threshold',
         '0',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '64k',
         '-encryption_scheme',
         'cenc-aes-ctr',
         '-encryption_key',
@@ -111,13 +119,15 @@ void main() {
       expect(
         preparer.complete,
         isFalse,
-        reason:
-            'the first playable fragment must arrive while FFmpeg is running',
+        reason: 'startup headroom must arrive while FFmpeg is still running',
       );
       expect(preparer.fellBack, isFalse);
       expect(preparer.timeline, isNotNull);
       final initialTimeline = preparer.timeline!.value;
-      expect(initialTimeline.duration, greaterThan(Duration.zero));
+      expect(
+        initialTimeline.duration,
+        greaterThanOrEqualTo(const Duration(seconds: 6)),
+      );
       expect(initialTimeline.duration, lessThan(const Duration(seconds: 8)));
       expect(initialTimeline.complete, isFalse);
 
@@ -132,6 +142,7 @@ void main() {
         source,
         '-frames:v',
         '1',
+        '-an',
         '-f',
         'md5',
         '-',
@@ -145,6 +156,7 @@ void main() {
         url,
         '-frames:v',
         '1',
+        '-an',
         '-f',
         'md5',
         '-',
@@ -166,6 +178,7 @@ void main() {
         key,
         '-i',
         source,
+        '-an',
         '-f',
         'md5',
         '-',
@@ -177,11 +190,26 @@ void main() {
         '-xerror',
         '-i',
         url,
+        '-an',
         '-f',
         'md5',
         '-',
       ]);
       expect(streamedFrames.stdout, originalFrames.stdout);
+      await _run(ffmpeg, [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-xerror',
+        '-i',
+        url,
+        '-map',
+        '0:a:0',
+        '-vn',
+        '-f',
+        'null',
+        '-',
+      ]);
       // Retain the measurements in the test log for platform comparisons.
       // ignore: avoid_print
       print(

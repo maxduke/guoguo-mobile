@@ -37,6 +37,32 @@ void main() {
   });
 
   test(
+    'progressive waiting at zero uses the shorter interval and resets on progress',
+    () {
+      final health = PlaybackHealth();
+      final start = DateTime(2026);
+      bool stalled(int seconds, {int position = 0, bool watching = true}) =>
+          health.stalled(
+            Duration(seconds: position),
+            start.add(Duration(seconds: seconds)),
+            watching: watching,
+            timeout: const Duration(seconds: 10),
+          );
+      expect(stalled(0), isFalse);
+      expect(stalled(9), isFalse);
+      expect(stalled(10), isTrue);
+      expect(stalled(11, position: 1), isFalse);
+      expect(stalled(20, position: 1), isFalse);
+      expect(stalled(21, position: 1), isTrue);
+      expect(stalled(22, watching: false), isFalse);
+      expect(stalled(40, watching: false), isFalse);
+      expect(stalled(41), isFalse);
+      expect(stalled(49), isFalse);
+      expect(stalled(50), isTrue);
+    },
+  );
+
+  test(
     'preload waits for progress and buffered headroom, even near the end',
     () {
       bool ready(

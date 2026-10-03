@@ -32,14 +32,19 @@ class PlaybackHealth {
     _progressAt = null;
   }
 
-  bool stalled(Duration position, DateTime now, {required bool watching}) {
+  bool stalled(
+    Duration position,
+    DateTime now, {
+    required bool watching,
+    Duration timeout = const Duration(seconds: 20),
+  }) {
     if (!watching || position != _position) {
       _position = position;
       _progressAt = now;
       return false;
     }
     _progressAt ??= now;
-    return now.difference(_progressAt!) >= const Duration(seconds: 20);
+    return now.difference(_progressAt!) >= timeout;
   }
 }
 

@@ -7,6 +7,7 @@ import '../data/download_store.dart';
 import '../domain/models.dart';
 import '../domain/catalog_query.dart';
 import 'components.dart';
+import 'source_selector.dart';
 import 'detail_page.dart';
 import 'downloads_page.dart';
 import 'settings_page.dart';
@@ -383,40 +384,34 @@ class _HomePageState extends State<HomePage> {
                     ],
                   ),
                   const SizedBox(height: 18),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        for (final source in DramaSource.values)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 10),
-                            child: ChoiceChip(
-                              label: Text(source.label),
-                              selected: store.source == source,
-                              onSelected: (_) => perform(context, () async {
-                                _search.clear();
-                                ++_searchGeneration;
-                                setState(() {
-                                  _query = '';
-                                  _category = '全部';
-                                  _remoteResults = null;
-                                  _searchError = null;
-                                  _searchNotice = null;
-                                  _searching = false;
-                                  _searchHasMore = false;
-                                  _searchPage = 0;
-                                });
-                                await store.selectSource(source);
-                                if (store.library.isEmpty) {
-                                  await store.refresh(source);
-                                } else {
-                                  await store.loadCategories(source);
-                                }
-                              }),
-                            ),
-                          ),
-                      ],
-                    ),
+                  SourceSelector(
+                    value: store.source,
+                    onChanged: (source) {
+                      if (source == null) return;
+                      unawaited(
+                        perform(context, () async {
+                          _cancelSearch();
+                          _search.clear();
+                          ++_searchGeneration;
+                          setState(() {
+                            _query = '';
+                            _category = '全部';
+                            _remoteResults = null;
+                            _searchError = null;
+                            _searchNotice = null;
+                            _searching = false;
+                            _searchHasMore = false;
+                            _searchPage = 0;
+                          });
+                          await store.selectSource(source);
+                          if (store.library.isEmpty) {
+                            await store.refresh(source);
+                          } else {
+                            await store.loadCategories(source);
+                          }
+                        }),
+                      );
+                    },
                   ),
                   const SizedBox(height: 18),
                   TextField(

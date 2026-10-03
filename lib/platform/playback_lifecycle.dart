@@ -101,7 +101,7 @@ class PlaybackLifecycleController {
 
   void nativePlaying(bool playing) {
     if (_closed) return;
-    if (_pipActive && !snapshot().loading) {
+    if (canPlay && !snapshot().loading) {
       _updateIntent(playing);
     }
   }
