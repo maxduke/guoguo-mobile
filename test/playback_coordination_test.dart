@@ -137,6 +137,27 @@ class _Fixture {
 }
 
 void main() {
+  test(
+    'foreground native pause updates intent, setup and background pauses do not',
+    () {
+      final f = _Fixture();
+      f.lifecycle.nativePlaying(false);
+      expect(f.lifecycle.playIntent, isFalse);
+      f.lifecycle.nativePlaying(true);
+      expect(f.lifecycle.playIntent, isTrue);
+      f.loading = true;
+      f.lifecycle.nativePlaying(false);
+      expect(f.lifecycle.playIntent, isTrue);
+      f.loading = false;
+      f.lifecycle.setForeground(false);
+      f.lifecycle.nativePlaying(false);
+      expect(f.lifecycle.playIntent, isTrue);
+      f.lifecycle.setForeground(true);
+      f.lifecycle.nativePlaying(false);
+      expect(f.lifecycle.playIntent, isFalse);
+    },
+  );
+
   for (final nativeFirst in [false, true]) {
     test(
       'timely automatic PiP preserves preparation: native first $nativeFirst',

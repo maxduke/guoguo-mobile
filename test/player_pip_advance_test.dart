@@ -106,7 +106,7 @@ class _NativePlayer {
         ids.add(args?['textureId']);
         final source = args?['dataSource'] as Map;
         sources.add(source['uri'] as String);
-        formats.add(source['videoFormat']);
+        formats.add(source['formatHint']);
         authors.add(source['author']);
         await beforeInitialized?.call(sources.length);
         scheduleMicrotask(
@@ -288,6 +288,161 @@ void main() {
   final originalOverrides = HttpOverrides.current;
   setUpAll(() => HttpOverrides.global = _PlaylistOverrides());
   tearDownAll(() => HttpOverrides.global = originalOverrides);
+
+  testWidgets(
+    'progressive startup declares HLS and plays without an initial seek',
+    (tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final platform = _NativePlayer()
+        ..hlsDurationMs = 0
+        ..install();
+      addTearDown(platform.uninstall);
+      final store = AppStore(storage: MemoryStorage(), provider: _Routes())
+        ..progressivePreparation = true
+        ..prefetch = false;
+      final downloads = _OnlineDownloads(store);
+      final job = _ProgressivePreparer();
+      addTearDown(() {
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: 'fixture',
+              source: DramaSource.hongguo,
+              title: '原生起播',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+            ],
+            initialIndex: 0,
+            preparerFactory: () => job,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(platform.formats, ['hls']);
+      expect(platform.seeks, isEmpty);
+      expect(platform.plays, isNotEmpty);
+      final player = tester
+          .widget<BetterPlayer>(find.byType(BetterPlayer))
+          .controller;
+      expect(player.isPlaying(), isTrue);
+      expect(player.videoPlayerController!.value.position, Duration.zero);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    },
+  );
+
+  for (final mode in [
+    'playing stall',
+    'waiting stall',
+    'page pause',
+    'native pause',
+    'completed',
+  ]) {
+    testWidgets('progressive startup watchdog respects $mode', (tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final platform = _NativePlayer()
+        ..hlsDurationMs = 6000
+        ..followSeeks = true
+        ..install();
+      addTearDown(platform.uninstall);
+      final store = AppStore(storage: MemoryStorage(), provider: _Routes())
+        ..progressivePreparation = true
+        ..prefetch = false
+        ..autoAdvance = false;
+      final downloads = _OnlineDownloads(store);
+      final first = _ProgressivePreparer();
+      final second = _ProgressivePreparer();
+      var created = 0;
+      var now = DateTime(2026);
+      addTearDown(() {
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: 'fixture',
+              source: DramaSource.hongguo,
+              title: '开头卡顿',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+            ],
+            initialIndex: 0,
+            preparerFactory: () => created++ == 0 ? first : second,
+            playbackClock: () => now,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final player = tester
+          .widget<BetterPlayer>(find.byType(BetterPlayer))
+          .controller;
+      final native = player.videoPlayerController!;
+      platform.positionMs = 300;
+      native.value = native.value.copyWith(
+        position: const Duration(milliseconds: 300),
+      );
+      if (mode == 'waiting stall') {
+        // Native waiting changes the value without a viewer pause command.
+        native.value = native.value.copyWith(
+          isPlaying: false,
+          isBuffering: true,
+        );
+      } else if (mode == 'page pause') {
+        tester.widget<PlayerTransport>(find.byType(PlayerTransport)).onPlay();
+      } else if (mode == 'native pause') {
+        platform.emit('pause');
+      } else if (mode == 'completed') {
+        first.produced = true;
+        platform.positionMs = 6000;
+        platform.emit('completed');
+      }
+      await tester.pump();
+      // Health is polled every two seconds. Both clocks advance together.
+      for (var tick = 0; tick < 5; tick++) {
+        now = now.add(const Duration(seconds: 2));
+        await tester.pump(const Duration(seconds: 2));
+      }
+      expect(
+        created,
+        1,
+        reason: 'the full no-progress interval has not elapsed',
+      );
+      now = now.add(const Duration(seconds: 2));
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      if (mode.endsWith('stall')) {
+        expect(created, 2);
+        expect(first.cancelled, isTrue);
+        expect(second.requested, isFalse);
+        expect(player.isPlaying(), isTrue);
+        expect(platform.seeks.last, 300);
+        expect(native.value.position, const Duration(milliseconds: 300));
+        expect(platform.ids.toSet(), {7});
+      } else {
+        expect(created, 1);
+        expect(first.cancelled, isFalse);
+        expect(player.isPlaying(), isFalse);
+      }
+      now = now.add(const Duration(seconds: 30));
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      if (!mode.endsWith('stall')) expect(created, 1);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    });
+  }
 
   testWidgets(
     'PiP close during progressive cancellation keeps compatible recovery paused',

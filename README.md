@@ -12,6 +12,14 @@
 
 [发现页预览](screenshots/recommendations-light.png) · [深色发现页](screenshots/recommendations-dark.png) · [新版详情页](screenshots/detail-phone-light.png) · [平板详情页](screenshots/detail-tablet-dark.png)
 
+## 0.11.4 iOS 提前开播画面修复
+
+修正 iOS 播放器将不受支持的视频合成用于 HLS 的路径，处理红果提前开播“进度前进但画面停住，拖动才恢复”的反馈。起播位置由本地播放列表声明，去掉初始化阶段多余的定位；保留续播、拖动和 PiP 行为。范围与验证见 [原生修复记录](docs/ios-progressive-rendering-2026-10-03.md)。
+
+## 0.11.3 开播缓冲与站源选择
+
+提前开播改为等待足够的已完成分片，连续 10 秒没有播放进度时保留位置并回退完整准备；覆盖已出画面但卡在开头的原生等待状态。站源入口改为可搜索的网格弹窗，剧库、收藏／历史和下载共用，手机正常字号可直接选择十六站。范围与验证见 [修复记录](docs/playback-startup-and-source-picker-2026-10-03.md)。
+
 ## 0.11.2 恢复与后台交接
 
 有限重试、恢复请求互斥、播放意图和 PiP 后台交接由独立控制器协调。修复等待取消提前开播任务时关闭 PiP，回到前台后被旧恢复请求重新开播的问题；保留进度和暂停状态。范围与验证见 [实施记录](docs/playback-coordination-2026-10-03.md)。
@@ -64,7 +72,7 @@
 
 ## 使用方式
 
-- 剧库按十六个站源分别浏览；收藏、历史和下载跨站汇总。
+- 点击当前站源打开网格，支持搜索站源名称；剧库按十六站分别浏览，收藏、历史和下载支持“全部站源”筛选。
 - 选集、上下滑切集、续播、倍速、画中画；单击切换控件，左右滑动预览进度，长按 2 倍速，长按后左右滑动快进/快退。
 - 榜单采用大封面与排名卡片；黄果、黄豆以及历史/下载记录会自动补取缺失或过期的封面。
 - 浅色、深色、跟随系统，手机与平板布局。
@@ -103,10 +111,13 @@ scripts/setup_core.sh
 scripts/build_core.sh ios
 flutter config --no-enable-swift-package-manager
 scripts/prepare_ios_media.sh
+python3 scripts/prepare_ios_player.py
 flutter build ios --release --no-codesign
 ```
 
 `prepare_ios_media.sh` 在构建时准备依赖包提供的原生 FFmpeg 库；应用运行时不会下载或启动桌面可执行文件。
+
+`prepare_ios_player.py` 校验锁定的播放器源码并生成仅供 CocoaPods 使用的 iOS 修复副本，依赖缓存保持原样；Podfile 也会在安装依赖时准备该副本。当前 iOS 构建使用 CocoaPods，保持 Swift Package Manager 关闭。
 
 Android 暂未完成验收。配置 Android SDK/NDK 后可使用 `scripts/build_core.sh android` 构建桥接库。
 

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -19,9 +20,14 @@ class ProgressiveTimeline {
 }
 
 class _PlaylistObservation {
-  const _PlaylistObservation(this.duration, this.ended);
+  const _PlaylistObservation(this.duration, this.targetDuration, this.ended);
   final Duration duration;
+  final Duration targetDuration;
   final bool ended;
+
+  // Live clients need headroom behind the published edge (RFC 8216, 6.3.3).
+  // A finished short episode can start without waiting for more fragments.
+  bool get ready => ended || duration >= targetDuration * 3;
 }
 
 /// A private loopback origin serving only completed output of one media job.
@@ -142,6 +148,7 @@ class ProgressiveMedia {
       if (!await _publishedFile('init.mp4')) return null;
 
       var seconds = 0.0;
+      int? targetSeconds;
       double? pending;
       var segments = 0;
       var ended = false;
@@ -149,7 +156,17 @@ class ProgressiveMedia {
       for (final line in lines.skip(1)) {
         if (line.isEmpty) continue;
         if (ended) return null;
-        if (line.startsWith('#EXTINF:')) {
+        if (line.startsWith('#EXT-X-TARGETDURATION:')) {
+          if (pending != null || targetSeconds != null) return null;
+          final value = line.substring('#EXT-X-TARGETDURATION:'.length);
+          if (!RegExp(r'^[0-9]+$').hasMatch(value)) return null;
+          targetSeconds = int.tryParse(value);
+          if (targetSeconds == null ||
+              targetSeconds <= 0 ||
+              targetSeconds > 9007199254740991 ~/ 3000000) {
+            return null;
+          }
+        } else if (line.startsWith('#EXTINF:')) {
           if (pending != null) return null;
           if (line.indexOf(',') <= 8) return null;
           final value = line.substring(8).split(',').first.trim();
@@ -175,10 +192,16 @@ class ProgressiveMedia {
           pending = null;
         }
       }
-      if (pending != null || segments == 0) return null;
+      if (pending != null || segments == 0 || targetSeconds == null) {
+        return null;
+      }
       final micros = (seconds * 1000000).round();
       if (micros <= 0) return null;
-      return _PlaylistObservation(Duration(microseconds: micros), ended);
+      return _PlaylistObservation(
+        Duration(microseconds: micros),
+        Duration(seconds: targetSeconds),
+        ended,
+      );
     } on FileSystemException {
       // An atomic replacement can race a file lookup; the next poll retries.
       return null;
@@ -218,7 +241,7 @@ class ProgressiveMedia {
       }
       final snapshot = await _readPlaylist();
       if (_closed) return;
-      _ready = snapshot != null;
+      _ready = snapshot?.ready ?? false;
       if (snapshot == null ||
           snapshot.duration < _timeline.value.duration ||
           (finalPass && !snapshot.ended)) {
@@ -287,7 +310,15 @@ class ProgressiveMedia {
           return;
         }
         // Atomic replacement allows this request to read one complete snapshot.
-        final bytes = await file.readAsBytes();
+        final text = await file.readAsString();
+        // EVENT clients otherwise choose a point near the growing live edge.
+        // Declare the episode start so no asynchronous startup seek is needed.
+        final bytes = utf8.encode(
+          text.replaceFirst(
+            '#EXTM3U\n',
+            '#EXTM3U\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n',
+          ),
+        );
         response.contentLength = bytes.length;
         if (request.method == 'GET') response.add(bytes);
         return;

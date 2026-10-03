@@ -45,6 +45,7 @@ class PlayerPage extends StatefulWidget {
     this.episodeIndices,
     this.localOnly = false,
     this.preparerFactory,
+    this.playbackClock,
   });
   final AppStore store;
   final DownloadStore downloads;
@@ -54,6 +55,7 @@ class PlayerPage extends StatefulWidget {
   final List<int>? episodeIndices;
   final bool localOnly;
   final MediaPreparer Function()? preparerFactory;
+  final DateTime Function()? playbackClock;
   @override
   State<PlayerPage> createState() => _PlayerPageState();
 }
@@ -350,10 +352,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _attachTimeline(item, generation);
       _health.reset();
       await _applyVideoFit();
-      if (item.preparer.streaming) start = Duration.zero;
+      // The private EVENT playlist declares its start. Seeking during native
+      // initialization can race play because the plugin returns before AVPlayer
+      // finishes seeking. Resume/scrub on complete media still uses seekTo.
+      if (item.preparer.streaming) start = null;
       final value = _player.videoPlayerController?.value;
       final duration = value?.duration ?? Duration.zero;
-      if (start == null &&
+      if (!item.preparer.streaming &&
+          start == null &&
           duration > Duration.zero &&
           value!.position >= duration - const Duration(milliseconds: 300)) {
         start = Duration.zero;
@@ -436,9 +442,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       return;
     }
     final value = _player.videoPlayerController?.value;
+    final progressive = _active?.preparer.streaming == true;
+    final duration = value?.duration ?? Duration.zero;
+    final ended =
+        _active?.preparer.complete == true &&
+        duration > Duration.zero &&
+        (value?.position ?? Duration.zero) >= duration;
     final stalled = _health.stalled(
       value?.position ?? Duration.zero,
-      DateTime.now(),
+      widget.playbackClock?.call() ?? DateTime.now(),
+      timeout: Duration(seconds: progressive ? 10 : 20),
       watching:
           (_foreground || _pipActive) &&
           !_loading &&
@@ -447,7 +460,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           !_scrubbing &&
           !_modal &&
           _active != null &&
-          value?.isPlaying == true,
+          !ended &&
+          // AVPlayer can wait at the first frame without reporting playing.
+          // Explicit page and native pause commands update the viewer intent.
+          (value?.isPlaying == true || progressive && _playIntent),
     );
     if (stalled) unawaited(_recover());
     _schedulePrefetch();
@@ -520,6 +536,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         if (widget.store.autoAdvance && _index + 1 < widget.episodes.length) {
           _goTo(_index + 1);
         } else {
+          _playIntent = false;
+          _health.reset();
           _showControls();
         }
         break;

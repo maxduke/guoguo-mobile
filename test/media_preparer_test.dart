@@ -63,10 +63,17 @@ Future<void> _publish(String playlist) async {
   final dir = File(playlist).parent;
   await File('${dir.path}/init.mp4').writeAsBytes([1]);
   await File('${dir.path}/segment_00000.m4s').writeAsBytes([2]);
+  await File('${dir.path}/segment_00001.m4s').writeAsBytes([3]);
+  await File('${dir.path}/segment_00002.m4s').writeAsBytes([4]);
   await File(playlist).writeAsString('''#EXTM3U
+#EXT-X-TARGETDURATION:2
 #EXT-X-MAP:URI="init.mp4"
 #EXTINF:2,
 segment_00000.m4s
+#EXTINF:2,
+segment_00001.m4s
+#EXTINF:2,
+segment_00002.m4s
 ''');
 }
 
@@ -92,7 +99,7 @@ void main() {
       expect(url, startsWith('http://127.0.0.1:'));
       expect(preparer.streaming, isTrue);
       expect(preparer.complete, isFalse);
-      expect(preparer.timeline?.value.duration, const Duration(seconds: 2));
+      expect(preparer.timeline?.value.duration, const Duration(seconds: 6));
       expect(preparer.timeline?.value.complete, isFalse);
       expect(preparer.fellBack, isFalse);
       expect(executor.arguments.single, contains('-hls_playlist_type'));
@@ -186,17 +193,22 @@ void main() {
       );
       await preparer.prepare(_media(), progressive: true);
       final timeline = preparer.timeline!;
-      expect(timeline.value.duration, const Duration(seconds: 2));
+      expect(timeline.value.duration, const Duration(seconds: 6));
       expect(timeline.value.complete, isFalse);
       await File(executor.arguments.single.last).writeAsString('''#EXTM3U
+#EXT-X-TARGETDURATION:2
 #EXT-X-MAP:URI="init.mp4"
 #EXTINF:2,
 segment_00000.m4s
+#EXTINF:2,
+segment_00001.m4s
+#EXTINF:2,
+segment_00002.m4s
 #EXT-X-ENDLIST
 ''');
       executor.jobs.single.finish();
       await preparer.finished;
-      expect(timeline.value.duration, const Duration(seconds: 2));
+      expect(timeline.value.duration, const Duration(seconds: 6));
       expect(timeline.value.complete, isTrue);
       expect(preparer.complete, isTrue);
       await preparer.dispose();

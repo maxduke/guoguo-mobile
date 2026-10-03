@@ -1,7 +1,7 @@
 name: guoguo_mobile
 description: 果果 — 随时接着看，独立运行的短剧应用。
 publish_to: none
-version: 0.11.2+24
+version: 0.11.4+26
 environment:
   sdk: '>=3.11.0 <4.0.0'
 dependencies:
@@ -11,7 +11,8 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
-  better_player_plus: ^1.4.1
+  # The scoped iOS HLS correction is checked against this exact source version.
+  better_player_plus: 1.4.1
   background_downloader: ^9.6.1
   cached_network_image: ^3.4.1
   # 7.1+ requires Xcode 26.1.1; keep compatible with the macos-15 builder.

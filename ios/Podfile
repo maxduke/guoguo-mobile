@@ -1,4 +1,5 @@
 platform :ios, '15.0'
+require 'fileutils'
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 project 'Runner', {'Debug' => :debug, 'Profile' => :release, 'Release' => :release}
 def flutter_root
@@ -15,6 +16,13 @@ flutter_ios_podfile_setup
 target 'Runner' do
   use_frameworks!
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+  # Patch a private build copy; the shared pub cache stays unchanged.
+  player_path = IO.popen(['python3', File.expand_path('../scripts/prepare_ios_player.py', __dir__)], &:read).strip
+  raise 'Could not prepare the BetterPlayer iOS correction' unless $?.success?
+  player_link = File.join(__dir__, '.symlinks/plugins/better_player_plus')
+  raise 'Expected the Flutter BetterPlayer symlink' unless File.symlink?(player_link)
+  FileUtils.rm_f(player_link)
+  File.symlink(player_path, player_link)
   target 'RunnerTests' do
     inherit! :search_paths
   end

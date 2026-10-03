@@ -1,5 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+
+import 'source_selector.dart';
 import '../domain/models.dart';
 import '../data/cover_cache.dart';
 
@@ -279,20 +281,6 @@ class SourceFilter extends StatelessWidget {
   final DramaSource? value;
   final ValueChanged<DramaSource?> onChanged;
   @override
-  Widget build(BuildContext context) => SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    child: Row(
-      children: [
-        for (final source in <DramaSource?>[null, ...DramaSource.values])
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: ChoiceChip(
-              label: Text(source?.label ?? '全部站源'),
-              selected: source == value,
-              onSelected: (_) => onChanged(source),
-            ),
-          ),
-      ],
-    ),
-  );
+  Widget build(BuildContext context) =>
+      SourceSelector(value: value, includeAll: true, onChanged: onChanged);
 }

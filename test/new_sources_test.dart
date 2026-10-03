@@ -8,16 +8,21 @@ import 'package:guoguo_mobile/data/app_store.dart';
 import 'package:guoguo_mobile/data/storage.dart';
 import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/platform/provider_client.dart';
+import 'package:guoguo_mobile/ui/source_selector.dart';
 
 class SourceProvider implements ProviderClient {
   final calls = <Map<String, dynamic>>[];
+  final cancellations = <Map<String, dynamic>>[];
   final pending = <Completer<Map<String, dynamic>>>[];
   @override
   Future<Map<String, dynamic>> call(
     String method, [
     Map<String, dynamic> args = const {},
   ]) {
-    if (method == 'cancelSearch') return Future.value({});
+    if (method == 'cancelSearch') {
+      cancellations.add(args);
+      return Future.value({});
+    }
     calls.add({'method': method, ...args});
     if (method == 'categories') {
       return Future.value({
@@ -97,11 +102,18 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       expect(find.text('榜单'), findsOneWidget);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(SourceSelector),
+          matching: find.byType(OutlinedButton),
+        ),
+      );
+      await tester.pumpAndSettle();
       expect(find.widgetWithText(ChoiceChip, '帝果'), findsOneWidget);
       final lastSource = find.widgetWithText(ChoiceChip, '伍果');
-      await tester.ensureVisible(lastSource);
-      await tester.pumpAndSettle();
       expect(lastSource.hitTestable(), findsOneWidget);
+      await tester.tap(find.byTooltip('关闭站源选择'));
+      await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), '样本');
       await tester.testTextInput.receiveAction(TextInputAction.search);
       await tester.pump();
@@ -124,6 +136,65 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       downloads.dispose();
       store.dispose();
+    },
+  );
+
+  testWidgets(
+    'source selection cancels the previous search and isolates its late result',
+    (tester) async {
+      final provider = SourceProvider();
+      final store = AppStore(storage: MemoryStorage(), provider: provider);
+      await store.selectSource(DramaSource.huangju);
+      final downloads = DownloadStore(store);
+      addTearDown(() {
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        GuoguoApp(store: store, downloads: downloads, autoLoad: false),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '迟到');
+      await tester.testTextInput.receiveAction(TextInputAction.search);
+      await tester.pump();
+      final previous = provider.pending.last;
+      final request = provider.calls.last;
+      expect(request['method'], 'search');
+      await tester.tap(
+        find.descendant(
+          of: find.byType(SourceSelector),
+          matching: find.byType(OutlinedButton),
+        ),
+      );
+      // The old search spinner remains active while the sheet animates in.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.tap(find.widgetWithText(ChoiceChip, '伍果'));
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(
+        provider.cancellations,
+        contains(
+          allOf(
+            containsPair('source', 'huangju'),
+            containsPair('requestId', request['requestId']),
+          ),
+        ),
+      );
+      expect(store.source, DramaSource.wuguo);
+      expect(provider.calls.last['method'], 'catalog');
+      provider.pending.last.complete(page('伍果目录', source: DramaSource.wuguo));
+      await tester.pumpAndSettle();
+      previous.complete(page('旧源结果'));
+      await tester.pumpAndSettle();
+      expect(store.library.single.title, '伍果目录');
+      expect(find.text('伍果目录'), findsWidgets);
+      expect(find.text('旧源结果'), findsNothing);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
     },
   );
 
