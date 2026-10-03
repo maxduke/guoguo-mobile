@@ -12,6 +12,10 @@
 
 [发现页预览](screenshots/recommendations-light.png) · [深色发现页](screenshots/recommendations-dark.png) · [新版详情页](screenshots/detail-phone-light.png) · [平板详情页](screenshots/detail-tablet-dark.png)
 
+## 0.11.2 恢复与后台交接
+
+有限重试、恢复请求互斥、播放意图和 PiP 后台交接由独立控制器协调。修复等待取消提前开播任务时关闭 PiP，回到前台后被旧恢复请求重新开播的问题；保留进度和暂停状态。范围与验证见 [实施记录](docs/playback-coordination-2026-10-03.md)。
+
 ## 0.11.1 播放会话整理
 
 播放资源的准备、缓存、前台接管和释放统一由独立会话控制器管理，集中校验切集与重试的播放轮次。快速连续切集时跳过过时的原生设置请求，设置失败后仍可继续恢复；补齐未使用备用资源的释放。保留现有播放、预取及 PiP 策略，范围与验证见 [实施记录](docs/playback-session-2026-10-03.md)。

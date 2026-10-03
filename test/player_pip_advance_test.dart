@@ -248,6 +248,7 @@ class _ProgressivePreparer extends MediaPreparer {
   @override
   ValueNotifier<ProgressiveTimeline>? get timeline => preparedTimeline;
   Completer<void>? readyGate;
+  Completer<void>? cancelGate;
   ProviderException? problem;
   @override
   bool get streaming => requested;
@@ -272,6 +273,7 @@ class _ProgressivePreparer extends MediaPreparer {
   @override
   Future<void> cancel() async {
     cancelled = true;
+    await cancelGate?.future;
   }
 
   @override
@@ -286,6 +288,76 @@ void main() {
   final originalOverrides = HttpOverrides.current;
   setUpAll(() => HttpOverrides.global = _PlaylistOverrides());
   tearDownAll(() => HttpOverrides.global = originalOverrides);
+
+  testWidgets(
+    'PiP close during progressive cancellation keeps compatible recovery paused',
+    (tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final platform = _NativePlayer()..install();
+      addTearDown(platform.uninstall);
+      final provider = _Routes();
+      final store = AppStore(storage: MemoryStorage(), provider: provider)
+        ..progressivePreparation = true
+        ..prefetch = false;
+      final downloads = _OnlineDownloads(store);
+      final gate = Completer<void>();
+      final first = _ProgressivePreparer()..cancelGate = gate;
+      final second = _ProgressivePreparer();
+      var created = 0;
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete();
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: 'fixture',
+              source: DramaSource.hongguo,
+              title: '暂停交接',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+            ],
+            initialIndex: 0,
+            preparerFactory: () => created++ == 0 ? first : second,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final player = tester
+          .widget<BetterPlayer>(find.byType(BetterPlayer))
+          .controller;
+      await player.seekTo(const Duration(seconds: 8));
+      platform.emit('pipStart');
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      player.postEvent(BetterPlayerEvent(BetterPlayerEventType.exception));
+      await tester.pump();
+      expect(first.cancelled, isTrue);
+      expect(created, 1);
+      platform.emit('pipStop');
+      await tester.pump();
+      final plays = platform.plays.length;
+      gate.complete();
+      await tester.pumpAndSettle();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(created, 2);
+      expect(second.requested, isFalse);
+      expect(
+        player.videoPlayerController!.value.position,
+        const Duration(seconds: 8),
+      );
+      expect(player.isPlaying(), isFalse);
+      expect(platform.plays, hasLength(plays));
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    },
+  );
 
   for (final mode in ['failure', 'rapid selection']) {
     testWidgets('session source handoff survives $mode', (tester) async {
