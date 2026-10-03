@@ -1,3 +1,5 @@
+import 'series_title.dart';
+
 enum DramaSource {
   hongguo('红果', '真人 · 漫剧 · AI 剧'),
   huangguo('黄果', '发现更多好故事'),
@@ -201,18 +203,113 @@ class ResolvedMedia {
   final bool hls, castDirect;
 }
 
+class SeasonNotice {
+  const SeasonNotice(this.drama, {this.read = false});
+  final Drama drama;
+  final bool read;
+  Map<String, dynamic> toJson() => {'drama': drama.toJson(), 'read': read};
+}
+
+class SeasonReminder {
+  SeasonReminder({
+    required this.anchor,
+    required this.updatedAt,
+    DateTime? enabledAt,
+    this.initialized = false,
+    Map<String, SeasonNotice> seasons = const {},
+  }) : enabledAt = enabledAt ?? updatedAt,
+       seasons = Map.unmodifiable(seasons);
+  final Drama anchor;
+  final DateTime updatedAt;
+  final DateTime enabledAt;
+  final bool initialized;
+  final Map<String, SeasonNotice> seasons;
+  int get unreadCount => seasons.values.where((n) => !n.read).length;
+  Map<String, dynamic> toJson() => {
+    'anchor': anchor.toJson(),
+    'updatedAt': updatedAt.toUtc().toIso8601String(),
+    'enabledAt': enabledAt.toUtc().toIso8601String(),
+    'initialized': initialized,
+    'seasons': {for (final n in seasons.entries) n.key: n.value.toJson()},
+  };
+  factory SeasonReminder.fromJson(Map<String, dynamic> json) {
+    final anchor = Drama.fromJson(
+      Map<String, dynamic>.from(json['anchor'] as Map),
+    );
+    final info = SeriesTitle.parse(anchor.title);
+    final initialized = json['initialized'];
+    final raw = json['seasons'];
+    if (anchor.source != DramaSource.hongguo ||
+        info == null ||
+        initialized is! bool ||
+        raw is! Map ||
+        raw.length > 200) {
+      throw const FormatException('新季提醒无效');
+    }
+    final seasons = <String, SeasonNotice>{};
+    String? unit = info.unit;
+    for (final entry in raw.entries) {
+      final row = Map<String, dynamic>.from(entry.value as Map);
+      final drama = Drama.fromJson(
+        Map<String, dynamic>.from(row['drama'] as Map),
+      );
+      final season = SeriesTitle.parse(drama.title);
+      final read = row['read'];
+      if (entry.key != drama.key ||
+          drama.source != anchor.source ||
+          season == null ||
+          season.key != info.key ||
+          season.unit == null ||
+          season.season <= info.season ||
+          read is! bool ||
+          (!initialized && !read) ||
+          (unit != null && unit != season.unit)) {
+        throw const FormatException('新季提醒无效');
+      }
+      unit = season.unit;
+      seasons[drama.key] = SeasonNotice(drama, read: read);
+    }
+    final updatedAt = DateTime.parse(json['updatedAt'] as String);
+    final enabledAt = DateTime.parse(json['enabledAt'] as String);
+    if (enabledAt.isAfter(updatedAt)) throw const FormatException('新季提醒时间无效');
+    return SeasonReminder(
+      anchor: anchor,
+      seasons: seasons,
+      initialized: initialized,
+      updatedAt: updatedAt,
+      enabledAt: enabledAt,
+    );
+  }
+}
+
 class RecordBackup {
-  RecordBackup(this.favorites, this.history);
+  RecordBackup(this.favorites, this.history, {this.seasonReminders = const []});
   final List<Drama> favorites;
   final List<WatchRecord> history;
+  final List<SeasonReminder> seasonReminders;
   factory RecordBackup.fromJson(Map<String, dynamic> json) {
-    if (json['format'] != 'guoguo.records' || json['version'] != 1) {
+    if (json['format'] != 'guoguo.records' ||
+        !const [1, 2].contains(json['version'])) {
       throw const FormatException('不支持的备份格式或版本');
     }
     final favorites = json['favorites'] as List;
     final history = json['history'] as List;
-    if (favorites.length > 100000 || history.length > 100000) {
+    final reminders = json['version'] == 2
+        ? json['seasonReminders'] as List
+        : const [];
+    if (favorites.length > 100000 ||
+        history.length > 100000 ||
+        reminders.length > 1000) {
       throw const FormatException('备份记录过多');
+    }
+    final parsedReminders = reminders
+        .map(
+          (v) => SeasonReminder.fromJson(Map<String, dynamic>.from(v as Map)),
+        )
+        .toList();
+    if (parsedReminders.map((r) => r.anchor.key).toSet().length !=
+        parsedReminders.length) {
+      throw const FormatException('新季提醒重复');
     }
     return RecordBackup(
       favorites
@@ -221,12 +318,15 @@ class RecordBackup {
       history
           .map((v) => WatchRecord.fromJson(Map<String, dynamic>.from(v as Map)))
           .toList(),
+      seasonReminders: parsedReminders,
     );
   }
   Map<String, dynamic> toJson() => {
     'format': 'guoguo.records',
-    'version': 1,
+    'version': seasonReminders.isEmpty ? 1 : 2,
     'favorites': favorites.map((v) => v.toJson()).toList(),
     'history': history.map((v) => v.toJson()).toList(),
+    if (seasonReminders.isNotEmpty)
+      'seasonReminders': seasonReminders.map((v) => v.toJson()).toList(),
   };
 }

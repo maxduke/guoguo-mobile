@@ -2,11 +2,14 @@ import 'dart:convert';
 import 'dart:async';
 
 import 'search_cache.dart';
+import 'series_lookup.dart';
 export 'search_cache.dart' show CatalogSearchResult;
 
 import 'package:flutter/material.dart';
 
 import '../domain/models.dart';
+import '../domain/catalog_query.dart';
+import '../domain/series_title.dart';
 import '../domain/playback_diagnostic.dart';
 import '../platform/provider_client.dart';
 import 'storage.dart';
@@ -47,6 +50,8 @@ class AppStore extends ChangeNotifier {
   final Map<String, Future<List<Episode>>> _episodeRequests = {};
   final Map<String, String> episodeErrors = {};
   bool checkingUpdates = false;
+  int _updateGeneration = 0;
+  SeriesLookup? _updateLookup;
   bool hideVip = true;
   final List<String> recentSearches = [];
   final Map<String, Future<Drama>> _detailRequests = {};
@@ -61,6 +66,10 @@ class AppStore extends ChangeNotifier {
   final Map<String, List<Episode>> episodeCache = {};
   final Map<String, Drama> favorites = {};
   final Map<String, WatchRecord> history = {};
+  final Map<String, SeasonReminder> seasonReminders = {};
+  DateTime? _lastReminderEnabledAt;
+  final Set<SeriesLookup> _seriesLookups = {};
+  bool _closed = false;
   final libraryChanges = ChangeNotifier();
   final searchCache = SearchCache();
   final Map<String, Future<CatalogSearchResult>> _searchRequests = {};
@@ -301,6 +310,7 @@ class AppStore extends ChangeNotifier {
     'records': RecordBackup(
       favorites.values.toList(),
       history.values.toList(),
+      seasonReminders: seasonReminders.values.toList(),
     ).toJson(),
     'searchCache': searchCache.toJson(),
     'catalogs': {
@@ -468,25 +478,40 @@ class AppStore extends ChangeNotifier {
     int page = 1,
     String? requestId,
     ValueChanged<CatalogSearchResult>? onPartial,
+    bool rememberQuery = true,
+    bool refresh = false,
+    bool Function()? isActive,
   }) async {
     query = query.trim().replaceAll(RegExp(r'\s+'), ' ');
     if (query.isEmpty) return CatalogSearchResult(catalogs[target] ?? []);
     final key = '${target.name}|$query|$page';
     final cached = searchCache.read(key, now());
-    if (cached != null) {
+    if (cached != null && !refresh) {
       onPartial?.call(cached.result);
       if (cached.fresh || offline) return cached.result;
     }
     if (offline) throw const ProviderException('当前离线，可继续搜索已缓存的短剧');
     // Independent owners with progress/cancellation must not share request IDs.
     final pending = _searchRequests[key];
-    if (requestId == null && onPartial == null && pending != null) {
+    if (requestId == null &&
+        onPartial == null &&
+        rememberQuery &&
+        !refresh &&
+        pending != null) {
       return pending;
     }
     final id =
         requestId ?? 'store-${++_searchSerial}-${now().microsecondsSinceEpoch}';
-    final operation = _searchCatalog(target, query, page, id, onPartial);
-    if (requestId == null && onPartial == null) {
+    final operation = _searchCatalog(
+      target,
+      query,
+      page,
+      id,
+      onPartial,
+      rememberQuery,
+      isActive,
+    );
+    if (requestId == null && onPartial == null && rememberQuery && !refresh) {
       _searchRequests[key] = operation;
     }
     try {
@@ -515,6 +540,8 @@ class AppStore extends ChangeNotifier {
     int page,
     String id,
     ValueChanged<CatalogSearchResult>? onPartial,
+    bool rememberQuery,
+    bool Function()? isActive,
   ) async {
     Timer? timer;
     bool polling = false, completed = false;
@@ -526,11 +553,16 @@ class AppStore extends ChangeNotifier {
     };
     if (target == DramaSource.hongguo && onPartial != null) {
       timer = Timer.periodic(const Duration(milliseconds: 700), (_) async {
+        if (isActive?.call() == false) {
+          timer?.cancel();
+          return;
+        }
         if (polling || completed) return;
         polling = true;
         try {
           final response = await provider.call('searchProgress', args);
           if (!completed &&
+              isActive?.call() != false &&
               response['source'] == target.name &&
               response['query'] == query) {
             final partial = _searchResult(response, target);
@@ -546,13 +578,17 @@ class AppStore extends ChangeNotifier {
     try {
       final response = await provider.call('search', args);
       completed = true;
+      if (isActive?.call() == false) throw const SeriesLookupCancelled();
       final result = _searchResult(response, target);
       searchCache.put('${target.name}|$query|$page', result, now());
-      recentSearches.remove(query);
-      recentSearches.insert(0, query);
-      if (recentSearches.length > 10) recentSearches.removeLast();
+      if (rememberQuery) {
+        recentSearches.remove(query);
+        recentSearches.insert(0, query);
+        if (recentSearches.length > 10) recentSearches.removeLast();
+      }
       _mergeCatalog(target, result.items);
       await persist();
+      if (isActive?.call() == false) throw const SeriesLookupCancelled();
       notifyListeners();
       return result;
     } finally {
@@ -578,6 +614,249 @@ class AppStore extends ChangeNotifier {
     _mergeCatalog(DramaSource.hongguo, incoming);
     await persist();
     notifyListeners();
+  }
+
+  List<Drama> relatedTo(Drama anchor, {int limit = 200}) =>
+      relatedSeries(anchor, [
+        ...catalogs.values.expand((rows) => rows),
+        ...searchCache.dramas,
+        ...favorites.values,
+        ...history.values.map((r) => r.drama),
+        ...seasonReminders.values.expand(
+          (r) => r.seasons.values.map((n) => n.drama),
+        ),
+      ], limit: limit);
+
+  SeriesLookup lookupSeries(
+    Drama anchor, {
+    bool refresh = false,
+    ValueChanged<CatalogSearchResult>? onPartial,
+  }) {
+    final info = SeriesTitle.parse(anchor.title);
+    if (anchor.source != DramaSource.hongguo ||
+        info == null ||
+        info.baseTitle.runes.length > 80) {
+      throw const ProviderException('这部剧暂不支持同系列联网补全');
+    }
+    var active = true;
+    String? requestId;
+    final cancelled = Completer<CatalogSearchResult>();
+    Timer? timeout;
+    void abort(Object error) {
+      if (!active) return;
+      active = false;
+      timeout?.cancel();
+      if (requestId != null) {
+        unawaited(cancelSearch(anchor.source, info.baseTitle, requestId!));
+      }
+      cancelled.completeError(error);
+    }
+
+    final candidates = <String, Drama>{
+      for (final d in relatedTo(anchor, limit: 201)) d.key: d,
+    };
+    CatalogSearchResult snapshot(CatalogSearchResult result) {
+      final matches = relatedSeries(anchor, candidates.values, limit: 201);
+      return CatalogSearchResult(
+        matches.take(200).toList(),
+        warning: result.warning,
+        limited: result.limited || matches.length > 200,
+        hasMore: result.hasMore,
+        total: result.total,
+      );
+    }
+
+    Future<CatalogSearchResult> run() async {
+      if (offline) {
+        return snapshot(
+          const CatalogSearchResult(
+            [],
+            limited: true,
+            warning: '当前离线，显示已有同系列作品',
+          ),
+        );
+      }
+      var result = const CatalogSearchResult(<Drama>[]);
+      for (var page = 1; page <= 3; page++) {
+        if (!active) throw const SeriesLookupCancelled();
+        requestId = 'series-${++_searchSerial}-${now().microsecondsSinceEpoch}';
+        result = await searchCatalog(
+          anchor.source,
+          info.baseTitle,
+          page: page,
+          requestId: requestId,
+          rememberQuery: false,
+          refresh: refresh,
+          isActive: () => active && !_closed,
+          onPartial: (partial) {
+            if (!active) return;
+            for (final d in partial.items) {
+              candidates[d.key] = d;
+            }
+            onPartial?.call(snapshot(partial));
+          },
+        );
+        if (!active) throw const SeriesLookupCancelled();
+        for (final d in result.items) {
+          candidates[d.key] = d;
+        }
+        onPartial?.call(snapshot(result));
+        if (!result.hasMore || result.warning.isNotEmpty || result.limited) {
+          break;
+        }
+      }
+      return snapshot(result);
+    }
+
+    timeout = Timer(
+      const Duration(seconds: 20),
+      () => abort(const ProviderException('同系列搜索超时，请重试')),
+    );
+    late SeriesLookup lookup;
+    final future = Future.any([run(), cancelled.future]).whenComplete(() {
+      active = false;
+      timeout?.cancel();
+      _seriesLookups.remove(lookup);
+    });
+    lookup = SeriesLookup(future, () => abort(const SeriesLookupCancelled()));
+    _seriesLookups.add(lookup);
+    return lookup;
+  }
+
+  void cancelSeriesLookups() {
+    for (final lookup in _seriesLookups.toList()) {
+      lookup.cancel();
+    }
+  }
+
+  Future<void> toggleSeasonReminder(Drama drama) async {
+    final previous = seasonReminders[drama.key];
+    if (previous != null) {
+      seasonReminders.remove(drama.key);
+    } else {
+      if (drama.source != DramaSource.hongguo ||
+          SeriesTitle.parse(drama.title) == null ||
+          seasonReminders.length >= 1000) {
+        throw const ProviderException('暂时无法添加新季提醒');
+      }
+      seasonReminders[drama.key] = SeasonReminder(
+        anchor: drama,
+        updatedAt: _newReminderTime(),
+      );
+    }
+    final updated = seasonReminders[drama.key];
+    try {
+      await persist();
+    } catch (_) {
+      if (identical(seasonReminders[drama.key], updated)) {
+        if (previous == null) {
+          seasonReminders.remove(drama.key);
+        } else {
+          seasonReminders[drama.key] = previous;
+        }
+      }
+      if (!_closed) notifyListeners();
+      rethrow;
+    }
+    if (!_closed) notifyListeners();
+  }
+
+  DateTime _newReminderTime() {
+    final date = now();
+    final previous = _lastReminderEnabledAt;
+    return _lastReminderEnabledAt = previous == null || date.isAfter(previous)
+        ? date
+        : previous.add(const Duration(microseconds: 1));
+  }
+
+  DateTime _reminderTime(SeasonReminder previous) {
+    final date = now();
+    return date.isAfter(previous.updatedAt)
+        ? date
+        : previous.updatedAt.add(const Duration(microseconds: 1));
+  }
+
+  Future<void> observeSeasons(
+    Drama anchor,
+    CatalogSearchResult result, {
+    SeasonReminder? expected,
+  }) async {
+    final current = seasonReminders[anchor.key];
+    if (current == null ||
+        (expected != null && current.enabledAt != expected.enabledAt)) {
+      return;
+    }
+    final complete =
+        !result.limited && !result.hasMore && result.warning.isEmpty;
+    if (!current.initialized && !complete) return;
+    final info = SeriesTitle.parse(current.anchor.title)!;
+    final seasons = Map<String, SeasonNotice>.of(current.seasons);
+    for (final drama in relatedSeries(current.anchor, result.items)) {
+      final season = SeriesTitle.parse(drama.title)!;
+      if (season.season <= info.season ||
+          (seasons.isNotEmpty &&
+              SeriesTitle.parse(seasons.values.first.drama.title)!.unit !=
+                  season.unit)) {
+        continue;
+      }
+      if (!seasons.containsKey(drama.key) && seasons.length >= 200) continue;
+      seasons[drama.key] = SeasonNotice(
+        drama,
+        read: seasons[drama.key]?.read ?? !current.initialized,
+      );
+    }
+    final updated = SeasonReminder(
+      anchor: current.anchor,
+      updatedAt: _reminderTime(current),
+      enabledAt: current.enabledAt,
+      initialized: current.initialized || complete,
+      seasons: seasons,
+    );
+    seasonReminders[anchor.key] = updated;
+    try {
+      await persist();
+    } catch (_) {
+      if (identical(seasonReminders[anchor.key], updated)) {
+        seasonReminders[anchor.key] = current;
+      }
+      if (!_closed) notifyListeners();
+      rethrow;
+    }
+    if (!_closed) notifyListeners();
+  }
+
+  Future<void> markSeasonRead(String key) async {
+    final old = <String, SeasonReminder>{};
+    final changed = <String, SeasonReminder>{};
+    for (final entry in seasonReminders.entries.toList()) {
+      final notice = entry.value.seasons[key];
+      if (notice == null || notice.read) continue;
+      old[entry.key] = entry.value;
+      changed[entry.key] = SeasonReminder(
+        anchor: entry.value.anchor,
+        initialized: entry.value.initialized,
+        updatedAt: _reminderTime(entry.value),
+        enabledAt: entry.value.enabledAt,
+        seasons: {
+          ...entry.value.seasons,
+          key: SeasonNotice(notice.drama, read: true),
+        },
+      );
+    }
+    if (changed.isEmpty) return;
+    seasonReminders.addAll(changed);
+    try {
+      await persist();
+    } catch (_) {
+      for (final entry in old.entries) {
+        if (identical(seasonReminders[entry.key], changed[entry.key])) {
+          seasonReminders[entry.key] = entry.value;
+        }
+      }
+      if (!_closed) notifyListeners();
+      rethrow;
+    }
+    if (!_closed) notifyListeners();
   }
 
   Future<void> setHideVip(bool value) async {
@@ -772,25 +1051,68 @@ class AppStore extends ChangeNotifier {
     }
   }
 
-  Future<void> checkFavoriteUpdates() async {
-    if (checkingUpdates) return;
+  Future<bool> checkFavoriteUpdates() async {
+    if (checkingUpdates) return false;
     if (offline) throw const ProviderException('请联网后检查更新');
     checkingUpdates = true;
+    final generation = ++_updateGeneration;
     notifyListeners();
     var failures = 0;
     try {
       for (final drama in favorites.values.toList()) {
+        if (generation != _updateGeneration) break;
         try {
           await episodes(drama, refresh: true);
         } catch (_) {
           failures++;
         }
       }
+      final results = <String, CatalogSearchResult>{};
+      for (final reminder in seasonReminders.values.toList()) {
+        if (generation != _updateGeneration) break;
+        if (seasonReminders[reminder.anchor.key]?.enabledAt !=
+            reminder.enabledAt) {
+          continue;
+        }
+        final info = SeriesTitle.parse(reminder.anchor.title)!;
+        final query = '${info.key}|${info.unit ?? ''}';
+        try {
+          var result = results[query];
+          if (result == null) {
+            _updateLookup = lookupSeries(reminder.anchor, refresh: true);
+            final found = await _updateLookup!.result;
+            result = CatalogSearchResult(
+              [reminder.anchor, ...found.items],
+              warning: found.warning,
+              limited: found.limited,
+              hasMore: found.hasMore,
+            );
+            results[query] = result;
+          }
+          if (generation != _updateGeneration) break;
+          await observeSeasons(reminder.anchor, result, expected: reminder);
+          if (result.limited || result.hasMore || result.warning.isNotEmpty) {
+            failures++;
+          }
+        } on SeriesLookupCancelled {
+          break;
+        } catch (_) {
+          failures++;
+        }
+      }
     } finally {
+      _updateLookup = null;
       checkingUpdates = false;
-      notifyListeners();
+      if (!_closed) notifyListeners();
     }
-    if (failures > 0) throw ProviderException('$failures 部剧更新失败，已保留原有分集');
+    if (generation != _updateGeneration) return false;
+    if (failures > 0) throw ProviderException('$failures 部剧更新失败，已保留原有记录');
+    return true;
+  }
+
+  void cancelUpdateChecks() {
+    _updateGeneration++;
+    _updateLookup?.cancel();
   }
 
   Future<void> toggleFavorite(Drama drama) async {
@@ -928,12 +1250,19 @@ class AppStore extends ChangeNotifier {
 
   @override
   void dispose() {
+    _closed = true;
+    cancelUpdateChecks();
+    cancelSeriesLookups();
     libraryChanges.dispose();
     super.dispose();
   }
 
   String exportBackup() => const JsonEncoder.withIndent('  ').convert(
-    RecordBackup(favorites.values.toList(), history.values.toList()).toJson(),
+    RecordBackup(
+      favorites.values.toList(),
+      history.values.toList(),
+      seasonReminders: seasonReminders.values.toList(),
+    ).toJson(),
   );
   RecordBackup inspectBackup(String raw) {
     if (utf8.encode(raw).length > 20 * 1024 * 1024) {
@@ -949,9 +1278,18 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> importBackup(RecordBackup backup) async {
+    if ({
+          ...seasonReminders.keys,
+          ...backup.seasonReminders.map((r) => r.anchor.key),
+        }.length >
+        1000) {
+      throw const FormatException('合并后的新季提醒超过上限，原记录未修改');
+    }
     final oldFavorites = Map<String, Drama>.of(favorites);
     final oldHistory = Map<String, WatchRecord>.of(history);
+    final oldReminders = Map<String, SeasonReminder>.of(seasonReminders);
     _merge(backup);
+    final installedReminders = Map<String, SeasonReminder>.of(seasonReminders);
     try {
       await persist();
     } catch (_) {
@@ -961,6 +1299,16 @@ class AppStore extends ChangeNotifier {
       history
         ..clear()
         ..addAll(oldHistory);
+      for (final entry in installedReminders.entries) {
+        if (!identical(seasonReminders[entry.key], entry.value)) continue;
+        final previous = oldReminders[entry.key];
+        if (previous == null) {
+          seasonReminders.remove(entry.key);
+        } else {
+          seasonReminders[entry.key] = previous;
+        }
+      }
+      if (!_closed) notifyListeners();
       rethrow;
     }
     notifyListeners();
@@ -974,6 +1322,16 @@ class AppStore extends ChangeNotifier {
       final existing = history[record.drama.key];
       if (existing == null || record.updatedAt.isAfter(existing.updatedAt)) {
         history[record.drama.key] = record;
+      }
+    }
+    for (final reminder in backup.seasonReminders) {
+      final existing = seasonReminders[reminder.anchor.key];
+      if (existing == null || reminder.updatedAt.isAfter(existing.updatedAt)) {
+        seasonReminders[reminder.anchor.key] = reminder;
+        if (_lastReminderEnabledAt == null ||
+            reminder.enabledAt.isAfter(_lastReminderEnabledAt!)) {
+          _lastReminderEnabledAt = reminder.enabledAt;
+        }
       }
     }
   }
