@@ -266,6 +266,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               const _Notice('当前离线 · 可以浏览缓存与观看已下载分集', Icons.wifi_off_rounded),
             if (store.persistenceError != null)
               _Notice(store.persistenceError!, Icons.warning_amber_rounded),
+            if (store.cachePersistenceError != null)
+              _Notice(
+                store.cachePersistenceError!,
+                Icons.warning_amber_rounded,
+              ),
             Expanded(
               child: IndexedStack(
                 index: _tab,

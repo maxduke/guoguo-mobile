@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:path_provider/path_provider.dart';
+
 import 'data/app_store.dart';
 import 'data/download_store.dart';
 import 'data/storage.dart';
@@ -48,7 +50,7 @@ class _BootstrapState extends State<Bootstrap> {
       final directory = await getApplicationSupportDirectory();
       final provider = NativeProviderClient();
       final store = AppStore(
-        storage: FileStorage(Directory('${directory.path}/records')),
+        storage: AppFileStorage(Directory('${directory.path}/records')),
         provider: provider,
       );
       await store.load();
