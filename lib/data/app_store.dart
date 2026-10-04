@@ -6,6 +6,7 @@ import 'series_lookup.dart';
 export 'search_cache.dart' show CatalogSearchResult;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show listEquals, mapEquals;
 
 import '../domain/models.dart';
 import '../domain/catalog_query.dart';
@@ -85,7 +86,9 @@ class AppStore extends ChangeNotifier {
   bool progressivePreparation = false;
   double playbackSpeed = 1;
   bool offline = false;
-  String? persistenceError;
+  String? persistenceError, cachePersistenceError;
+  bool _hasRecordState = false;
+  final _historyJson = <String, (WatchRecord, Map<String, dynamic>)>{};
   final Map<String, _CatalogSlice> _slices = {};
   final Map<DramaSource, String> selectedCategories = {};
   final Map<DramaSource, List<SourceCategory>> sourceCategories = {};
@@ -121,7 +124,7 @@ class AppStore extends ChangeNotifier {
           .map((v) => SourceCategory(v['id'] as String, v['name'] as String))
           .toList();
       categoryErrors.remove(target);
-      await persist();
+      await persist(records: false);
     } catch (error) {
       categoryErrors[target] = '$error';
     } finally {
@@ -137,7 +140,7 @@ class AppStore extends ChangeNotifier {
     if (!_slices.containsKey(_sliceKey(target, category))) {
       await _loadCategory(target, category, more: false);
     }
-    await persist();
+    await persist(cache: false);
   }
 
   Future<void> _loadCategory(
@@ -171,7 +174,7 @@ class AppStore extends ChangeNotifier {
       final warning = result['warning'] as String? ?? '';
       slice.error = warning.isEmpty ? null : warning;
       _mergeCatalog(target, rows);
-      await persist();
+      await persist(records: false);
     } catch (error) {
       slice.error = '$error';
     } finally {
@@ -188,44 +191,26 @@ class AppStore extends ChangeNotifier {
     final state = await storage.read();
     if (state != null) discardDeletedSources(state);
     if (state == null) return;
-    searchCache.restore(state["searchCache"] as Map? ?? {});
     if (state['version'] != 1) throw const FormatException('本地数据版本不受支持，已保留原文件');
-    // Parse the entire document before mutating state.
+    // Validate durable records before mutating state; cache is loaded separately.
     final backup = RecordBackup.fromJson(
       Map<String, dynamic>.from(state['records'] as Map),
     );
-    final loadedCatalogs = <DramaSource, List<Drama>>{};
-    for (final entry in (state['catalogs'] as Map? ?? {}).entries) {
-      loadedCatalogs[DramaSource.parse(entry.key)] = (entry.value as List)
-          .map((v) => Drama.fromJson(Map<String, dynamic>.from(v as Map)))
-          .toList();
-    }
-    final loadedEpisodes = <String, List<Episode>>{};
-    for (final entry in (state['episodes'] as Map? ?? {}).entries) {
-      final rows = entry.value as List;
-      loadedEpisodes[entry.key as String] = [
-        for (var i = 0; i < rows.length; i++)
-          Episode.fromJson(Map<String, dynamic>.from(rows[i] as Map), i),
-      ];
-    }
-    final loadedSlices = <String, _CatalogSlice>{
-      for (final entry in (state['categorySlices'] as Map? ?? {}).entries)
-        entry.key as String: _CatalogSlice.fromJson(entry.value as Map),
-    };
     final loadedSelections = <DramaSource, String>{
       for (final entry in (state['selectedCategories'] as Map? ?? {}).entries)
         DramaSource.parse(entry.key): entry.value as String,
     };
-    final loadedCategories = <DramaSource, List<SourceCategory>>{
-      for (final entry in (state['sourceCategories'] as Map? ?? {}).entries)
-        DramaSource.parse(entry.key): (entry.value as List)
-            .map((v) => SourceCategory(v['id'] as String, v['name'] as String))
-            .toList(),
+    final loadedSource = DramaSource.parse(state['source'] ?? 'hongguo');
+    final loadedSearches = (state['recentSearches'] as List? ?? [])
+        .cast<String>()
+        .take(10)
+        .toList();
+    final loadedSeen = <String, Set<String>>{
+      for (final entry in (state['episodeSeenIds'] as Map? ?? {}).entries)
+        entry.key as String: Set<String>.from(entry.value as List),
     };
-    sourceCategories.addAll(loadedCategories);
-    _slices.addAll(loadedSlices);
     selectedCategories.addAll(loadedSelections);
-    source = DramaSource.parse(state['source'] ?? 'hongguo');
+    source = loadedSource;
     themeMode = ThemeMode.values.firstWhere(
       (v) => v.name == state['theme'],
       orElse: () => ThemeMode.system,
@@ -240,26 +225,8 @@ class AppStore extends ChangeNotifier {
       playbackSpeed = speed.toDouble();
     }
     hideVip = state['hideVip'] != false;
-    recentSearches.addAll(
-      (state['recentSearches'] as List? ?? []).cast<String>().take(10),
-    );
-    catalogs.addAll(loadedCatalogs);
-    for (final entry in (state['pages'] as Map? ?? {}).entries) {
-      catalogPages[DramaSource.parse(entry.key)] = entry.value as int;
-    }
-    for (final entry in (state['hasMore'] as Map? ?? {}).entries) {
-      hasMore[DramaSource.parse(entry.key)] = entry.value == true;
-    }
-    episodeCache.addAll(loadedEpisodes);
-    for (final entry in (state['episodeUpdatedAt'] as Map? ?? {}).entries) {
-      final date = DateTime.tryParse('${entry.value}');
-      if (date != null) episodeUpdatedAt[entry.key as String] = date;
-    }
-    for (final entry in (state['episodeSeenIds'] as Map? ?? {}).entries) {
-      episodeSeenIds[entry.key as String] = Set<String>.from(
-        entry.value as List,
-      );
-    }
+    recentSearches.addAll(loadedSearches);
+    episodeSeenIds.addAll(loadedSeen);
     for (final raw in (state['playbackDiagnostics'] as List? ?? []).take(
       maxPlaybackDiagnostics,
     )) {
@@ -272,30 +239,89 @@ class AppStore extends ChangeNotifier {
       }
     }
     _merge(backup);
+    _hasRecordState = true;
+    _restoreCatalogCache(state);
     notifyListeners();
   }
 
-  Map<String, dynamic> snapshot() => {
-    'sourceCategories': {
-      for (final entry in sourceCategories.entries)
-        entry.key.name: entry.value
-            .map((v) => {'id': v.id, 'name': v.name})
-            .toList(),
-    },
-    'categorySlices': {
-      for (final entry in _slices.entries) entry.key: entry.value.toJson(),
-    },
+  void _restoreCatalogCache(Map<String, dynamic> state) {
+    cachePersistenceError = storage is PartitionedStorage
+        ? (storage as PartitionedStorage).cacheReadError
+        : null;
+    try {
+      // Validate all reconstructible data before installing it. Damaged cache
+      // must not stop the app from opening its durable records and settings.
+      final loadedCatalogs = <DramaSource, List<Drama>>{
+        for (final entry in (state['catalogs'] as Map? ?? {}).entries)
+          DramaSource.parse(entry.key): (entry.value as List)
+              .map((v) => Drama.fromJson(Map<String, dynamic>.from(v as Map)))
+              .toList(),
+      };
+      final loadedEpisodes = <String, List<Episode>>{};
+      for (final entry in (state['episodes'] as Map? ?? {}).entries) {
+        final rows = entry.value as List;
+        loadedEpisodes[entry.key as String] = [
+          for (var i = 0; i < rows.length; i++)
+            Episode.fromJson(Map<String, dynamic>.from(rows[i] as Map), i),
+        ];
+      }
+      final loadedSlices = <String, _CatalogSlice>{
+        for (final entry in (state['categorySlices'] as Map? ?? {}).entries)
+          entry.key as String: _CatalogSlice.fromJson(entry.value as Map),
+      };
+      final loadedCategories = <DramaSource, List<SourceCategory>>{
+        for (final entry in (state['sourceCategories'] as Map? ?? {}).entries)
+          DramaSource.parse(entry.key): (entry.value as List)
+              .map(
+                (v) => SourceCategory(v['id'] as String, v['name'] as String),
+              )
+              .toList(),
+      };
+      final loadedPages = <DramaSource, int>{
+        for (final entry in (state['pages'] as Map? ?? {}).entries)
+          DramaSource.parse(entry.key): entry.value as int,
+      };
+      final loadedMore = <DramaSource, bool>{
+        for (final entry in (state['hasMore'] as Map? ?? {}).entries)
+          DramaSource.parse(entry.key): entry.value == true,
+      };
+      final loadedTimes = <String, DateTime>{};
+      for (final entry in (state['episodeUpdatedAt'] as Map? ?? {}).entries) {
+        final date = DateTime.tryParse('${entry.value}');
+        if (date != null) loadedTimes[entry.key as String] = date;
+      }
+      final searches = state['searchCache'] as Map? ?? {};
+      catalogs.addAll(loadedCatalogs);
+      episodeCache.addAll(loadedEpisodes);
+      _slices.addAll(loadedSlices);
+      sourceCategories.addAll(loadedCategories);
+      catalogPages.addAll(loadedPages);
+      hasMore.addAll(loadedMore);
+      episodeUpdatedAt.addAll(loadedTimes);
+      searchCache.restore(searches);
+    } catch (_) {
+      cachePersistenceError = '目录缓存无法读取，可联网重新加载';
+    }
+  }
+
+  List<Map<String, dynamic>> _historyRows() {
+    _historyJson.removeWhere((key, _) => !history.containsKey(key));
+    return [
+      for (final entry in history.entries)
+        (_historyJson[entry.key] =
+                identical(_historyJson[entry.key]?.$1, entry.value)
+                ? _historyJson[entry.key]!
+                : (entry.value, entry.value.toJson()))
+            .$2,
+    ];
+  }
+
+  Map<String, dynamic> _recordSnapshot() => {
+    'version': 1,
     'selectedCategories': {
       for (final entry in selectedCategories.entries)
         entry.key.name: entry.value,
     },
-    'pages': {
-      for (final entry in catalogPages.entries) entry.key.name: entry.value,
-    },
-    'hasMore': {
-      for (final entry in hasMore.entries) entry.key.name: entry.value,
-    },
-    'version': 1,
     'playbackDiagnostics': playbackDiagnostics.map((d) => d.toJson()).toList(),
     'source': source.name,
     'theme': themeMode.name,
@@ -307,11 +333,39 @@ class AppStore extends ChangeNotifier {
     'playbackSpeed': playbackSpeed,
     'hideVip': hideVip,
     'recentSearches': List<String>.of(recentSearches),
-    'records': RecordBackup(
-      favorites.values.toList(),
-      history.values.toList(),
-      seasonReminders: seasonReminders.values.toList(),
-    ).toJson(),
+    'records': {
+      'format': 'guoguo.records',
+      'version': seasonReminders.isEmpty ? 1 : 2,
+      'favorites': favorites.values.map((d) => d.toJson()).toList(),
+      'history': _historyRows(),
+      if (seasonReminders.isNotEmpty)
+        'seasonReminders': seasonReminders.values
+            .map((r) => r.toJson())
+            .toList(),
+    },
+    // This baseline reflects what the user has read, not disposable metadata.
+    'episodeSeenIds': {
+      for (final entry in episodeSeenIds.entries)
+        entry.key: entry.value.toList(),
+    },
+  };
+
+  Map<String, dynamic> _cacheSnapshot() => {
+    'sourceCategories': {
+      for (final entry in sourceCategories.entries)
+        entry.key.name: entry.value
+            .map((v) => {'id': v.id, 'name': v.name})
+            .toList(),
+    },
+    'categorySlices': {
+      for (final entry in _slices.entries) entry.key: entry.value.toJson(),
+    },
+    'pages': {
+      for (final entry in catalogPages.entries) entry.key.name: entry.value,
+    },
+    'hasMore': {
+      for (final entry in hasMore.entries) entry.key.name: entry.value,
+    },
     'searchCache': searchCache.toJson(),
     'catalogs': {
       for (final entry in catalogs.entries)
@@ -321,24 +375,60 @@ class AppStore extends ChangeNotifier {
       for (final entry in episodeUpdatedAt.entries)
         entry.key: entry.value.toIso8601String(),
     },
-    'episodeSeenIds': {
-      for (final entry in episodeSeenIds.entries)
-        entry.key: entry.value.toList(),
-    },
     'episodes': {
       for (final entry in episodeCache.entries)
         entry.key: entry.value.map((v) => v.raw).toList(),
     },
   };
 
-  Future<void> persist() async {
-    try {
-      await storage.write(snapshot());
-      persistenceError = null;
-    } catch (_) {
-      persistenceError = '记录暂未保存，请检查可用空间后重试';
-      notifyListeners();
-      rethrow;
+  Map<String, dynamic> snapshot() => {
+    ..._recordSnapshot(),
+    // Public snapshots generate fresh record maps instead of exposing cached rows.
+    'records': RecordBackup(
+      favorites.values.toList(),
+      history.values.toList(),
+      seasonReminders: seasonReminders.values.toList(),
+    ).toJson(),
+    ..._cacheSnapshot(),
+  };
+
+  Future<void> persist({bool records = true, bool cache = true}) async {
+    Future<void> saveRecords(Future<void> operation) async {
+      try {
+        await operation;
+        persistenceError = null;
+        _hasRecordState = true;
+      } catch (_) {
+        persistenceError = '记录暂未保存，请检查可用空间后重试';
+        if (!_closed) notifyListeners();
+        rethrow;
+      }
+    }
+
+    Future<void> saveCache(Future<void> operation) async {
+      try {
+        await operation;
+        cachePersistenceError = null;
+      } catch (_) {
+        cachePersistenceError = '目录缓存暂未保存，请检查可用空间后重试';
+        if (!_closed) notifyListeners();
+        // Mixed operations may already have committed their durable state.
+        // A cache failure must not roll back a successfully saved reminder.
+        if (!records) rethrow;
+      }
+    }
+
+    final target = storage;
+    if (target is PartitionedStorage) {
+      // Queue both snapshots at invocation so overlapping operations preserve
+      // order within each file. Neither queue blocks the other file.
+      await Future.wait([
+        if (records || !_hasRecordState)
+          saveRecords(target.writeRecords(_recordSnapshot())),
+        if (cache) saveCache(target.writeCache(_cacheSnapshot())),
+      ]);
+    } else {
+      await saveRecords(target.write(snapshot()));
     }
   }
 
@@ -350,38 +440,38 @@ class AppStore extends ChangeNotifier {
         playbackDiagnostics.length,
       );
     }
-    await persist();
+    await persist(cache: false);
   }
 
   Future<void> clearPlaybackDiagnostics() async {
     playbackDiagnostics.clear();
-    await persist();
+    await persist(cache: false);
     notifyListeners();
   }
 
   Future<void> selectSource(DramaSource next) async {
     source = next;
     notifyListeners();
-    await persist();
+    await persist(cache: false);
   }
 
   Future<void> setTheme(ThemeMode mode) async {
     themeMode = mode;
     notifyListeners();
-    await persist();
+    await persist(cache: false);
   }
 
   Future<void> setNetwork({bool? downloads, bool? preload}) async {
     cellularDownloads = downloads ?? cellularDownloads;
     cellularPrefetch = preload ?? cellularPrefetch;
     notifyListeners();
-    await persist();
+    await persist(cache: false);
   }
 
   Future<void> setPrefetch(bool enabled) async {
     prefetch = enabled;
     notifyListeners();
-    await persist();
+    await persist(cache: false);
   }
 
   Future<void> setPlayback({
@@ -396,7 +486,7 @@ class AppStore extends ChangeNotifier {
     progressivePreparation = progressive ?? progressivePreparation;
     playbackSpeed = speed ?? playbackSpeed;
     notifyListeners();
-    await persist();
+    await persist(cache: false);
   }
 
   void setOffline(bool value) {
@@ -426,7 +516,7 @@ class AppStore extends ChangeNotifier {
       hasMore[target] = response['hasMore'] == true;
       final warning = response['warning'] as String? ?? '';
       if (warning.isNotEmpty) sourceErrors[target] = warning;
-      await persist();
+      await persist(records: false);
     } catch (error) {
       sourceErrors[target] = '$error';
     } finally {
@@ -460,7 +550,7 @@ class AppStore extends ChangeNotifier {
       } else {
         sourceErrors.remove(target);
       }
-      await persist();
+      await persist(records: false);
     } catch (error) {
       sourceErrors[target] = '$error';
     } finally {
@@ -612,7 +702,7 @@ class AppStore extends ChangeNotifier {
 
   Future<void> saveRecommendations(List<Drama> incoming) async {
     _mergeCatalog(DramaSource.hongguo, incoming);
-    await persist();
+    await persist(records: false);
     notifyListeners();
   }
 
@@ -746,7 +836,7 @@ class AppStore extends ChangeNotifier {
     }
     final updated = seasonReminders[drama.key];
     try {
-      await persist();
+      await persist(cache: false);
     } catch (_) {
       if (identical(seasonReminders[drama.key], updated)) {
         if (previous == null) {
@@ -814,7 +904,7 @@ class AppStore extends ChangeNotifier {
     );
     seasonReminders[anchor.key] = updated;
     try {
-      await persist();
+      await persist(cache: false);
     } catch (_) {
       if (identical(seasonReminders[anchor.key], updated)) {
         seasonReminders[anchor.key] = current;
@@ -846,7 +936,7 @@ class AppStore extends ChangeNotifier {
     if (changed.isEmpty) return;
     seasonReminders.addAll(changed);
     try {
-      await persist();
+      await persist(cache: false);
     } catch (_) {
       for (final entry in old.entries) {
         if (identical(seasonReminders[entry.key], changed[entry.key])) {
@@ -862,13 +952,13 @@ class AppStore extends ChangeNotifier {
   Future<void> setHideVip(bool value) async {
     hideVip = value;
     notifyListeners();
-    await persist();
+    await persist(cache: false);
   }
 
   Future<void> clearSearches() async {
     recentSearches.clear();
     notifyListeners();
-    await persist();
+    await persist(cache: false);
   }
 
   Future<List<String>> suggestions(String query) async {
@@ -993,7 +1083,7 @@ class AppStore extends ChangeNotifier {
 
   Future<void> markEpisodesSeen(Drama drama, List<Episode> rows) async {
     episodeSeenIds[drama.key] = rows.map((e) => e.id).toSet();
-    await persist();
+    await persist(cache: false);
     notifyListeners();
   }
 
@@ -1122,19 +1212,33 @@ class AppStore extends ChangeNotifier {
       favorites[drama.key] = drama;
     }
     notifyListeners();
-    await persist();
+    await persist(cache: false);
   }
 
   Future<void> saveWatch(WatchRecord record) async {
+    final previous = history[record.drama.key];
+    if (previous != null &&
+        persistenceError == null &&
+        previous.episodeId == record.episodeId &&
+        previous.episodeIndex == record.episodeIndex &&
+        previous.positionMs == record.positionMs &&
+        previous.durationMs == record.durationMs &&
+        listEquals(previous.drama.tags, record.drama.tags) &&
+        mapEquals(
+          {...previous.drama.toJson(), 'tags': null},
+          {...record.drama.toJson(), 'tags': null},
+        )) {
+      return;
+    }
     history[record.drama.key] = record;
     libraryChanges.notifyListeners();
-    await persist();
+    await persist(cache: false);
   }
 
   Future<void> removeHistory(String key) async {
     history.remove(key);
     notifyListeners();
-    await persist();
+    await persist(cache: false);
   }
 
   Future<Map<String, int>> importLibraryRows(List<Drama> rows) async {
@@ -1200,7 +1304,7 @@ class AppStore extends ChangeNotifier {
       }
     }
     try {
-      await persist();
+      await persist(records: false);
     } catch (_) {
       // Undo only this import. A refresh that completed while saving keeps its
       // own rows, including changes to sources outside the imported batch.
@@ -1291,7 +1395,7 @@ class AppStore extends ChangeNotifier {
     _merge(backup);
     final installedReminders = Map<String, SeasonReminder>.of(seasonReminders);
     try {
-      await persist();
+      await persist(cache: false);
     } catch (_) {
       favorites
         ..clear()
