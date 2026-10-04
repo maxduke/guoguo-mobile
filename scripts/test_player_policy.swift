@@ -35,6 +35,29 @@ struct PlayerPolicyTests {
         for (address, expected) in routes {
             precondition(GuoguoMediaPolicy.canUseAirPlay(url: address.flatMap { URL(string: $0) }) == expected)
         }
+        let holds: [(Bool, Bool, Bool, Bool)] = [
+            (false, false, false, false), // Ordinary phone file.
+            (false, false, true, false),
+            (false, true, true, false),
+            (true, false, false, true), // Inherited TV audio + local file must wait.
+            (true, false, true, true), // Relay installed; preparation still pending.
+            (true, true, false, true), // Prepared intent cannot authorize a local file.
+            (true, true, true, false), // Prepared first/next episode may play on TV.
+        ]
+        for (routed, prepared, readable, expected) in holds {
+            precondition(GuoguoMediaPolicy.shouldHoldForAirPlay(routed: routed, prepared: prepared, receiverReadable: readable) == expected)
+        }
+        let presentations: [(Bool, Bool, Bool, Bool)] = [
+            (true, false, false, false), // Local video still waits for dimensions.
+            (true, true, false, true), // Track dimensions can precede presentationSize.
+            (true, false, true, true), // Ready remote item must not deadlock setup.
+            (true, true, true, true),
+            (false, false, false, true), // Audio-only media does not need dimensions.
+            (false, false, true, true),
+        ]
+        for (video, size, external, expected) in presentations {
+            precondition(GuoguoMediaPolicy.canInitializePresentation(hasVideo: video, hasSize: size, externalRequested: external) == expected)
+        }
         let endings: [(Bool, Bool, Int64, Int64, Bool)] = [
             (false, true, 120000, 120000, false),
             (true, false, 120000, 120000, false),
@@ -47,6 +70,6 @@ struct PlayerPolicyTests {
         for (prepared, playing, position, duration, expected) in endings {
             precondition(GuoguoMediaPolicy.shouldCompleteAirPlay(prepared: prepared, playing: playing, positionMs: position, durationMs: duration) == expected)
         }
-        print("Player media policy: \(cases.count + 4 + routes.count + endings.count) cases passed")
+        print("Player media policy: \(cases.count + 4 + routes.count + holds.count + presentations.count + endings.count) cases passed")
     }
 }

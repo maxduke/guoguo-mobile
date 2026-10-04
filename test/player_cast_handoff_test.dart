@@ -23,6 +23,19 @@ class LocalDownloads extends DownloadStore {
       '/tmp/cast-${episode.id}.mp4';
 }
 
+class RelayLease implements CastRelayHandle {
+  RelayLease(this.counters);
+  final FakeCastRelay counters;
+  @override
+  Future<String> start(
+    ResolvedMedia media,
+    String? localPath, {
+    Uri? receiver,
+  }) => counters.start(media, localPath, receiver: receiver);
+  @override
+  Future<void> close() => counters.close();
+}
+
 class NativeCastPlayer {
   static const channel = MethodChannel('better_player_channel');
   static const events = MethodChannel('better_player_channel/videoEvents7');
@@ -33,8 +46,11 @@ class NativeCastPlayer {
     'dev.fluttercommunity.plus/connectivity_status',
   );
   int position = 10000, plays = 0, pauses = 0;
+  bool detached = false;
+  int releases = 0;
   final seeks = <int>[];
   final sources = <Map>[];
+  void Function(Map)? beforeSource;
   Completer<void>? seekGate;
   void install() {
     final messenger =
@@ -42,6 +58,8 @@ class NativeCastPlayer {
     messenger.setMockMethodCallHandler(channel, (call) async {
       if (call.method == 'create') return {'textureId': 7};
       if (call.method == 'setDataSource') {
+        beforeSource?.call((call.arguments as Map)['dataSource'] as Map);
+        detached = false;
         sources.add((call.arguments as Map)['dataSource'] as Map);
         scheduleMicrotask(
           () => emit('initialized', {
@@ -91,6 +109,7 @@ class NativeCastPlayer {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  NativeCastPlayer? airPlayNative;
   Future<
     (
       NativeCastPlayer,
@@ -105,9 +124,12 @@ void main() {
     MethodChannel? airPlayChannel,
     bool autoAdvance = true,
     int initialIndex = 0,
+    void Function(NativeCastPlayer)? configureNative,
   }) async {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     final native = NativeCastPlayer()..install();
+    configureNative?.call(native);
+    airPlayNative = native;
     final receiver = FakeCastReceiver(), relay = FakeCastRelay();
     final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
       ..prefetch = false
@@ -134,7 +156,7 @@ void main() {
           ],
           initialIndex: initialIndex,
           episodeIndices: const [5, 9],
-          castRelayFactory: () => relay,
+          castRelayFactory: () => RelayLease(relay),
           castDiscoveryFactory: () => FakeCastDiscovery(receiver),
           airPlayChannel: airPlayChannel,
         ),
@@ -165,16 +187,29 @@ void main() {
   final airPlayCalls = <String>[];
   bool external = false;
   bool videoExternal = true;
-  void installAirPlay() {
+  void installAirPlay({bool selected = false}) {
     airPlayCalls.clear();
-    external = false;
+    external = selected;
     videoExternal = true;
+    airPlayNative = null;
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(airPlayChannel, (call) async {
       airPlayCalls.add(call.method);
-      if (call.method == 'prepareAirPlay') {
-        return {'active': external && videoExternal, 'routed': external};
+      if (call.method == 'prepareAirPlay' || call.method == 'getAirPlayState') {
+        final native = airPlayNative;
+        return {
+          'active': external && videoExternal && native?.detached == false,
+          'routed': external,
+          'sourceUrl': native?.detached == false && native!.sources.isNotEmpty
+              ? native.sources.last['uri']
+              : null,
+          'sourceRevision': native?.sources.length ?? 0,
+        };
+      }
+      if (call.method == 'releaseAirPlay') {
+        airPlayNative?.detached = true;
+        airPlayNative?.releases++;
       }
       return null;
     });
@@ -191,6 +226,9 @@ void main() {
             MethodCall('externalPlaybackChanged', {
               'textureId': 7,
               'active': active,
+              'routed': active,
+              'sourceUrl': airPlayNative?.sources.last['uri'],
+              'sourceRevision': airPlayNative?.sources.length,
             }),
           ),
           (_) => done.complete(),
@@ -218,7 +256,11 @@ void main() {
           'http://192.168.1.2:8080/token/0.mp4',
         );
         expect(native.seeks.last, 10000);
-        expect(airPlayCalls, ['prepareAirPlay', 'showAirPlayRoutes']);
+        expect(airPlayCalls, [
+          'getAirPlayState',
+          'prepareAirPlay',
+          'showAirPlayRoutes',
+        ]);
         final player = tester
             .widget<BetterPlayer>(find.byType(BetterPlayer))
             .controller;
@@ -239,16 +281,17 @@ void main() {
           await tester.tapAt(const Offset(400, 300));
           await tester.pumpAndSettle();
         }
-        // Reopening only changes the route; it must not seek back to the old position.
+        // Returning to iPhone reinstalls the original local source at the
+        // current position. Reopening can prepare a new relay for that source.
+        expect(native.sources.last['uri'], 'file:///tmp/cast-one.mp4');
         final seeks = native.seeks.length;
         await tester.tap(find.byTooltip('AirPlay'));
         await tester.pumpAndSettle();
-        expect(airPlayCalls.length, 4);
-        expect(native.seeks.length, seeks);
-        expect(relay.starts, 1);
-        expect(relay.closes, 0);
-        await unmount(tester);
+        expect(native.seeks.length, seeks + 1);
+        expect(relay.starts, 2);
         expect(relay.closes, 1);
+        await unmount(tester);
+        expect(relay.closes, 2);
       },
     );
   }
@@ -301,27 +344,81 @@ void main() {
   );
 
   testWidgets(
-    'phone playback and episode changes ignore a route inherited from another player',
+    'reentering with selected TV routes the first asset as video instead of playing local picture with TV audio',
     (tester) async {
-      installAirPlay();
+      installAirPlay(selected: true);
       final (native, _, relay, _, _) = await mount(
         tester,
         airPlayChannel: airPlayChannel,
       );
-      final done = Completer<void>();
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .handlePlatformMessage(
-            airPlayChannel.name,
-            const StandardMethodCodec().encodeMethodCall(
-              const MethodCall('externalPlaybackChanged', {
-                'textureId': 7,
-                'active': false,
-                'routed': true,
-              }),
-            ),
-            (_) => done.complete(),
-          );
-      await done.future;
+      expect(native.sources, hasLength(1));
+      expect(
+        native.sources.single['uri'],
+        startsWith('http://192.168.1.2:8080/'),
+      );
+      expect(relay.starts, 1);
+      expect(airPlayCalls, ['getAirPlayState', 'prepareAirPlay']);
+      expect(find.text('正在电视上播放'), findsOneWidget);
+      expect(find.textContaining('恢复'), findsNothing);
+      await unmount(tester);
+      expect(native.detached, true);
+      expect(native.releases, 1);
+      expect(relay.closes, 1);
+      // The selected system route survives exit; new entry must adopt it again.
+      final (reopened, _, reopenedRelay, _, _) = await mount(
+        tester,
+        airPlayChannel: airPlayChannel,
+      );
+      expect(
+        reopened.sources.single['uri'],
+        startsWith('http://192.168.1.2:8080/'),
+      );
+      expect(reopenedRelay.starts, 1);
+      await unmount(tester);
+    },
+  );
+
+  testWidgets(
+    'selecting TV during first native installation prepares video once instead of entering phone recovery',
+    (tester) async {
+      installAirPlay();
+      var rejected = false;
+      final (native, _, relay, _, _) = await mount(
+        tester,
+        airPlayChannel: airPlayChannel,
+        configureNative: (native) => native.beforeSource = (source) {
+          if (!rejected && (source['uri'] as String).startsWith('file:')) {
+            rejected = true;
+            external = true;
+            throw PlatformException(code: 'airplay_source');
+          }
+        },
+      );
+      expect(rejected, true);
+      expect(native.sources, hasLength(1));
+      expect(
+        native.sources.single['uri'],
+        startsWith('http://192.168.1.2:8080/'),
+      );
+      expect(relay.starts, 1);
+      expect(find.textContaining('恢复'), findsNothing);
+      expect(find.byTooltip('AirPlay · 已连接'), findsOneWidget);
+      await unmount(tester);
+    },
+  );
+
+  testWidgets(
+    'switching to iPhone during episode installation restores the new episode locally',
+    (tester) async {
+      installAirPlay(selected: true);
+      final (native, _, relay, _, _) = await mount(
+        tester,
+        airPlayChannel: airPlayChannel,
+      );
+      native.beforeSource = (_) {
+        external = false;
+        native.beforeSource = null;
+      };
       tester
           .widget<EpisodePager>(find.byType(EpisodePager))
           .controller
@@ -329,9 +426,11 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 150));
       await tester.pumpAndSettle();
-      expect(relay.starts, 0);
-      expect(airPlayCalls, isEmpty);
       expect(native.sources.last['uri'], 'file:///tmp/cast-two.mp4');
+      expect(native.sources.last['author'], '果果 · 第 2 集');
+      expect(relay.starts, 2);
+      expect(relay.closes, 2);
+      expect(find.byTooltip('AirPlay'), findsOneWidget);
       expect(
         tester
             .widget<BetterPlayer>(find.byType(BetterPlayer))
@@ -340,6 +439,34 @@ void main() {
         true,
       );
       expect(find.textContaining('恢复'), findsNothing);
+      await unmount(tester);
+    },
+  );
+
+  testWidgets(
+    'audio-only route shows waiting and fails explicitly without phone video or generic recovery',
+    (tester) async {
+      installAirPlay(selected: true);
+      videoExternal = false;
+      final (native, _, relay, _, _) = await mount(
+        tester,
+        airPlayChannel: airPlayChannel,
+      );
+      expect(find.byTooltip('AirPlay · 等待视频连接'), findsOneWidget);
+      expect(find.text('等待电视接通 AirPlay 视频…'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 16));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('电视未接通 AirPlay 视频'), findsOneWidget);
+      expect(native.sources, hasLength(1));
+      expect(relay.starts, 1);
+      expect(
+        tester
+            .widget<BetterPlayer>(find.byType(BetterPlayer))
+            .controller
+            .isPlaying(),
+        false,
+      );
+      expect(find.textContaining('自动恢复'), findsNothing);
       await unmount(tester);
     },
   );

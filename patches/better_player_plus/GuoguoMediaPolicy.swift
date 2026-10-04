@@ -11,6 +11,18 @@ enum GuoguoMediaPolicy {
         return true
     }
 
+    // A selected system audio route is independent of AVPlayer's external video.
+    // Hold playback until the receiver-readable item has explicitly been prepared.
+    static func shouldHoldForAirPlay(routed: Bool, prepared: Bool, receiverReadable: Bool) -> Bool {
+        return routed && !(prepared && receiverReadable)
+    }
+
+    // Call only after the current item reaches readyToPlay. Remote playback need
+    // not produce a local presentation size before Flutter can finish setup.
+    static func canInitializePresentation(hasVideo: Bool, hasSize: Bool, externalRequested: Bool) -> Bool {
+        return !hasVideo || hasSize || externalRequested
+    }
+
     static func shouldCompleteAirPlay(prepared: Bool, playing: Bool, positionMs: Int64, durationMs: Int64) -> Bool {
         return prepared && playing && durationMs > 0 && positionMs >= durationMs
     }

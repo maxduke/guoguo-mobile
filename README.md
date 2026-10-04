@@ -12,6 +12,10 @@
 
 [发现页预览](screenshots/recommendations-light.png) · [深色发现页](screenshots/recommendations-dark.png) · [新版详情页](screenshots/detail-phone-light.png) · [平板详情页](screenshots/detail-tablet-dark.png)
 
+## 0.14.0 AirPlay 会话重构
+
+将系统音频路由、外部视频状态和单集媒体生命周期分开管理。换集直接替换视频，保留电视连接；新视频安装完成后才关闭旧中转。退出先停止并释放原生媒体，再清理中转和临时文件。再次进入先读取系统真实路由：仍选中电视时，从第一集的准备阶段就使用电视可访问的地址；在 AirPlay 中选择 iPhone 后恢复本地视频、进度和暂停状态。仅音频连接不能显示视频已连接，视频未接通会明确暂停并提示，不再进入通用恢复循环。真机接收软件仍需复测，见 [重构记录](docs/airplay-session-rebuild-2026-10-04.md)。
+
 ## 0.13.2 AirPlay 连播与手机播放
 
 AirPlay 在后台收到播放结束后直接切换下一集，回到前台同步页面，遵守自动连播开关和最后一集边界。普通播放器默认在本机播放，只有准备好电视可访问的视频地址后才启用外部视频；不让旧系统路由或迟到回调把新的手机视频送给电视。补齐按播放器实际进度确认结束的兜底，保留重播与原有画中画行为。范围和验证见 [修复记录](docs/airplay-continuation-2026-10-04.md)。
