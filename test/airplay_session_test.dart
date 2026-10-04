@@ -29,7 +29,7 @@ void main() {
     showPicker: showPicker,
   );
 
-  Future<void> emit(int texture, bool active) async {
+  Future<void> emit(int texture, bool active, {bool routed = false}) async {
     final done = Completer<void>();
     messenger.handlePlatformMessage(
       channel.name,
@@ -37,6 +37,7 @@ void main() {
         MethodCall('externalPlaybackChanged', {
           'textureId': texture,
           'active': active,
+          'routed': routed,
         }),
       ),
       (_) => done.complete(),
@@ -69,6 +70,16 @@ void main() {
   });
 
   test(
+    'an inherited system audio route cannot opt an unprepared player into AirPlay',
+    () async {
+      await emit(7, false, routed: true);
+      expect(session.routed, false);
+      expect(session.active, false);
+      expect(relay.starts, 0);
+    },
+  );
+
+  test(
     'install reachable media before route selection and reuse after returning to phone',
     () async {
       await open();
@@ -94,6 +105,16 @@ void main() {
       expect(calls, ['prepareAirPlay']);
     },
   );
+
+  test('reset rejects late route callbacks for the previous source', () async {
+    await open();
+    await emit(7, true);
+    await session.reset();
+    await emit(7, true, routed: true);
+    expect(session.routed, false);
+    expect(session.active, false);
+    expect(relay.closes, 1);
+  });
 
   test(
     'source replacement cancels pending relay and never presents old routes',

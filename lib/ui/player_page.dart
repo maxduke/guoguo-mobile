@@ -322,7 +322,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _controls = false;
     });
     _session.retain({index - 1, index, index + 1});
-    if (_pipActive && !_foreground) {
+    if ((_pipActive || _airplay?.routed == true) && !_foreground) {
       unawaited(_activate());
     } else {
       _settleTimer = Timer(
@@ -624,7 +624,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           break;
         }
         _save();
-        if (!_foreground && !_pipActive) break;
+        if (!_foreground && !_pipActive && _airplay?.routed != true) break;
         if (widget.store.autoAdvance && _index + 1 < widget.episodes.length) {
           _goTo(_index + 1);
         } else {
@@ -1001,9 +1001,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   void _goTo(int index) {
     if (_casting.blocksLocal) return;
     if (index == _index || index < 0 || index >= widget.episodes.length) return;
-    if (_pipActive && !_foreground) {
-      // A backgrounded PageView may not animate or report onPageChanged. Keep
-      // the native player and PiP layer alive while changing its media source.
+    if ((_pipActive || _airplay?.routed == true) && !_foreground) {
+      // Background playback changes the native media directly; synchronize the
+      // visible page when returning to the foreground.
       _pageChanged(index);
       return;
     }

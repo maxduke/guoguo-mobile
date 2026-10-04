@@ -22,6 +22,31 @@ struct PlayerPolicyTests {
                 precondition(GuoguoMediaPolicy.shouldPauseInBackground(pipActive: pip, externalPlaybackActive: external) == (!pip && !external))
             }
         }
-        print("Player media policy: \(cases.count + 4) cases passed")
+        let routes: [(String?, Bool)] = [
+            (nil, false),
+            ("file:///tmp/complete.mp4", false),
+            ("http://127.0.0.1:1234/token/index.m3u8", false),
+            ("http://localhost/video.mp4", false),
+            ("http://[::1]/video.mp4", false),
+            ("ftp://example.test/video.mp4", false),
+            ("http://192.168.1.2:1234/token/0.mp4", true),
+            ("https://example.test/video.m3u8", true),
+        ]
+        for (address, expected) in routes {
+            precondition(GuoguoMediaPolicy.canUseAirPlay(url: address.flatMap { URL(string: $0) }) == expected)
+        }
+        let endings: [(Bool, Bool, Int64, Int64, Bool)] = [
+            (false, true, 120000, 120000, false),
+            (true, false, 120000, 120000, false),
+            (true, true, 119999, 120000, false),
+            (true, true, 120000, 120000, true),
+            (true, true, 120001, 120000, true),
+            (true, true, 0, 0, false),
+            (true, true, 120000, -1, false),
+        ]
+        for (prepared, playing, position, duration, expected) in endings {
+            precondition(GuoguoMediaPolicy.shouldCompleteAirPlay(prepared: prepared, playing: playing, positionMs: position, durationMs: duration) == expected)
+        }
+        print("Player media policy: \(cases.count + 4 + routes.count + endings.count) cases passed")
     }
 }

@@ -20,6 +20,14 @@ restoring it. It presents Apple's video route picker and reports external playba
 changes with the player identifier. The native background pause rule permits
 AirPlay as well as PiP; ordinary local playback keeps its original behavior.
 
+External video starts disabled for every player and source replacement. Only a
+prepared HTTP(S) asset with a receiver-readable address can enable it; file and
+loopback URLs remain local. Route callbacks report the player's prepared routing
+state rather than adopting an audio route left by another player. If a receiver
+omits the end notification, position reads confirm completion at the full native
+duration. Current-item checks and a completion marker suppress stale/duplicate
+end events, and seeking back clears that marker for replay.
+
 `scripts/prepare_ios_player.py` checks the exact original and patched file hashes
 in `manifest.json`, prepares a copy under `.dart_tool/ios_player`, and adds
 `GuoguoMediaPolicy.swift`. CocoaPods uses this copy; the pub cache stays unchanged.

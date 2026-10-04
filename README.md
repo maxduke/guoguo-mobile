@@ -12,6 +12,10 @@
 
 [发现页预览](screenshots/recommendations-light.png) · [深色发现页](screenshots/recommendations-dark.png) · [新版详情页](screenshots/detail-phone-light.png) · [平板详情页](screenshots/detail-tablet-dark.png)
 
+## 0.13.2 AirPlay 连播与手机播放
+
+AirPlay 在后台收到播放结束后直接切换下一集，回到前台同步页面，遵守自动连播开关和最后一集边界。普通播放器默认在本机播放，只有准备好电视可访问的视频地址后才启用外部视频；不让旧系统路由或迟到回调把新的手机视频送给电视。补齐按播放器实际进度确认结束的兜底，保留重播与原有画中画行为。范围和验证见 [修复记录](docs/airplay-continuation-2026-10-04.md)。
+
 ## 0.13.1 投屏取流与启动修复
 
 AirPlay 改为先准备电视可访问的视频地址，再打开系统设备列表；解密后的本地视频和带请求头的在线媒体经过局域网中转。保留当前进度、暂停状态和切集，系统回报投屏状态时显示已连接；修复进入后台被播放器主动暂停的问题。安卓电视接收软件的实际兼容性仍需真机验收。

@@ -32,13 +32,16 @@ class AirPlaySession extends ChangeNotifier {
   String? _url;
   CastRelayHandle? _relay;
   Completer<void>? _preparationDone;
+  bool _prepared = false;
 
   void _setState(bool external, bool route) {
+    external = external && _prepared;
+    route = route && _prepared;
     route = route || external;
     if (active == external && routed == route) return;
     active = external;
     routed = route;
-    notifyListeners();
+    if (!_closed) notifyListeners();
   }
 
   Future<void> open({
@@ -70,6 +73,7 @@ class AirPlaySession extends ChangeNotifier {
         _sourceKey = sourceKey;
         _url = url;
       }
+      _prepared = true;
       final args = {'textureId': textureId};
       final state = await channel.invokeMapMethod<String, dynamic>(
         'prepareAirPlay',
@@ -100,6 +104,8 @@ class AirPlaySession extends ChangeNotifier {
     _revision++;
     _sourceKey = null;
     _url = null;
+    _prepared = false;
+    _setState(false, false);
     final relay = _relay;
     final pending = _preparationDone?.future;
     _relay = null;

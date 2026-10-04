@@ -9,11 +9,12 @@
      public private(set) var player: AVPlayer
      public private(set) var loaderDelegate: BetterPlayerEzDrmAssetsLoaderDelegate?
      public var eventChannel: FlutterEventChannel?
-@@ -47,11 +47,22 @@
+@@ -47,11 +47,25 @@
      private var restoreUIOnPipStop: ((Bool) -> Void)?
      /// Invalidates a pending background-pause check when a newer one supersedes it.
      private var backgroundPauseGeneration = 0
 +    private var airPlayPrepared = false
++    private weak var completedItem: AVPlayerItem?
 +    private var airPlayPicker: AVRoutePickerView?
 +    private var externalPlaybackObservation: NSKeyValueObservation?
 +    public var externalPlaybackChanged: ((Bool) -> Void)?
@@ -22,7 +23,9 @@
          self.player = AVPlayer()
          super.init()
          self.player.actionAtItemEnd = .none
-+        self.player.allowsExternalPlayback = true
++        // A selected system route can survive the previous player. Only a
++        // prepared, receiver-readable source may opt into external video.
++        self.player.allowsExternalPlayback = false
 +        externalPlaybackObservation = player.observe(\.isExternalPlaybackActive, options: [.new]) { [weak self] player, _ in
 +            DispatchQueue.main.async {
 +                guard let self, !self.disposed else { return }
@@ -32,7 +35,7 @@
          if #available(iOS 10.0, *) {
              self.player.automaticallyWaitsToMinimizeStalling = false
          }
-@@ -65,6 +76,7 @@
+@@ -65,6 +79,7 @@
              name: UIApplication.didEnterBackgroundNotification,
              object: nil
          )
@@ -40,7 +43,23 @@
      }
  
      public convenience init(frame: CGRect) {
-@@ -203,7 +215,7 @@
+@@ -136,12 +151,15 @@
+     }
+ 
+     @objc private func itemDidPlayToEndTime(_ notification: Notification) {
++        guard !disposed, let item = notification.object as? AVPlayerItem,
++              player.currentItem === item, completedItem !== item else { return }
+         if isLooping {
+             if let p = notification.object as? AVPlayerItem {
+                 p.seek(to: .zero, completionHandler: nil)
+             }
+         } else {
+             if let eventSink = eventSink {
++                completedItem = item
+                 eventSink(["event": "completed", "key": key as Any])
+                 removeObservers()
+             }
+@@ -203,7 +221,7 @@
          }
      }
  
@@ -49,7 +68,7 @@
          self.overriddenDuration = 0
          var finalHeaders = headers
          if finalHeaders["dummy"] == nil {} // keep dictionary type stable
-@@ -231,31 +243,31 @@
+@@ -231,31 +249,32 @@
          if #available(iOS 10.0, *), overriddenDuration > 0 {
              self.overriddenDuration = overriddenDuration
          }
@@ -61,6 +80,7 @@
 +    }
 +
 +    private func setDataSourcePlayerItem(_ item: AVPlayerItem, key: String?, useVideoComposition: Bool) {
++        completedItem = nil
          self.key = key
          self.stalledCount = 0
          self.isStalledCheckStarted = false
@@ -98,7 +118,37 @@
                              #if !targetEnvironment(simulator)
                              let videoComposition = self.getVideoComposition(transform: self.preferredTransform, asset: asset, videoTrack: videoTrack)
                              item.videoComposition = videoComposition
-@@ -603,7 +615,10 @@
+@@ -453,7 +472,20 @@
+     }
+ 
+     public func position() -> Int64 {
+-        return BetterPlayerTimeUtils.cmTimeToMillis(player.currentTime())
++        let position = BetterPlayerTimeUtils.cmTimeToMillis(player.currentTime())
++        // Some receivers omit the end notification. Use confirmed AVPlayer time,
++        // never a wall-clock estimate or a near-end threshold.
++        if !isLooping, let item = player.currentItem, item.status == .readyToPlay,
++           GuoguoMediaPolicy.shouldCompleteAirPlay(prepared: airPlayPrepared, playing: isPlaying, positionMs: position, durationMs: duration()) {
++            // Deliver the position response before completion changes sources.
++            DispatchQueue.main.async { [weak self, weak item] in
++                guard let self, let item,
++                      GuoguoMediaPolicy.shouldCompleteAirPlay(prepared: self.airPlayPrepared, playing: self.isPlaying,
++                          positionMs: BetterPlayerTimeUtils.cmTimeToMillis(self.player.currentTime()), durationMs: self.duration()) else { return }
++                self.itemDidPlayToEndTime(Notification(name: .AVPlayerItemDidPlayToEndTime, object: item))
++            }
++        }
++        return position
+     }
+ 
+     public func absolutePosition() -> Int64 {
+@@ -475,6 +507,7 @@
+     }
+ 
+     public func seekTo(_ location: Int) {
++        if location >= 0 && Int64(location) < duration() { completedItem = nil }
+         let wasPlaying = isPlaying
+         if wasPlaying { player.pause() }
+         player.seek(to: CMTimeMake(value: Int64(location), timescale: 1000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+@@ -603,7 +636,10 @@
              guard let self, !self.disposed, generation == self.backgroundPauseGeneration else { return }
              // Back in the foreground already, or PiP took over: nothing to do.
              guard UIApplication.shared.applicationState == .background else { return }
@@ -110,7 +160,7 @@
              self.pause()
              self.eventSink?(["event": "pause"])
          }
-@@ -650,6 +665,52 @@
+@@ -650,6 +686,56 @@
          setRestoreUserInterfaceForPIPStopCompletionHandler(true)
      }
  
@@ -126,12 +176,16 @@
 +        }
 +    }
 +
-+    public func prepareAirPlay() -> [String: Bool] {
++    public var airPlayRouting: Bool { airPlayPrepared && (player.isExternalPlaybackActive || hasAirPlayRoute) }
++
++    public func prepareAirPlay() -> [String: Bool]? {
++        guard let asset = player.currentItem?.asset as? AVURLAsset,
++              GuoguoMediaPolicy.canUseAirPlay(url: asset.url) else { return nil }
 +        airPlayPrepared = true
 +        // Send the original video track to the receiver, without local effects.
 +        player.currentItem?.videoComposition = nil
 +        player.allowsExternalPlayback = true
-+        return ["active": player.isExternalPlaybackActive, "routed": hasAirPlayRoute]
++        return ["active": player.isExternalPlaybackActive, "routed": airPlayRouting]
 +    }
 +
 +    public func showAirPlayRoutes() -> Bool {
@@ -163,15 +217,16 @@
      // MARK: - Audio & Tracks
      public func setAudioTrack(name: String, index: Int) {
          guard let group = player.currentItem?.asset.mediaSelectionGroup(forMediaCharacteristic: .audible) else { return }
-@@ -684,6 +745,7 @@
+@@ -684,6 +770,8 @@
      }
  
      public func clear() {
 +        airPlayPrepared = false
++        player.allowsExternalPlayback = false
          isInitialized = false
          isPlaying = false
          disposed = false
-@@ -701,6 +763,11 @@
+@@ -701,6 +789,11 @@
      }
  
      public func dispose() {
@@ -215,24 +270,25 @@
          players[textureId] = player
 +        player.externalPlaybackChanged = { [weak self, weak player] active in
 +            guard let player else { return }
-+            self?.airPlayChannel.invokeMethod("externalPlaybackChanged", arguments: ["textureId": NSNumber(value: textureId), "active": active, "routed": player.hasAirPlayRoute])
++            self?.airPlayChannel.invokeMethod("externalPlaybackChanged", arguments: ["textureId": NSNumber(value: textureId), "active": active, "routed": player.airPlayRouting])
 +        }
          result(["textureId": NSNumber(value: textureId)])
      }
  
-@@ -231,6 +238,11 @@
+@@ -231,6 +238,12 @@
          }
  
          switch call.method {
 +        case "prepareAirPlay":
-+            result(player.prepareAirPlay())
++            if let state = player.prepareAirPlay() { result(state) }
++            else { result(FlutterError(code: "airplay_source", message: "Prepare a receiver-readable media URL before AirPlay", details: nil)) }
 +        case "showAirPlayRoutes":
 +            if player.showAirPlayRoutes() { result(nil) }
 +            else { result(FlutterError(code: "airplay_unavailable", message: "AirPlay route picker unavailable", details: nil)) }
          case "setDataSource":
              player.clear()
              let dataSource = argsMap["dataSource"] as? [String: Any] ?? [:]
-@@ -244,6 +256,7 @@
+@@ -244,6 +257,7 @@
              let cacheKey = dataSource["cacheKey"] as? String
              let maxCacheSize = dataSource["maxCacheSize"] as? NSNumber
              let videoExtension = dataSource["videoExtension"] as? String
@@ -240,7 +296,7 @@
              let overriddenDuration = (dataSource["overriddenDuration"] as? NSNumber)?.intValue ?? 0
  
              let useCache = (dataSource["useCache"] as? NSNumber)?.boolValue ?? false
-@@ -258,7 +271,7 @@
+@@ -258,7 +272,7 @@
                  }
                  player.setDataSourceAsset(assetPath, key: key, certificateUrl: certificateUrl, licenseUrl: licenseUrl, cacheKey: cacheKey, cacheManager: cacheManager, overriddenDuration: overriddenDuration)
              } else if let uriArg = uriArg, let url = URL(string: uriArg) {

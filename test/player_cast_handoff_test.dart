@@ -100,12 +100,18 @@ void main() {
       LocalDownloads,
     )
   >
-  mount(WidgetTester tester, {MethodChannel? airPlayChannel}) async {
+  mount(
+    WidgetTester tester, {
+    MethodChannel? airPlayChannel,
+    bool autoAdvance = true,
+    int initialIndex = 0,
+  }) async {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     final native = NativeCastPlayer()..install();
     final receiver = FakeCastReceiver(), relay = FakeCastRelay();
     final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
-      ..prefetch = false;
+      ..prefetch = false
+      ..autoAdvance = autoAdvance;
     final downloads = LocalDownloads(store);
     addTearDown(() {
       native.uninstall();
@@ -126,7 +132,7 @@ void main() {
             Episode.fromJson({'id': 'one'}, 0),
             Episode.fromJson({'id': 'two'}, 1),
           ],
-          initialIndex: 0,
+          initialIndex: initialIndex,
           episodeIndices: const [5, 9],
           castRelayFactory: () => relay,
           castDiscoveryFactory: () => FakeCastDiscovery(receiver),
@@ -243,6 +249,130 @@ void main() {
         expect(relay.closes, 0);
         await unmount(tester);
         expect(relay.closes, 1);
+      },
+    );
+  }
+
+  testWidgets(
+    'AirPlay completion advances in background without a PageView animation',
+    (tester) async {
+      installAirPlay();
+      final (native, _, relay, store, _) = await mount(
+        tester,
+        airPlayChannel: airPlayChannel,
+      );
+      await tester.tap(find.byTooltip('AirPlay'));
+      await tester.pumpAndSettle();
+      await emitAirPlay(true);
+      await tester.pumpAndSettle();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      native.position = 120000;
+      native.emit('completed');
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 150));
+      await tester.pumpAndSettle();
+      expect(native.sources.length, 3);
+      expect(native.sources.last['author'], '果果 · 第 2 集');
+      expect(
+        native.sources.last['uri'],
+        startsWith('http://192.168.1.2:8080/'),
+      );
+      expect(relay.starts, 2);
+      expect(store.history.values.single.episodeIndex, 5);
+      expect(
+        tester
+            .widget<BetterPlayer>(find.byType(BetterPlayer))
+            .controller
+            .isPlaying(),
+        true,
+      );
+      expect(
+        airPlayCalls.where((call) => call == 'showAirPlayRoutes').length,
+        1,
+      );
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<EpisodePager>(find.byType(EpisodePager)).controller.page,
+        1,
+      );
+      await unmount(tester);
+    },
+  );
+
+  testWidgets(
+    'phone playback and episode changes ignore a route inherited from another player',
+    (tester) async {
+      installAirPlay();
+      final (native, _, relay, _, _) = await mount(
+        tester,
+        airPlayChannel: airPlayChannel,
+      );
+      final done = Completer<void>();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+            airPlayChannel.name,
+            const StandardMethodCodec().encodeMethodCall(
+              const MethodCall('externalPlaybackChanged', {
+                'textureId': 7,
+                'active': false,
+                'routed': true,
+              }),
+            ),
+            (_) => done.complete(),
+          );
+      await done.future;
+      tester
+          .widget<EpisodePager>(find.byType(EpisodePager))
+          .controller
+          .jumpToPage(1);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+      await tester.pumpAndSettle();
+      expect(relay.starts, 0);
+      expect(airPlayCalls, isEmpty);
+      expect(native.sources.last['uri'], 'file:///tmp/cast-two.mp4');
+      expect(
+        tester
+            .widget<BetterPlayer>(find.byType(BetterPlayer))
+            .controller
+            .isPlaying(),
+        true,
+      );
+      expect(find.textContaining('恢复'), findsNothing);
+      await unmount(tester);
+    },
+  );
+
+  for (final lastEpisode in [false, true]) {
+    testWidgets(
+      'AirPlay completion stays on current episode when advance disabled or last=$lastEpisode',
+      (tester) async {
+        installAirPlay();
+        final (native, _, relay, _, _) = await mount(
+          tester,
+          airPlayChannel: airPlayChannel,
+          autoAdvance: lastEpisode,
+          initialIndex: lastEpisode ? 1 : 0,
+        );
+        await tester.tap(find.byTooltip('AirPlay'));
+        await tester.pumpAndSettle();
+        await emitAirPlay(true);
+        await tester.pumpAndSettle();
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        native.position = 120000;
+        native.emit('completed');
+        await tester.pumpAndSettle();
+        expect(native.sources.length, 2);
+        expect(relay.starts, 1);
+        expect(
+          tester
+              .widget<BetterPlayer>(find.byType(BetterPlayer))
+              .controller
+              .isPlaying(),
+          false,
+        );
+        await unmount(tester);
       },
     );
   }
