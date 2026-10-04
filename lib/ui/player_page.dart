@@ -79,11 +79,22 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   late final PlaybackLifecycleController _lifecycle;
   late final CastSessionController _casting;
   AirPlaySession? _airplay;
-  bool _airPlayReturning = false;
+  bool _airPlayReturning = false, _airPlayReturnPending = false;
+  bool _airPlayOpening = false, _wasAirPlayBlocked = false;
+  bool _airPlayResumePlaying = false;
+  PlaybackSessionController? _airPlayMedia;
+  bool get _localBlocked =>
+      _casting.blocksLocal ||
+      _airplay?.blocksLocal == true ||
+      _airPlayReturnPending ||
+      _airPlayOpening;
   bool _castOpening = false;
   CastPlaybackState? _lastCastState;
   bool get _remotePlayback =>
-      _casting.blocksLocal && _casting.phase != CastPhase.returning;
+      (_casting.blocksLocal && _casting.phase != CastPhase.returning) ||
+      _airplay?.engaged == true ||
+      _airPlayReturnPending ||
+      _airPlayOpening;
   PlaybackHealth get _health => _recovery.health;
   bool get _recovering => _recovery.recovering;
   DateTime _prefetchRetryAt = DateTime(2000);
@@ -128,7 +139,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           index == _index &&
           _foreground &&
           !_pipActive &&
-          _airplay?.routed != true,
+          _airplay?.blocksLocal != true,
       onPhase: _phase,
       preparerFactory: widget.preparerFactory,
     );
@@ -182,9 +193,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _airplay = AirPlaySession(
         relayFactory: widget.castRelayFactory ?? CastRelay.new,
         channel: widget.airPlayChannel ?? const MethodChannel('guoguo/airplay'),
-        // Include partially initialized players in teardown, too.
-        // ignore: invalid_use_of_visible_for_testing_member
-        playerId: () => _player.videoPlayerController?.textureId,
+        loadSource: _airPlaySource,
+        retainSources: (indices) => _airPlayMedia?.retain(indices),
+        episodeCount: widget.episodes.length,
+        autoAdvance: () => widget.store.autoAdvance,
       )..addListener(_airPlayChanged);
     }
     _player.addEventsListener(_event);
@@ -260,6 +272,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   void _save() {
+    if (_airPlayReturnPending && _airplay != null) {
+      _savePosition(_airplay!.position, _airplay!.duration);
+      return;
+    }
     if (_casting.blocksLocal && _casting.source != null) {
       final handoff = _casting.handoff;
       if (handoff != null) _savePosition(handoff.position, handoff.duration);
@@ -298,7 +314,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   void _pageChanged(int index) {
-    if (_casting.blocksLocal) return;
+    if (_localBlocked) return;
     if (index == _index) return;
     _recovery.reset();
     _health.reset();
@@ -315,7 +331,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _preloadTimer?.cancel();
     _settleTimer?.cancel();
     _session.invalidate();
-    _airplay?.cancelPreparation();
     _paused = _active == null ? Future.value() : _player.pause();
     unawaited(_paused.catchError((Object _) {}));
     setState(() {
@@ -327,7 +342,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _controls = false;
     });
     _session.retain({index - 1, index, index + 1});
-    if ((_pipActive || _airplay?.routed == true) && !_foreground) {
+    if (_pipActive && !_foreground) {
       unawaited(_activate());
     } else {
       _settleTimer = Timer(
@@ -341,7 +356,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     bool resume = false,
     Duration? position,
     bool play = true,
-    bool routeRetry = false,
   }) async {
     _lifecycle.beginActivation(play);
     final generation = _session.invalidate();
@@ -362,24 +376,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     try {
       await _airplay?.refreshRoute();
       if (!mounted || generation != _generation) return;
-      if (_airplay?.routed == true) _session.requireComplete(index);
       final pending = _session.prepare(index, ticket: generation);
       attempt.timing = _session.timing(index) ?? PreparationTiming();
       final item = await pending;
       attempt.timing = item.timing;
       attempt.waitMs = attempt.clock.elapsedMilliseconds;
       if (!mounted || generation != _generation) return;
-      if (_airplay?.routed == true && item.preparer.streaming) {
-        // The system route may have changed while progressive preparation was
-        // running. Never offer an encrypted original or loopback EVENT source.
-        _session.requireComplete(index, compatibilityFallback: true);
-        await item.preparer.cancel();
-        if (!mounted || generation != _generation) return;
-        _session.retry(index);
-        _finishAttempt(PlaybackResult.cancelled);
-        await _activate(position: start, play: play, routeRetry: routeRetry);
-        return;
-      }
       await _paused;
       if (!mounted || generation != _generation) return;
       _phase(index, '正在启动播放器…');
@@ -401,47 +403,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           author: '果果 · 第 ${widget.episodes[index].number} 集',
         ),
       );
-      final wasAirPlay = _airplay?.routed == true;
-      if (!wasAirPlay && _airplay?.hasRelay == true) await _airplay!.release();
-      if (!mounted || generation != _generation) return;
-      // Native setDataSource operates on one texture. Serialize rapid swipes so
-      // an older request cannot finish after a newer episode starts loading.
-      if (wasAirPlay) {
-        await _airplay!.open(
-          sourceKey: item,
-          source: CastSource(
-            media:
-                item.media ??
-                ResolvedMedia.fromJson({
-                  'url': Uri.file(item.path).toString(),
-                  'remoteUrl': '',
-                }),
-            localPath: item.path.startsWith('http') ? null : item.path,
-            title: widget.drama.title,
-            position: start ?? Duration.zero,
-            duration: Duration.zero,
-            playing: play,
-          ),
-          install: (url) => _session.installSource(generation, () async {
-            await _player.setupDataSource(
-              BetterPlayerDataSource(
-                BetterPlayerDataSourceType.network,
-                url,
-                videoFormat:
-                    item.path.startsWith('http') && item.media?.hls == true
-                    ? BetterPlayerVideoFormat.hls
-                    : null,
-                notificationConfiguration: source.notificationConfiguration,
-              ),
-            );
-            // Bind after the first native player has been created, before
-            // preparing external video on an inherited system route.
-            // ignore: invalid_use_of_visible_for_testing_member
-            _airplay!.textureId = _player.videoPlayerController?.textureId;
-          }),
-          showPicker: false,
-        );
-      } else if (!await _session.installSource(
+      // Only the phone's own source is installed on BetterPlayer.
+      if (!await _session.installSource(
         generation,
         () => _player.setupDataSource(source),
       )) {
@@ -455,9 +418,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           .stream
           .listen(_nativeEvent);
       _active = item;
-      // The pinned native AirPlay bridge uses the same player channel identifier.
-      // ignore: invalid_use_of_visible_for_testing_member
-      _airplay?.textureId = _player.videoPlayerController?.textureId;
       _attachTimeline(item, generation);
       _health.reset();
       await _applyVideoFit();
@@ -481,10 +441,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         _loading = false;
         _error = null;
       });
-      if (_airplay?.hasSource == true &&
-          _airplay?.routed == false &&
-          _airplay?.previouslyRouted == true) {
-        await _returnFromAirPlay();
+      if (_airplay?.blocksLocal == true) {
+        _lifecycle.setExternalPlayback(true);
+        _showControls();
         return;
       }
       if (_lifecycle.deferPlayback()) return;
@@ -494,27 +453,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       } else {
         _showControls();
       }
-      _airplay?.expectVideo(_playIntent);
       _schedulePrefetch();
     } catch (error) {
-      if (error is PlatformException &&
-          error.code == 'airplay_source' &&
-          !routeRetry &&
-          mounted &&
-          generation == _generation) {
-        // Native rejects a local source if TV was selected after our query.
-        // Re-read once and prepare a relay instead of entering local recovery.
-        try {
-          await _airplay?.refreshRoute();
-        } catch (_) {
-          // Preserve the original setup error if native routing disappeared.
-        }
-        if (mounted && generation == _generation && _airplay?.routed == true) {
-          _finishAttempt(PlaybackResult.cancelled);
-          await _activate(position: start, play: play, routeRetry: true);
-          return;
-        }
-      }
       if (mounted && generation == _generation) {
         _finishAttempt(
           error is EpisodeCancelled
@@ -525,11 +465,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           _loading = false;
           _error = error is EpisodeCancelled
               ? '准备已取消，请重试'
-              : _airplay?.routed == true
-              ? 'AirPlay 视频准备失败，请重试或在 AirPlay 中选择 iPhone'
+              : error is PlatformException && error.code == 'airplay_route'
+              ? 'AirPlay 仍连接电视，请切回 iPhone 后播放'
               : '$error';
         });
-        if (error is! EpisodeCancelled && error is! CastCancelled) {
+        if (error is PlatformException && error.code == 'airplay_route') {
+          await _airplay?.refreshRoute();
+        } else if (error is! EpisodeCancelled && error is! CastCancelled) {
           unawaited(_recover());
         }
       }
@@ -553,7 +495,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     bool play = true,
     Duration? savedPosition,
   }) async {
-    if (_casting.blocksLocal || _recovering && !automatic) return;
+    if (_localBlocked || _recovering && !automatic) return;
     if (!automatic) _recovery.reset();
     _health.reset();
     _finishAttempt(PlaybackResult.cancelled);
@@ -576,11 +518,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   void _checkHealth() {
-    if (!mounted || _casting.blocksLocal) return;
-    if (_airplay?.routed == true || _airplay?.preparing == true) {
-      _health.reset();
-      return;
-    }
+    if (!mounted || _localBlocked) return;
     if (!_loading && _active?.preparer.failure != null) {
       unawaited(_recover());
       return;
@@ -614,9 +552,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<void> _recover() async {
-    if (_casting.blocksLocal ||
-        _airplay?.routed == true ||
-        _airplay?.preparing == true ||
+    if (_localBlocked ||
         _recovering ||
         !mounted ||
         (!_foreground && !_pipActive) ||
@@ -671,7 +607,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (!mounted) return;
     switch (event.betterPlayerEventType) {
       case BetterPlayerEventType.finished:
-        if (_casting.blocksLocal) break;
+        if (_localBlocked) break;
         if (_loading || _active == null) break;
         if (_active!.preparer.streaming &&
             (!_active!.preparer.complete ||
@@ -680,7 +616,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           break;
         }
         _save();
-        if (!_foreground && !_pipActive && _airplay?.routed != true) break;
+        if (!_foreground && !_pipActive) break;
         if (widget.store.autoAdvance && _index + 1 < widget.episodes.length) {
           _goTo(_index + 1);
         } else {
@@ -702,19 +638,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         if (DateTime.now().difference(_lastSaved).inSeconds >= 10) _save();
         break;
       case BetterPlayerEventType.exception:
+        if (_localBlocked) break;
         if (_loading || _recovering || _active == null) break;
         _finishAttempt(PlaybackResult.failed);
         setState(() {
-          _error = _airplay?.routed == true
-              ? 'AirPlay 视频无法播放，请重新选择设备或切回 iPhone'
-              : '视频暂时无法播放，请重试或切换分集';
+          _error = '视频暂时无法播放，请重试或切换分集';
           _loading = false;
         });
-        if (_airplay?.routed == true) unawaited(_player.pause());
         unawaited(_recover());
         break;
       case BetterPlayerEventType.play:
-        if (_remotePlayback) {
+        if (_localBlocked) {
           unawaited(_player.pause().catchError((Object _) {}));
           break;
         }
@@ -743,17 +677,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (!mounted) return;
     switch (event.eventType) {
       case VideoEventType.play:
-        if (_remotePlayback) {
+        if (_localBlocked) {
           unawaited(_player.pause().catchError((Object _) {}));
           return;
         }
-        if (_casting.blocksLocal || _airplay?.preparing == true) return;
+        if (_localBlocked) return;
         _lifecycle.nativePlaying(true);
-        _airplay?.expectVideo(true);
       case VideoEventType.pause:
-        if (_casting.blocksLocal || _airplay?.preparing == true) return;
+        if (_localBlocked) return;
         _lifecycle.nativePlaying(false);
-        _airplay?.expectVideo(false);
       case VideoEventType.pipStart:
         _lifecycle.nativePipStarted();
       case VideoEventType.pipStop:
@@ -797,7 +729,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   void _schedulePrefetch() {
-    if (_casting.blocksLocal ||
+    if (_localBlocked ||
         _error != null ||
         _recovering ||
         !_prefetchReady ||
@@ -818,7 +750,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       try {
         final states = await Connectivity().checkConnectivity();
         if (!mounted ||
-            _casting.blocksLocal ||
+            _localBlocked ||
             _loading ||
             _recovering ||
             !_prefetchReady ||
@@ -846,6 +778,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _health.reset();
     _lifecycle.setForeground(state == AppLifecycleState.resumed);
     _casting.setForeground(state == AppLifecycleState.resumed);
+    if (state == AppLifecycleState.resumed && _airplay != null) {
+      unawaited(_airplay!.refreshRoute().catchError((Object _) {}));
+    }
   }
 
   Future<bool> _ensureCompatible({bool? play, Duration? position}) async {
@@ -897,7 +832,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<void> _cast() async {
-    if (_airplay?.routed == true || _airplay?.preparing == true) {
+    if (_airplay?.blocksLocal == true ||
+        _airPlayOpening ||
+        _airPlayReturnPending) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('请先在 AirPlay 中切回 iPhone，再选择其他投屏方式')),
       );
@@ -953,7 +890,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   void _castChanged() {
     if (!mounted) return;
-    _lifecycle.setExternalPlayback(_remotePlayback);
+    _lifecycle.setExternalPlayback(_remotePlayback || _airplay?.routed == true);
     if (_casting.blocksLocal) {
       _health.reset();
       _preloadTimer?.cancel();
@@ -990,134 +927,173 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (mounted) _showControls();
   }
 
-  Future<void> _prepareAirPlay({bool showPicker = true}) async {
+  Future<CastSource> _airPlaySource(int index) async {
+    final media = _airPlayMedia;
+    if (media == null) throw const CastCancelled();
+    media.requireComplete(index);
+    final item = await media.prepare(index, ticket: media.generation);
+    return CastSource(
+      media:
+          item.media ??
+          ResolvedMedia.fromJson({
+            'url': Uri.file(item.path).toString(),
+            'remoteUrl': '',
+          }),
+      localPath: item.path.startsWith('http') ? null : item.path,
+      title: '${widget.drama.title} · 第 ${widget.episodes[index].number} 集',
+      position: Duration.zero,
+      duration: Duration.zero,
+      playing: true,
+    );
+  }
+
+  Future<void> _prepareAirPlay() async {
     final airplay = _airplay;
     if (airplay == null ||
         _loading ||
         _recovering ||
         _casting.blocksLocal ||
         _pipActive ||
-        airplay.preparing) {
+        airplay.engaged ||
+        _airPlayOpening) {
       return;
     }
-    if (!await _ensureCompatible() || !mounted) return;
-    final item = _active;
-    if (item == null) return;
-    final generation = _generation;
-    final source = _castSource();
-    final intent = _lifecycle.captureIntent(source.playing);
+    _airPlayOpening = true;
+    final value = _player.videoPlayerController?.value;
+    final position = _airPlayReturnPending
+        ? airplay.position
+        : value?.position ?? Duration.zero;
+    if (!_airPlayReturnPending) _airPlayResumePlaying = _playIntent;
+    _save();
+    _preloadTimer?.cancel();
+    _hideTimer?.cancel();
+    _lifecycle.setExternalPlayback(true);
     try {
-      await airplay.open(
-        sourceKey: item,
-        source: source,
-        install: (url) => _session.installSource(generation, () async {
-          if (!mounted || !identical(_active, item)) {
-            throw const CastCancelled();
-          }
-          await _player.pause();
-          await _player.setupDataSource(
-            BetterPlayerDataSource(
-              BetterPlayerDataSourceType.network,
-              url,
-              videoFormat: source.localPath == null && source.media.hls
-                  ? BetterPlayerVideoFormat.hls
-                  : null,
-              notificationConfiguration: BetterPlayerNotificationConfiguration(
-                showNotification: true,
-                title: widget.drama.title,
-                author: '果果 · 第 ${widget.episodes[_index].number} 集',
-              ),
-            ),
-          );
-          // ignore: invalid_use_of_visible_for_testing_member
-          airplay.textureId = _player.videoPlayerController?.textureId;
-          if (!mounted || generation != _generation) return;
-          await _player.seekTo(source.position);
-          await _player.setSpeed(_speed);
-          await _applyVideoFit();
-          if (!mounted || generation != _generation) return;
-          _playIntent = _lifecycle.resumeIntent(intent);
-        }),
-        showPicker: showPicker,
-      );
-      if (mounted &&
-          generation == _generation &&
-          !_airPlayReturning &&
-          !_loading) {
-        setState(() => _error = null);
-        if (_playIntent && !_lifecycle.deferPlayback()) await _player.play();
-        airplay.expectVideo(_playIntent);
+      await _player.pause();
+      if (_active?.preparer.streaming == true) {
+        await _active!.preparer.cancel();
+        _detachTimeline();
+        _session.retry(_index);
+        _active = null;
       }
-    } on CastCancelled {
-      // A newer episode or a closed page superseded this request.
     } catch (_) {
-      if (mounted && generation == _generation) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('AirPlay 准备失败，请确认连接同一 Wi-Fi 和本地网络权限后重试'),
-          ),
-        );
-      }
+      _airPlayOpening = false;
+      _lifecycle.setExternalPlayback(airplay.blocksLocal);
+      return;
     }
-    if (mounted) _showControls();
+    if (!mounted) return;
+    _airPlayMedia = PlaybackSessionController(
+      provider: widget.store.provider,
+      drama: widget.drama,
+      episodes: widget.episodes,
+      localFile: (index) async {
+        final prepared = _session.peek(index);
+        // Completed phone media remains owned by the phone session. This
+        // queue only borrows it; its own preparer never deletes that file.
+        if (prepared != null &&
+            !prepared.preparer.streaming &&
+            !prepared.path.startsWith('http')) {
+          return prepared.path;
+        }
+        return widget.downloads.localFile(widget.drama, widget.episodes[index]);
+      },
+      canResolve: () => !widget.localOnly && !widget.store.offline,
+      progressive: (_) => false,
+      onPhase: (_, label) {
+        if (mounted && airplay.preparing) setState(() => _loadingPhase = label);
+      },
+      preparerFactory: widget.preparerFactory,
+    );
+    _airPlayReturnPending = true;
+    try {
+      await airplay.start(
+        initialIndex: _index,
+        initialPosition: position,
+        initialPlaying: _airPlayResumePlaying,
+        speed: _speed,
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('AirPlay 准备失败，请检查网络后重试')));
+        unawaited(_returnFromAirPlay());
+      }
+    } finally {
+      _airPlayOpening = false;
+    }
   }
 
   void _airPlayChanged() {
     if (!mounted) return;
     final airplay = _airplay!;
-    _lifecycle.setAirPlayActive(airplay.routed);
+    final unblocked = _wasAirPlayBlocked && !airplay.blocksLocal;
+    _wasAirPlayBlocked = airplay.blocksLocal;
+    _lifecycle.setExternalPlayback(_remotePlayback || airplay.blocksLocal);
     _health.reset();
-    setState(() => _controls = true);
-    if (airplay.error != null && !_loading) {
-      _playIntent = false;
+    if (airplay.blocksLocal) {
+      _preloadTimer?.cancel();
       unawaited(_player.pause().catchError((Object _) {}));
-      setState(() => _error = airplay.error);
-    } else if (!airplay.preparing && !_loading && !_airPlayReturning) {
-      if (airplay.routed && !airplay.hasSource && _active != null) {
-        unawaited(_prepareAirPlay(showPicker: false));
-      } else if (!airplay.routed &&
-          airplay.previouslyRouted &&
-          airplay.hasSource &&
-          _active != null) {
-        unawaited(_returnFromAirPlay());
+    }
+    if (_airPlayReturnPending) {
+      if (airplay.engaged && !airplay.preparing) {
+        _airPlayResumePlaying = airplay.playing;
       }
+      if (_index != airplay.index) {
+        _index = airplay.index;
+        if (_pages.hasClients) _pages.jumpToPage(_index);
+      }
+      if (DateTime.now().difference(_lastSaved).inSeconds >= 10 ||
+          airplay.ended ||
+          !airplay.engaged) {
+        _save();
+      }
+    }
+    setState(() => _controls = true);
+    if (!airplay.engaged && _airPlayReturnPending && !_airPlayReturning) {
+      unawaited(_returnFromAirPlay());
+    } else if (unblocked &&
+        !_airPlayReturnPending &&
+        _active != null &&
+        !_loading &&
+        _playIntent &&
+        _lifecycle.canPlay) {
+      unawaited(_player.play().catchError((Object _) {}));
     }
   }
 
   Future<void> _returnFromAirPlay() async {
-    if (_airPlayReturning || _loading || _active == null) return;
+    if (_airPlayReturning || !_airPlayReturnPending) return;
     _airPlayReturning = true;
-    final generation = _generation;
-    final position = _player.videoPlayerController?.value.position;
-    final intent = _lifecycle.captureIntent(_playIntent);
-    setState(() {
-      _loading = true;
-      _loadingPhase = '正在返回手机播放…';
-      _error = null;
-    });
+    final airplay = _airplay!;
     try {
-      await _airplay!.release();
-      if (!mounted || generation != _generation) return;
-      await _activate(
-        position: position,
-        play: _lifecycle.resumeIntent(intent),
-      );
+      await airplay.release();
+      _airPlayMedia?.close();
+      _airPlayMedia = null;
+      await airplay.refreshRoute();
+      if (!mounted || airplay.routed) return;
+      final position = airplay.position;
+      final play = _airPlayResumePlaying && !airplay.ended;
+      _airPlayReturnPending = false;
+      _lifecycle.setExternalPlayback(false);
+      setState(() {
+        _loading = true;
+        _error = null;
+        _loadingPhase = '正在返回手机播放…';
+      });
+      await _activate(position: position, play: play);
+      if (mounted) _session.retain({_index});
     } catch (_) {
-      if (mounted && generation == _generation) {
-        setState(() {
-          _loading = false;
-          _error = '返回手机播放失败，请重试';
-        });
-      }
+      if (mounted) setState(() => _error = '结束 AirPlay 失败，请重试');
     } finally {
       _airPlayReturning = false;
     }
   }
 
   void _goTo(int index) {
-    if (_casting.blocksLocal) return;
+    if (_localBlocked) return;
     if (index == _index || index < 0 || index >= widget.episodes.length) return;
-    if ((_pipActive || _airplay?.routed == true) && !_foreground) {
+    if (_pipActive && !_foreground) {
       // Background playback changes the native media directly; synchronize the
       // visible page when returning to the foreground.
       _pageChanged(index);
@@ -1163,7 +1139,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<void> _togglePlay() async {
-    if (_active == null || _casting.blocksLocal) return;
+    if (_active == null || _localBlocked) return;
     final controller = _player;
     if (controller.isPlaying() == true) {
       _playIntent = false;
@@ -1178,12 +1154,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       }
       await controller.play();
     }
-    _airplay?.expectVideo(_playIntent);
     if (mounted) _showControls();
   }
 
   Future<void> _enterPictureInPicture(bool wasPlaying) async {
-    if (_casting.blocksLocal || _airplay?.routed == true) return;
+    if (_localBlocked) return;
     if (!await _ensureCompatible(play: wasPlaying) || !mounted) return;
     // AVKit can pause the player while moving its layer into PiP. Capture the
     // viewer's intent before that transition; a deliberately paused episode
@@ -1363,7 +1338,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             ListTile(
               leading: const Icon(Icons.picture_in_picture_alt),
               title: const Text('画中画'),
-              enabled: item != null && !_casting.blocksLocal,
+              enabled: item != null && !_localBlocked,
               onTap: () {
                 final wasPlaying =
                     _player.videoPlayerController?.value.isPlaying == true;
@@ -1468,10 +1443,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           if (selected &&
               !_loading &&
               _error == null &&
-              _airplay?.routed == true)
+              _airplay?.engaged == true)
             Center(
               child: Text(
-                _airplay!.active ? '正在电视上播放' : '等待电视接通 AirPlay 视频…',
+                _airplay!.preparing ? _loadingPhase : '正在原生播放器中播放',
                 style: const TextStyle(color: Colors.white70),
               ),
             ),
@@ -1503,7 +1478,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<void> _seek(Duration position) async {
-    if (_casting.blocksLocal || _loading || _active == null) return;
+    if (_localBlocked || _loading || _active == null) return;
     final duration = _player.videoPlayerController?.value.duration;
     if (duration == null || duration <= Duration.zero) return;
     // Seeking beyond an EVENT range can cause BetterPlayer to emit 'finished'.
@@ -1521,14 +1496,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         duration: value?.duration?.inMilliseconds.toDouble() ?? 0,
         position: value?.position.inMilliseconds.toDouble() ?? 0,
         playing: value?.isPlaying == true,
-        enabled: !_casting.blocksLocal && !_loading && _active != null,
+        enabled: !_localBlocked && !_loading && _active != null,
         speed: _speed,
         preparing:
             _active?.preparer.streaming == true && !_active!.preparer.complete,
         onPlay: _togglePlay,
         onEpisodes: _showEpisodes,
         onSpeed: (speed) {
-          if (_casting.blocksLocal) return;
+          if (_localBlocked) return;
           setState(() => _speed = speed);
           unawaited(
             perform(context, () => widget.store.setPlayback(speed: speed)),
@@ -1576,7 +1551,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           IgnorePointer(
             child: PlayerViewport(playerKey: _playerKey, controller: _player),
           ),
-          if (_airplay?.routed == true)
+          if (_airplay?.blocksLocal == true)
             const Positioned.fill(child: ColoredBox(color: Colors.black)),
           Semantics(
             container: true,
@@ -1584,10 +1559,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             child: PlayerGestures(
               onTap: _tap,
               enabled:
-                  !_casting.blocksLocal &&
-                  !_locked &&
-                  !_loading &&
-                  _active != null,
+                  !_localBlocked && !_locked && !_loading && _active != null,
               position: () =>
                   (_active == null
                       ? null
@@ -1629,7 +1601,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                 count: widget.episodes.length,
                 onChanged: _pageChanged,
                 builder: _page,
-                locked: _locked || _casting.blocksLocal,
+                locked: _locked || _localBlocked,
               ),
             ),
           ),
@@ -1660,6 +1632,27 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                     icon: const Icon(Icons.cast_connected),
                     label: const Text('打开投屏控制'),
                   ),
+                ),
+              ),
+            ),
+          if (_airplay?.routed == true && _airplay?.engaged != true)
+            SafeArea(
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'AirPlay 仍连接电视，手机播放已暂停',
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      key: const Key('airPlayChooseRoute'),
+                      onPressed: () => _airplay!.showRoutes(),
+                      icon: const Icon(Icons.airplay),
+                      label: const Text('选择 iPhone 播放'),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1737,12 +1730,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                               IconButton(
                                 tooltip: _airplay!.active
                                     ? 'AirPlay · 已连接'
-                                    : _airplay!.routed
-                                    ? 'AirPlay · 等待视频连接'
                                     : 'AirPlay',
                                 onPressed:
                                     _loading ||
-                                        _airplay!.preparing ||
+                                        _airplay!.engaged ||
                                         _casting.blocksLocal
                                     ? null
                                     : _prepareAirPlay,
@@ -1801,7 +1792,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _casting.removeListener(_castChanged);
     _casting.dispose();
     _airplay?.removeListener(_airPlayChanged);
-    final airPlayClosed = _airplay?.close(after: _session.drainSources());
+    final airPlayClosed = _airplay?.close();
     _airplay?.dispose();
     _hideTimer?.cancel();
     _preloadTimer?.cancel();
@@ -1819,6 +1810,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       () async {
         try {
           await airPlayClosed;
+          _airPlayMedia?.close();
         } finally {
           _player.dispose(forceDispose: true);
           _session.close();

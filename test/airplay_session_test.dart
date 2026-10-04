@@ -7,352 +7,335 @@ import 'package:guoguo_mobile/platform/cast_session.dart';
 
 import 'support/cast_fakes.dart';
 
+class DelayedCloseRelay extends FakeCastRelay {
+  Completer<void>? closeGate;
+  @override
+  Future<void> close() async {
+    await closeGate?.future;
+    await super.close();
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('guoguo/airplay');
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   late AirPlaySession session;
-  late FakeCastRelay relay;
-  late List<String> calls;
-  late Object key;
-  late List<String> installed;
-  bool failPicker = false, routed = false, active = false;
-  String? nativeUrl;
-  int nativeRevision = 0;
-  Completer<void>? releaseGate;
+  late List<MethodCall> calls;
+  late List<FakeCastRelay> relays;
+  late List<int> loads;
+  late List<Set<int>> retained;
+  bool advance = true, route = false, failClose = false, failNext = false;
+  Completer<CastSource>? sourceGate;
+  Completer<void>? nativeGate;
+  int sequence = 0;
+  String? identity;
 
-  Future<void> open({bool showPicker = true}) => session.open(
-    sourceKey: key,
-    source: castSource(),
-    install: (url) async {
-      installed.add(url);
-      nativeUrl = url;
-      nativeRevision++;
-      return true;
-    },
-    showPicker: showPicker,
-  );
-
-  Future<void> emit(
-    int texture,
-    bool external, {
-    bool route = false,
+  Future<void> emit({
+    int index = 0,
+    bool closed = false,
+    bool ended = false,
+    bool needsNext = false,
+    String? id,
     int? revision,
-    String? url,
   }) async {
-    active = external;
-    routed = route || external;
     final done = Completer<void>();
     messenger.handlePlatformMessage(
       channel.name,
       const StandardMethodCodec().encodeMethodCall(
-        MethodCall('externalPlaybackChanged', {
-          'textureId': texture,
-          'active': external,
-          'routed': routed,
-          'sourceUrl': url ?? nativeUrl,
-          'sourceRevision': revision ?? nativeRevision,
+        MethodCall('state', {
+          'sessionId': id ?? identity,
+          'sequence': revision ?? ++sequence,
+          'itemId': '$index',
+          'positionMs': ended ? 120000 : 42000,
+          'durationMs': 120000,
+          'playing': !closed && !ended,
+          'active': route && !closed,
+          'routed': route,
+          'closed': closed,
+          'ended': ended,
+          'needsNext': needsNext,
         }),
       ),
       (_) => done.complete(),
     );
     await done.future;
+    await Future<void>.delayed(Duration.zero);
   }
 
+  Future<void> open({bool playing = true}) => session.start(
+    initialIndex: 0,
+    initialPosition: const Duration(seconds: 10),
+    initialPlaying: playing,
+    speed: 1.5,
+  );
+
   setUp(() {
-    relay = FakeCastRelay();
     calls = [];
-    installed = [];
-    key = Object();
-    failPicker = routed = active = false;
-    nativeUrl = null;
-    nativeRevision = 0;
-    releaseGate = null;
+    relays = [];
+    loads = [];
+    retained = [];
+    advance = true;
+    route = failClose = failNext = false;
+    sourceGate = null;
+    nativeGate = null;
+    identity = null;
+    sequence = 0;
     messenger.setMockMethodCallHandler(channel, (call) async {
-      calls.add(call.method);
-      if (call.method == 'getAirPlayState' || call.method == 'prepareAirPlay') {
-        return {
-          'active': active,
-          'routed': routed,
-          'sourceUrl': nativeUrl,
-          'sourceRevision': nativeRevision,
-        };
+      calls.add(call);
+      if (call.method == 'getState') return {'routed': route};
+      if (call.method == 'open') {
+        identity = (call.arguments as Map)['sessionId'] as String;
+        await nativeGate?.future;
       }
-      if (call.method == 'releaseAirPlay') {
-        await releaseGate?.future;
-        nativeUrl = null;
-        nativeRevision++;
-      }
-      if (call.method == 'showAirPlayRoutes' && failPicker) {
-        throw PlatformException(code: 'unavailable');
+      if (call.method == 'close') {
+        await nativeGate?.future;
+        if (failClose) throw PlatformException(code: 'stop_failed');
       }
       return null;
     });
     session = AirPlaySession(
-      relayFactory: () => relay,
-      connectionTimeout: const Duration(milliseconds: 10),
-    )..textureId = 7;
+      loadSource: (index) async {
+        loads.add(index);
+        if (index == 1 && failNext) throw StateError('source failed');
+        return await sourceGate?.future ?? castSource();
+      },
+      retainSources: (indices) => retained.add(indices),
+      episodeCount: 3,
+      autoAdvance: () => advance,
+      relayFactory: () {
+        final relay = DelayedCloseRelay();
+        relays.add(relay);
+        return relay;
+      },
+    );
   });
   tearDown(() async {
+    failClose = false;
+    nativeGate = null;
     await session.close();
     session.dispose();
     messenger.setMockMethodCallHandler(channel, null);
   });
 
   test(
-    'inherited audio route is read before native player creation without claiming video connected',
+    'independent native player receives current and upcoming item without a texture',
     () async {
-      session.textureId = null;
-      routed = true;
-      await session.refreshRoute();
-      expect(session.routed, true);
-      expect(session.active, false);
-      expect(session.hasSource, false);
-      expect(relay.starts, 0);
-    },
-  );
-
-  test(
-    'route picker reuses installed source and ignores other players',
-    () async {
-      await open();
-      expect(calls, ['prepareAirPlay', 'showAirPlayRoutes']);
-      await emit(8, true);
-      expect(session.active, false);
-      await emit(7, true);
-      expect(session.active, true);
-      await emit(7, false);
-      expect(session.active, false);
-      await open();
-      expect(relay.starts, 1);
-      expect(relay.closes, 0);
-      expect(installed.length, 1);
-    },
-  );
-
-  test(
-    'next episode retains connection and closes old relay only after native replacement',
-    () async {
-      await open();
-      await emit(7, true);
-      final old = relay;
-      relay = FakeCastRelay();
-      final gate = Completer<bool>();
-      key = Object();
-      final pending = session.open(
-        sourceKey: key,
-        source: castSource(),
-        install: (_) => gate.future,
-        showPicker: false,
-      );
+      await open(playing: false);
       await Future<void>.delayed(Duration.zero);
-      expect(session.routed, true);
-      expect(old.closes, 0);
-      gate.complete(true);
-      await pending;
-      expect(old.closes, 1);
-      expect(relay.closes, 0);
-      expect(calls.where((c) => c == 'releaseAirPlay'), isEmpty);
-      expect(calls.where((c) => c == 'showAirPlayRoutes'), hasLength(1));
+      expect(loads, [0, 1]);
+      expect(calls.map((c) => c.method), ['open', 'append']);
+      final args = calls.first.arguments as Map;
+      expect(args.containsKey('textureId'), false);
+      expect(args['positionMs'], 10000);
+      expect(args['playing'], false);
+      expect(args['speed'], 1.5);
+      expect(session.index, 0);
+      expect(relays[0].closes, 0);
+      expect(relays[1].closes, 0);
+      route = true;
+      await emit(index: 1, needsNext: true);
+      expect(session.index, 1);
+      expect(loads, [0, 1, 2]);
+      expect(relays[0].closes, 1);
+      expect(relays[1].closes, 0);
+      expect(retained.last, {1, 2});
+      expect(calls.where((c) => c.method == 'open'), hasLength(1));
     },
   );
 
   test(
-    'release waits for pending installation then detaches native before closing relay',
+    'real end before next preparation finishes keeps predecessor and appends once',
     () async {
-      final gate = Completer<bool>();
-      final pending = session.open(
-        sourceKey: key,
-        source: castSource(),
-        install: (_) => gate.future,
-      );
-      await Future<void>.delayed(Duration.zero);
-      final failure = expectLater(pending, throwsA(isA<CastCancelled>()));
-      releaseGate = Completer<void>();
-      final release = session.release();
-      expect(relay.closes, 0);
-      gate.complete(true);
-      await failure;
-      await Future<void>.delayed(Duration.zero);
-      expect(calls, ['releaseAirPlay']);
-      expect(relay.closes, 0);
-      releaseGate!.complete();
-      await release;
-      expect(relay.closes, 1);
-      expect(session.hasSource, false);
-    },
-  );
-
-  test(
-    'older source callbacks cannot change current route or mark another video connected',
-    () async {
+      advance = false;
       await open();
-      await emit(7, true, revision: 3);
-      await emit(7, false, revision: 2);
-      expect(session.routed, true);
-      expect(session.active, true);
-      await emit(7, true, revision: 3, url: 'http://192.168.1.2/old.mp4');
-      expect(session.active, false);
-      expect(session.routed, true);
-    },
-  );
-
-  test(
-    'cancelled relay startup is cleaned without installing old media',
-    () async {
-      relay.startGate = Completer<String>();
-      final pending = open();
+      advance = true;
+      sourceGate = Completer();
+      await emit(ended: true, needsNext: true);
+      await emit(ended: true, needsNext: true);
+      expect(loads, [0, 1]);
+      expect(relays.single.closes, 0);
+      expect(retained.last, {0, 1});
+      sourceGate!.complete(castSource());
       await Future<void>.delayed(Duration.zero);
-      final failure = expectLater(pending, throwsA(isA<CastCancelled>()));
-      final release = session.release();
-      relay.startGate!.complete('http://192.168.1.2/old.mp4');
-      await failure;
-      await release;
-      expect(installed, isEmpty);
-      expect(relay.closes, 1);
-      expect(session.preparing, false);
+      expect(calls.where((c) => c.method == 'append'), hasLength(1));
+      expect((calls.last.arguments as Map)['afterId'], '0');
+      expect(
+        session.index,
+        0,
+      ); // Only the native item-change event advances it.
     },
   );
 
   test(
-    'failed or superseded installation keeps URL until native consumer is detached',
+    'auto advance disabled and final episode do not load another source',
     () async {
-      await expectLater(
-        session.open(
-          sourceKey: key,
-          source: castSource(),
-          install: (_) async => false,
-        ),
-        throwsA(isA<CastCancelled>()),
-      );
-      expect(relay.closes, 0);
-      await session.release();
-      expect(relay.closes, 1);
-    },
-  );
-
-  test(
-    'picker failure retains source and retry does not reload video',
-    () async {
-      failPicker = true;
-      await expectLater(open(), throwsA(isA<PlatformException>()));
-      expect(relay.closes, 0);
-      failPicker = false;
+      advance = false;
       await open();
-      expect(relay.starts, 1);
-      expect(installed.length, 1);
+      await emit(ended: true, needsNext: true);
+      expect(loads, [0]);
+      advance = true;
+      await emit(index: 2, ended: true, needsNext: true);
+      expect(loads, [0]);
     },
   );
 
-  test(
-    'new episode supersedes a pending install without releasing the connection or showing old routes',
-    () async {
-      final old = relay;
-      final gate = Completer<bool>();
-      final first = session.open(
-        sourceKey: key,
-        source: castSource(),
-        install: (_) => gate.future,
-      );
-      await Future<void>.delayed(Duration.zero);
-      final cancelled = expectLater(first, throwsA(isA<CastCancelled>()));
-      relay = FakeCastRelay();
-      key = Object();
-      final next = open(showPicker: false);
-      expect(old.closes, 0);
-      gate.complete(true);
-      await cancelled;
-      await next;
-      expect(old.closes, 1);
-      expect(relay.closes, 0);
-      expect(calls, ['prepareAirPlay']);
-      expect(session.preparing, false);
-      expect(session.hasSource, true);
-    },
-  );
-
-  test(
-    'exit waits for ordinary native source setup before detaching and does not pretend the system route is local',
-    () async {
-      await open();
-      await emit(7, true);
-      final nativeSetup = Completer<void>();
-      final closing = session.close(after: nativeSetup.future);
-      await Future<void>.delayed(Duration.zero);
-      expect(calls, isNot(contains('releaseAirPlay')));
-      expect(relay.closes, 0);
-      nativeSetup.complete();
-      await closing;
-      expect(calls.last, 'releaseAirPlay');
-      expect(relay.closes, 1);
-      expect(session.routed, true);
-      expect(session.active, false);
-    },
-  );
-
-  test(
-    'disposing the previous page cannot remove the new player route subscription',
-    () async {
-      final old = session;
-      session = AirPlaySession(relayFactory: FakeCastRelay.new)..textureId = 8;
-      old.dispose();
-      await old.close();
-      await emit(8, false, route: true);
-      expect(session.routed, true);
-      expect(session.active, false);
-    },
-  );
-
-  test(
-    'returning to an old episode after a cancelled replacement must reinstall its media',
-    () async {
-      final original = key;
-      await open();
-      await expectLater(
-        session.open(
-          sourceKey: Object(),
-          source: castSource(),
-          install: (_) async => false,
-        ),
-        throwsA(isA<CastCancelled>()),
-      );
-      key = original;
-      await open(showPicker: false);
-      expect(relay.starts, 3);
-      expect(installed, hasLength(2));
-    },
-  );
-
-  test('repeated taps share the same pending operation', () async {
-    final gate = Completer<bool>();
-    final pending = session.open(
-      sourceKey: key,
-      source: castSource(),
-      install: (_) => gate.future,
+  test('manual next overrides auto advance off', () async {
+    advance = false;
+    await open();
+    final done = Completer<void>();
+    messenger.handlePlatformMessage(
+      channel.name,
+      const StandardMethodCodec().encodeMethodCall(
+        MethodCall('requestNext', {'sessionId': identity, 'afterId': '0'}),
+      ),
+      (_) => done.complete(),
     );
+    await done.future;
     await Future<void>.delayed(Duration.zero);
-    final repeat = open();
-    gate.complete(true);
-    await Future.wait([pending, repeat]);
-    expect(relay.starts, 1);
-    expect(calls, ['prepareAirPlay', 'showAirPlayRoutes']);
+    expect(loads, [0, 1]);
+    expect(calls.last.method, 'append');
   });
 
   test(
-    'audio-only connection times out, while paused selection does not',
+    'old sessions and out of order native state cannot change the current episode',
     () async {
-      routed = true;
+      advance = false;
       await open();
-      session.expectVideo(false);
-      await Future<void>.delayed(const Duration(milliseconds: 30));
-      expect(session.error, isNull);
-      session.expectVideo(true);
-      await Future<void>.delayed(const Duration(milliseconds: 30));
-      expect(session.active, false);
-      expect(session.error, contains('视频'));
-      await emit(7, true);
-      expect(session.error, isNull);
+      route = true;
+      await emit(index: 1, revision: 5);
+      await emit(index: 0, revision: 4);
+      await emit(index: 2, id: 'previous-page', revision: 99);
+      expect(session.index, 1);
+      expect(session.active, true);
+    },
+  );
+
+  test(
+    'close waits for submitted open before closing receiver media',
+    () async {
+      advance = false;
+      nativeGate = Completer();
+      final pending = open();
+      await Future<void>.delayed(Duration.zero);
+      final failure = expectLater(pending, throwsA(isA<CastCancelled>()));
+      final closing = session.close();
+      expect(relays.single.closes, 0);
+      nativeGate!.complete();
+      await failure;
+      await closing;
+      expect(calls.map((c) => c.method), ['open', 'close']);
+      expect(relays.single.closes, 1);
+      expect(retained.last, isEmpty);
+    },
+  );
+
+  test('cancelled preparation never submits native open or append', () async {
+    sourceGate = Completer();
+    final pending = open();
+    await Future<void>.delayed(Duration.zero);
+    final failure = expectLater(pending, throwsA(isA<CastCancelled>()));
+    await session.close();
+    sourceGate!.complete(castSource());
+    await failure;
+    expect(relays, isEmpty);
+    expect(calls.where((c) => c.method == 'open'), isEmpty);
+  });
+
+  test(
+    'a late cancelled startup cannot remove a new session media lease',
+    () async {
+      advance = false;
+      sourceGate = Completer();
+      final oldSource = sourceGate!;
+      final old = open();
+      await Future<void>.delayed(Duration.zero);
+      final failure = expectLater(old, throwsA(isA<CastCancelled>()));
+      await session.close();
+      sourceGate = null;
+      await open();
+      oldSource.complete(castSource());
+      await failure;
+      expect(relays.single.closes, 0);
+      await session.close();
+      expect(relays.single.closes, 1);
+    },
+  );
+
+  test('slow outgoing cleanup cannot evict the newer current video', () async {
+    await open();
+    await Future<void>.delayed(Duration.zero);
+    final outgoing = relays.first as DelayedCloseRelay;
+    outgoing.closeGate = Completer();
+    await emit(index: 1, needsNext: true);
+    await emit(index: 2);
+    expect(retained.last, {2});
+    outgoing.closeGate!.complete();
+    await Future<void>.delayed(Duration.zero);
+    expect(retained.last, {2});
+    expect(relays[2].closes, 0);
+  });
+
+  test('failed native stop retains receiver URLs and permits retry', () async {
+    advance = false;
+    await open();
+    failClose = true;
+    await expectLater(session.close(), throwsA(isA<PlatformException>()));
+    expect(relays.single.closes, 0);
+    expect(session.blocksLocal, true);
+    failClose = false;
+    await session.close();
+    expect(relays.single.closes, 1);
+  });
+
+  test(
+    'next-source failure reports once instead of endlessly retrying progress events',
+    () async {
+      failNext = true;
+      await open();
+      await Future<void>.delayed(Duration.zero);
+      await emit(needsNext: true);
+      await emit(needsNext: true);
+      expect(loads, [0, 1]);
+      expect(session.error, contains('下一集准备失败'));
+      expect(calls.where((c) => c.method == 'reportError'), hasLength(1));
+      expect(relays.single.closes, 0);
+    },
+  );
+
+  test(
+    'route remains separate from native closure and a new page keeps channel ownership',
+    () async {
+      advance = false;
+      await open();
+      route = true;
+      await emit(closed: true);
+      expect(session.engaged, false);
+      expect(session.routed, true);
+      expect(session.blocksLocal, true);
+      expect(session.position.inSeconds, 42);
+      final next = AirPlaySession(
+        loadSource: (_) async => castSource(),
+        retainSources: (_) {},
+        episodeCount: 1,
+        autoAdvance: () => false,
+        relayFactory: FakeCastRelay.new,
+      );
+      await session.close();
+      session.dispose();
+      final done = Completer<void>();
+      messenger.handlePlatformMessage(
+        channel.name,
+        const StandardMethodCodec().encodeMethodCall(
+          const MethodCall('state', {'sessionId': '', 'routed': true}),
+        ),
+        (_) => done.complete(),
+      );
+      await done.future;
+      expect(next.routed, true);
+      await next.close();
+      next.dispose();
     },
   );
 }

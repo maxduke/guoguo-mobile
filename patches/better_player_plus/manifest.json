@@ -3,11 +3,11 @@
   "files": {
     "ios/better_player_plus/Sources/better_player_plus/BetterPlayer.swift": {
       "original": "eaa4d73b13395bcb7924ef2820fc8bb316a48e55ca8e3f8e87b90d9ac0e97cf7",
-      "patched": "997f2e0e0b19679316046c2ffa20eafd3562e69af3089acc00954877e20777ff"
+      "patched": "a73a9ec238af9b60f5d051cd4a95745829cb253511dd46718f70836a5b726c95"
     },
     "ios/better_player_plus/Sources/better_player_plus/SwiftBetterPlayerPlugin.swift": {
       "original": "9c81f90afe2e28efaf651a9d78b5415c89e7f21ee1d31e4f0087067439525af6",
-      "patched": "f5937f688dde1a0bc95fc5ff4838b9ae3bfde3db622938f524d0878c20b76a99"
+      "patched": "5a366b01f38c8044dba70f39da9e2a7e2ae871e935f82cb4d7b4ff7fd07436c2"
     }
   },
   "extraFiles": [
