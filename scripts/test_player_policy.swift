@@ -70,6 +70,11 @@ struct PlayerPolicyTests {
         for (prepared, playing, position, duration, expected) in endings {
             precondition(GuoguoMediaPolicy.shouldCompleteAirPlay(prepared: prepared, playing: playing, positionMs: position, durationMs: duration) == expected)
         }
-        print("Player media policy: \(cases.count + 4 + routes.count + holds.count + presentations.count + endings.count) cases passed")
+        var caseCount: Int = cases.count + 4
+        caseCount += routes.count
+        caseCount += holds.count
+        caseCount += presentations.count
+        caseCount += endings.count
+        print("Player media policy: \(caseCount) cases passed")
     }
 }
