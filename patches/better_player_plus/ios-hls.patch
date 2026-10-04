@@ -1,6 +1,46 @@
 --- a/ios/better_player_plus/Sources/better_player_plus/BetterPlayer.swift
 +++ b/ios/better_player_plus/Sources/better_player_plus/BetterPlayer.swift
-@@ -203,7 +203,7 @@
+@@ -11,7 +11,7 @@
+ private var playbackBufferFullContext = 0
+ private var presentationSizeContext = 0
+ 
+-public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, AVPictureInPictureControllerDelegate {
++public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, AVPictureInPictureControllerDelegate, AVRoutePickerViewDelegate {
+     public private(set) var player: AVPlayer
+     public private(set) var loaderDelegate: BetterPlayerEzDrmAssetsLoaderDelegate?
+     public var eventChannel: FlutterEventChannel?
+@@ -47,11 +47,22 @@
+     private var restoreUIOnPipStop: ((Bool) -> Void)?
+     /// Invalidates a pending background-pause check when a newer one supersedes it.
+     private var backgroundPauseGeneration = 0
++    private var airPlayPrepared = false
++    private var airPlayPicker: AVRoutePickerView?
++    private var externalPlaybackObservation: NSKeyValueObservation?
++    public var externalPlaybackChanged: ((Bool) -> Void)?
+ 
+     public override init() {
+         self.player = AVPlayer()
+         super.init()
+         self.player.actionAtItemEnd = .none
++        self.player.allowsExternalPlayback = true
++        externalPlaybackObservation = player.observe(\.isExternalPlaybackActive, options: [.new]) { [weak self] player, _ in
++            DispatchQueue.main.async {
++                guard let self, !self.disposed else { return }
++                self.externalPlaybackChanged?(player.isExternalPlaybackActive)
++            }
++        }
+         if #available(iOS 10.0, *) {
+             self.player.automaticallyWaitsToMinimizeStalling = false
+         }
+@@ -65,6 +76,7 @@
+             name: UIApplication.didEnterBackgroundNotification,
+             object: nil
+         )
++        NotificationCenter.default.addObserver(self, selector: #selector(onAudioRouteChanged), name: AVAudioSession.routeChangeNotification, object: nil)
+     }
+ 
+     public convenience init(frame: CGRect) {
+@@ -203,7 +215,7 @@
          }
      }
  
@@ -9,7 +49,7 @@
          self.overriddenDuration = 0
          var finalHeaders = headers
          if finalHeaders["dummy"] == nil {} // keep dictionary type stable
-@@ -231,31 +231,31 @@
+@@ -231,31 +243,31 @@
          if #available(iOS 10.0, *), overriddenDuration > 0 {
              self.overriddenDuration = overriddenDuration
          }
@@ -44,7 +84,7 @@
 -                        if videoTrack.statusOfValue(forKey: "preferredTransform", error: nil) == .loaded {
 +                        DispatchQueue.main.async {
 +                            guard let self = self, !self.disposed,
-+                                  self.player.currentItem === item,
++                                  self.player.currentItem === item, !self.airPlayPrepared,
 +                                  videoTrack.statusOfValue(forKey: "preferredTransform", error: nil) == .loaded else { return }
 +                            let seconds = CMTimeGetSeconds(asset.duration)
 +                            guard seconds.isFinite, seconds > 0 else { return }
@@ -58,9 +98,141 @@
                              #if !targetEnvironment(simulator)
                              let videoComposition = self.getVideoComposition(transform: self.preferredTransform, asset: asset, videoTrack: videoTrack)
                              item.videoComposition = videoComposition
+@@ -603,7 +615,10 @@
+             guard let self, !self.disposed, generation == self.backgroundPauseGeneration else { return }
+             // Back in the foreground already, or PiP took over: nothing to do.
+             guard UIApplication.shared.applicationState == .background else { return }
+-            guard self.pipController?.isPictureInPictureActive != true else { return }
++            guard GuoguoMediaPolicy.shouldPauseInBackground(
++                pipActive: self.pipController?.isPictureInPictureActive == true,
++                externalPlaybackActive: self.player.isExternalPlaybackActive || (self.airPlayPrepared && self.hasAirPlayRoute)
++            ) else { return }
+             self.pause()
+             self.eventSink?(["event": "pause"])
+         }
+@@ -650,6 +665,52 @@
+         setRestoreUserInterfaceForPIPStopCompletionHandler(true)
+     }
+ 
++    // MARK: - AirPlay
++    public var hasAirPlayRoute: Bool {
++        return AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .airPlay }
++    }
++
++    @objc private func onAudioRouteChanged() {
++        DispatchQueue.main.async { [weak self] in
++            guard let self, !self.disposed else { return }
++            self.externalPlaybackChanged?(self.player.isExternalPlaybackActive)
++        }
++    }
++
++    public func prepareAirPlay() -> [String: Bool] {
++        airPlayPrepared = true
++        // Send the original video track to the receiver, without local effects.
++        player.currentItem?.videoComposition = nil
++        player.allowsExternalPlayback = true
++        return ["active": player.isExternalPlaybackActive, "routed": hasAirPlayRoute]
++    }
++
++    public func showAirPlayRoutes() -> Bool {
++        guard let host = [playerView, previousPlayerView].compactMap(\.self).first(where: { $0.window != nil }) else { return false }
++        airPlayPicker?.removeFromSuperview()
++        let picker = AVRoutePickerView(frame: CGRect(x: max(0, host.bounds.width - 44), y: 0, width: 44, height: 44))
++        picker.prioritizesVideoDevices = true
++        picker.delegate = self
++        // Flutter renders the visible button; retain a native anchor for iPad.
++        picker.tintColor = .clear
++        picker.activeTintColor = .clear
++        picker.accessibilityElementsHidden = true
++        host.addSubview(picker)
++        picker.layoutIfNeeded()
++        guard let button = picker.subviews.compactMap({ $0 as? UIButton }).first else {
++            picker.removeFromSuperview()
++            return false
++        }
++        airPlayPicker = picker
++        button.sendActions(for: .touchUpInside)
++        return true
++    }
++
++    public func routePickerViewDidEndPresentingRoutes(_ routePickerView: AVRoutePickerView) {
++        routePickerView.removeFromSuperview()
++        if airPlayPicker === routePickerView { airPlayPicker = nil }
++    }
++
+     // MARK: - Audio & Tracks
+     public func setAudioTrack(name: String, index: Int) {
+         guard let group = player.currentItem?.asset.mediaSelectionGroup(forMediaCharacteristic: .audible) else { return }
+@@ -684,6 +745,7 @@
+     }
+ 
+     public func clear() {
++        airPlayPrepared = false
+         isInitialized = false
+         isPlaying = false
+         disposed = false
+@@ -701,6 +763,11 @@
+     }
+ 
+     public func dispose() {
++        externalPlaybackObservation?.invalidate()
++        externalPlaybackObservation = nil
++        externalPlaybackChanged = nil
++        airPlayPicker?.removeFromSuperview()
++        airPlayPicker = nil
+         NotificationCenter.default.removeObserver(self)
+         backgroundPauseGeneration += 1
+         pause()
 --- a/ios/better_player_plus/Sources/better_player_plus/SwiftBetterPlayerPlugin.swift
 +++ b/ios/better_player_plus/Sources/better_player_plus/SwiftBetterPlayerPlugin.swift
-@@ -244,6 +244,7 @@
+@@ -6,6 +6,7 @@
+ import MediaPlayer
+ 
+ public class BetterPlayerPlugin: NSObject, FlutterPlugin, FlutterPlatformViewFactory {
++    private let airPlayChannel: FlutterMethodChannel
+     private let messenger: FlutterBinaryMessenger
+     private var players: [Int64: BetterPlayer] = [:]
+     private let registrar: FlutterPluginRegistrar
+@@ -20,6 +21,7 @@
+ 
+     init(registrar: FlutterPluginRegistrar) {
+         self.messenger = registrar.messenger()
++        self.airPlayChannel = FlutterMethodChannel(name: "guoguo/airplay", binaryMessenger: registrar.messenger())
+         self.registrar = registrar
+         self.cacheManager = CacheManager()
+         super.init()
+@@ -30,6 +32,7 @@
+         let channel = FlutterMethodChannel(name: "better_player_channel", binaryMessenger: registrar.messenger())
+         let instance = BetterPlayerPlugin(registrar: registrar)
+         registrar.addMethodCallDelegate(instance, channel: channel)
++        registrar.addMethodCallDelegate(instance, channel: instance.airPlayChannel)
+         registrar.register(instance, withId: "com.jhomlala/better_player")
+     }
+ 
+@@ -54,6 +57,10 @@
+         eventChannel.setStreamHandler(player)
+         player.eventChannel = eventChannel
+         players[textureId] = player
++        player.externalPlaybackChanged = { [weak self, weak player] active in
++            guard let player else { return }
++            self?.airPlayChannel.invokeMethod("externalPlaybackChanged", arguments: ["textureId": NSNumber(value: textureId), "active": active, "routed": player.hasAirPlayRoute])
++        }
+         result(["textureId": NSNumber(value: textureId)])
+     }
+ 
+@@ -231,6 +238,11 @@
+         }
+ 
+         switch call.method {
++        case "prepareAirPlay":
++            result(player.prepareAirPlay())
++        case "showAirPlayRoutes":
++            if player.showAirPlayRoutes() { result(nil) }
++            else { result(FlutterError(code: "airplay_unavailable", message: "AirPlay route picker unavailable", details: nil)) }
+         case "setDataSource":
+             player.clear()
+             let dataSource = argsMap["dataSource"] as? [String: Any] ?? [:]
+@@ -244,6 +256,7 @@
              let cacheKey = dataSource["cacheKey"] as? String
              let maxCacheSize = dataSource["maxCacheSize"] as? NSNumber
              let videoExtension = dataSource["videoExtension"] as? String
@@ -68,7 +240,7 @@
              let overriddenDuration = (dataSource["overriddenDuration"] as? NSNumber)?.intValue ?? 0
  
              let useCache = (dataSource["useCache"] as? NSNumber)?.boolValue ?? false
-@@ -258,7 +259,7 @@
+@@ -258,7 +271,7 @@
                  }
                  player.setDataSourceAsset(assetPath, key: key, certificateUrl: certificateUrl, licenseUrl: licenseUrl, cacheKey: cacheKey, cacheManager: cacheManager, overriddenDuration: overriddenDuration)
              } else if let uriArg = uriArg, let url = URL(string: uriArg) {

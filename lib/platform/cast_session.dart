@@ -3,10 +3,17 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../domain/models.dart';
+import 'provider_client.dart';
 
 abstract interface class CastRelayHandle {
-  Future<String> start(ResolvedMedia media, String? localPath);
+  Future<String> start(ResolvedMedia media, String? localPath, {Uri? receiver});
   Future<void> close();
+}
+
+abstract interface class CastRelayDiagnostics {
+  bool get mediaRequested;
+  int get bytesSent;
+  String? get transferError;
 }
 
 enum CastPlaybackState { playing, paused, buffering, stopped, unknown }
@@ -61,10 +68,21 @@ abstract interface class CastReceiver {
   Future<void> close();
 }
 
+abstract interface class CastLoadCancellation {
+  void cancelLoad();
+}
+
 class CastTarget {
-  const CastTarget(this.id, this.name, this.protocol, this.createReceiver);
+  const CastTarget(
+    this.id,
+    this.name,
+    this.protocol,
+    this.createReceiver, {
+    this.receiver,
+  });
   final String id, name, protocol;
   final CastReceiver Function() createReceiver;
+  final Uri? receiver;
 }
 
 class CastCancelled implements Exception {
@@ -90,6 +108,7 @@ class CastSessionController extends ChangeNotifier {
   final Timer Function(Duration, void Function()) _pollTimerFactory;
   CastPhase phase = CastPhase.idle;
   String? error;
+  String connectionStep = '正在连接电视…';
   CastReceiver? _receiver;
   CastRelayHandle? _relay;
   CastSource? source;
@@ -101,6 +120,7 @@ class CastSessionController extends ChangeNotifier {
   Timer? _timer;
   bool _closed = false, _foreground = true, _polling = false;
   bool _stopRequested = false, _pausedLocal = false;
+  bool _waitingMedia = false;
   int _revision = 0, _commands = 0;
 
   String? get deviceName => _receiver?.name;
@@ -146,6 +166,8 @@ class CastSessionController extends ChangeNotifier {
     phase = CastPhase.connecting;
     error = null;
     _stopRequested = false;
+    connectionStep = '正在连接电视…';
+    _waitingMedia = false;
     final revision = ++_revision;
     _notify();
     return _queue(() async {
@@ -163,8 +185,15 @@ class CastSessionController extends ChangeNotifier {
         _check(revision);
         await _receiver!.connect().timeout(const Duration(seconds: 20));
         _check(revision);
-        final url = await _relay!.start(source!.media, source!.localPath);
+        connectionStep = '正在准备视频传输…';
+        _notify();
+        final url = await _relay!
+            .start(source!.media, source!.localPath, receiver: target.receiver)
+            .timeout(const Duration(seconds: 8));
         _check(revision);
+        connectionStep = '正在等待电视读取视频并开始播放…';
+        _waitingMedia = true;
+        _notify();
         await _receiver!
             .load(url, source!)
             .timeout(const Duration(seconds: 25));
@@ -179,20 +208,22 @@ class CastSessionController extends ChangeNotifier {
         _notify();
       } catch (problem) {
         if (_closed || revision != _revision) return;
+        final failure = _startFailure(problem);
+        _cancelLoad();
         // A failed load may have reached the receiver. Require a confirmed stop
         // before starting the phone again, and keep controls for retry on failure.
         try {
           await _receiver?.stop().timeout(const Duration(seconds: 20));
         } catch (_) {
           phase = CastPhase.failed;
-          error = '电视未确认结束，请重试结束投屏后再在手机播放';
+          error = '$failure；电视未确认结束，请重试结束投屏后再在手机播放';
           _notify();
           return;
         }
         final original = source;
         await _release();
         if (_closed || revision != _revision) return;
-        if (problem is! CastCancelled) error = '投屏未成功：$problem';
+        if (problem is! CastCancelled) error = failure;
         await _return(
           original == null
               ? null
@@ -205,6 +236,27 @@ class CastSessionController extends ChangeNotifier {
         );
       }
     });
+  }
+
+  String _startFailure(Object problem) {
+    if (problem is CastCancelled) return '连接已取消';
+    final relay = _relay;
+    final detail = problem is ProviderException
+        ? problem.message
+        : problem is TimeoutException
+        ? '等待电视响应超时'
+        : '电视未能加载视频，请重试或切换投屏协议';
+    if (relay is CastRelayDiagnostics && _waitingMedia) {
+      final diagnostics = relay as CastRelayDiagnostics;
+      if (diagnostics.transferError != null) {
+        return '投屏未成功：${diagnostics.transferError}';
+      }
+      if (!diagnostics.mediaRequested) {
+        return '电视尚未读取视频：$detail。请确认手机与电视连接同一 Wi-Fi，并检查 VPN 和本地网络权限。';
+      }
+      if (diagnostics.bytesSent > 0) return '电视已读取视频，但未确认播放：$detail';
+    }
+    return '投屏未成功：$detail';
   }
 
   void _accept(CastPlayback snapshot) {
@@ -294,6 +346,7 @@ class CastSessionController extends ChangeNotifier {
   Future<void> stop() {
     if (_closed || !blocksLocal) return Future.value();
     if (_stopping != null) return _stopping!;
+    if (phase == CastPhase.connecting) _cancelLoad();
     _stopRequested = true;
     _timer?.cancel();
     final revision = _revision;
@@ -370,12 +423,20 @@ class CastSessionController extends ChangeNotifier {
     }
   }
 
+  void _cancelLoad() {
+    final receiver = _receiver;
+    if (receiver is CastLoadCancellation) {
+      (receiver as CastLoadCancellation).cancelLoad();
+    }
+  }
+
   @override
   void dispose() {
     if (_closed) return;
     _closed = true;
     _revision++;
     _timer?.cancel();
+    _cancelLoad();
     final receiver = _receiver;
     // Invalidate first and close local resources promptly. Late connect/load
     // results are ignored; receivers also close their own pending requests.

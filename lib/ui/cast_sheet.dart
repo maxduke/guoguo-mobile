@@ -122,7 +122,7 @@ class _CastSheetState extends State<CastSheet> {
                     ),
                   ],
                   if (session.phase == CastPhase.connecting)
-                    const Text('正在连接电视并交接进度…'),
+                    Text(session.connectionStep),
                   if (session.phase == CastPhase.stopping)
                     const Text('正在读取最终进度并结束投屏…'),
                   if (session.phase == CastPhase.returning)

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_chrome_cast/flutter_chrome_cast.dart';
 import 'package:http/http.dart' as http;
+import 'package:xml/xml.dart';
 
 import 'cast_session.dart';
 import 'casting.dart';
@@ -30,9 +31,45 @@ String formatDlnaTime(Duration value) {
   return '${two(seconds ~/ 3600)}:${two(seconds ~/ 60 % 60)}:${two(seconds % 60)}';
 }
 
-class DlnaCastReceiver implements CastReceiver {
-  DlnaCastReceiver(DlnaDevice device, {http.Client? client})
-    : _client = client ?? http.Client() {
+String dlnaMediaMetadata(String url, CastSource source) {
+  final hls = source.localPath == null && source.media.hls;
+  final builder = XmlBuilder();
+  builder.element(
+    'DIDL-Lite',
+    namespaceUris: {
+      '': 'urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/',
+      'dc': 'http://purl.org/dc/elements/1.1/',
+      'upnp': 'urn:schemas-upnp-org:metadata-1-0/upnp/',
+    },
+    nest: () => builder.element(
+      'item',
+      attributes: {'id': '0', 'parentID': '-1', 'restricted': '1'},
+      nest: () {
+        builder.element('dc:title', nest: source.title);
+        builder.element('upnp:class', nest: 'object.item.videoItem');
+        builder.element(
+          'res',
+          attributes: {
+            'protocolInfo':
+                'http-get:*:${hls ? 'application/vnd.apple.mpegurl' : 'video/mp4'}:*',
+            if (source.duration > Duration.zero)
+              'duration': formatDlnaTime(source.duration),
+          },
+          nest: url,
+        );
+      },
+    ),
+  );
+  return builder.buildDocument().toXmlString();
+}
+
+class DlnaCastReceiver implements CastReceiver, CastLoadCancellation {
+  DlnaCastReceiver(
+    DlnaDevice device, {
+    http.Client? client,
+    Future<void> Function(Duration)? delay,
+  }) : _client = client ?? http.Client(),
+       _delay = delay ?? Future<void>.delayed {
     _device = DlnaDevice(
       device.name,
       device.control,
@@ -41,16 +78,20 @@ class DlnaCastReceiver implements CastReceiver {
     );
   }
   final http.Client _client;
+  final Future<void> Function(Duration) _delay;
   late final DlnaDevice _device;
   String? _url;
-  bool _closed = false;
+  bool _closed = false, _cancelled = false;
   Future<void>? _stopping;
   bool _stopped = false;
   @override
   String get name => _device.name;
   void _check() {
-    if (_closed) throw const CastCancelled();
+    if (_closed || _cancelled) throw const CastCancelled();
   }
+
+  @override
+  void cancelLoad() => _cancelled = true;
 
   @override
   Future<void> connect() async => _check();
@@ -60,20 +101,57 @@ class DlnaCastReceiver implements CastReceiver {
     _url = url;
     await _device.command('SetAVTransportURI', {
       'CurrentURI': url,
-      'CurrentURIMetaData': '',
+      'CurrentURIMetaData': dlnaMediaMetadata(url, source),
     });
     _check();
     // Most renderers cannot seek until the media has entered playback.
-    await _device.command('Play', {'Speed': '1'});
+    await _whenReady('Play', {'Speed': '1'});
     _check();
+    await _waitForPlayback();
     if (source.position > Duration.zero) {
-      await _device.command('Seek', {
+      await _whenReady('Seek', {
         'Unit': 'REL_TIME',
         'Target': formatDlnaTime(source.position),
       });
       _check();
     }
     if (!source.playing) await pause();
+  }
+
+  Future<void> _whenReady(String action, Map<String, String> parameters) async {
+    for (var attempt = 0; ; attempt++) {
+      _check();
+      try {
+        await _device.command(action, parameters);
+        return;
+      } on DlnaCommandException catch (problem) {
+        if (problem.code != 701 || attempt >= 4) rethrow;
+        await _delay(const Duration(milliseconds: 500));
+      }
+    }
+  }
+
+  Future<void> _waitForPlayback() async {
+    for (var attempt = 0; attempt < 16; attempt++) {
+      _check();
+      Map<String, String> state;
+      try {
+        state = await _device.command('GetTransportInfo', {});
+      } catch (_) {
+        _check();
+        // Status support is optional; a successful Play remains the fallback.
+        return;
+      }
+      _check();
+      final transport = state['CurrentTransportState'];
+      if (transport == 'PLAYING' ||
+          transport == null ||
+          transport == 'NOT_IMPLEMENTED') {
+        return;
+      }
+      await _delay(const Duration(milliseconds: 500));
+    }
+    throw const ProviderException('电视接收了播放请求，但没有开始播放，请检查接收端或切换协议');
   }
 
   @override
@@ -172,7 +250,7 @@ class DlnaCastReceiver implements CastReceiver {
   }
 }
 
-class GoogleCastReceiver implements CastReceiver {
+class GoogleCastReceiver implements CastReceiver, CastLoadCancellation {
   GoogleCastReceiver(
     this.device, {
     GoogleCastRemoteMediaClientPlatformInterface? remote,
@@ -185,7 +263,7 @@ class GoogleCastReceiver implements CastReceiver {
        _channel = channel {
     _positions = _remote.playerPositionStream.listen((position) {
       final status = _remote.mediaStatus;
-      if (_closed || !_matches(status)) return;
+      if (_closed || _cancelled || !_matches(status)) return;
       if (status?.mediaSessionID == _previousMediaId) return;
       if (!_converged &&
           (position - _expected).abs() > const Duration(seconds: 5)) {
@@ -207,7 +285,7 @@ class GoogleCastReceiver implements CastReceiver {
   int? _previousMediaId, _sessionId;
   Duration _expected = Duration.zero;
   Duration? _position;
-  bool _closed = false, _converged = false;
+  bool _closed = false, _converged = false, _cancelled = false;
   Future<void>? _stopping;
   bool _stopped = false;
   @override
@@ -219,8 +297,11 @@ class GoogleCastReceiver implements CastReceiver {
       (status?.mediaInformation?.contentId == _url ||
           status?.mediaInformation?.contentUrl?.toString() == _url);
   void _check() {
-    if (_closed) throw const CastCancelled();
+    if (_closed || _cancelled) throw const CastCancelled();
   }
+
+  @override
+  void cancelLoad() => _cancelled = true;
 
   @override
   Future<void> connect() async {
@@ -240,7 +321,7 @@ class GoogleCastReceiver implements CastReceiver {
       }
       await Future<void>.delayed(const Duration(milliseconds: 200));
     }
-    if (_closed) {
+    if (_closed || _cancelled) {
       await stop();
       throw const CastCancelled();
     }
@@ -484,6 +565,7 @@ class DeviceCastDiscovery extends CastDiscovery {
           device.name,
           'DLNA',
           () => DlnaCastReceiver(device),
+          receiver: device.control,
         );
       }
     } catch (_) {

@@ -138,6 +138,36 @@ class _Fixture {
 
 void main() {
   test(
+    'AirPlay permits AVPlayer control in background without suspending its media',
+    () {
+      final f = _Fixture()..streaming = false;
+      f.lifecycle.setAirPlayActive(true);
+      f.lifecycle.setForeground(false);
+      expect(f.lifecycle.canPlay, true);
+      expect(f.lifecycle.deferPlayback(), false);
+      f.lifecycle.nativePlaying(false);
+      expect(f.lifecycle.playIntent, false);
+      f.lifecycle.setPipActive(true);
+      f.lifecycle.setPipActive(false);
+      expect(f.events, isNot(contains('pause')));
+      expect(f.timers, isEmpty);
+      f.lifecycle.setAirPlayActive(false);
+      expect(f.lifecycle.canPlay, false);
+    },
+  );
+
+  test(
+    'AirPlay activation cancels a pending progressive background suspension',
+    () {
+      final f = _Fixture();
+      f.lifecycle.setForeground(false);
+      f.lifecycle.setAirPlayActive(true);
+      f.timers.single.fire();
+      expect(f.events, isNot(contains('cancel')));
+      expect(f.lifecycle.canPlay, true);
+    },
+  );
+  test(
     'late PiP and foreground cannot play the phone while TV owns playback',
     () {
       final f = _Fixture()..streaming = false;

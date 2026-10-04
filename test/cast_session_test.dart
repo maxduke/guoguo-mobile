@@ -5,6 +5,25 @@ import 'package:guoguo_mobile/platform/cast_session.dart';
 
 import 'support/cast_fakes.dart';
 
+class DiagnosticRelay extends FakeCastRelay implements CastRelayDiagnostics {
+  @override
+  bool mediaRequested = false;
+  @override
+  int bytesSent = 0;
+  @override
+  String? transferError;
+}
+
+class CancellableReceiver extends FakeCastReceiver
+    implements CastLoadCancellation {
+  int cancellations = 0;
+  @override
+  void cancelLoad() {
+    cancellations++;
+    if (connectGate?.isCompleted == false) connectGate!.complete();
+  }
+}
+
 void main() {
   late FakeCastReceiver receiver;
   late FakeCastRelay relay;
@@ -30,6 +49,55 @@ void main() {
     );
   });
   tearDown(() => session.dispose());
+  test(
+    'cancel request interrupts a receiver load rather than waiting for timeout',
+    () async {
+      final cancellable = CancellableReceiver()
+        ..connectGate = Completer<void>();
+      receiver = cancellable;
+      final starting = session.start(receiver.target);
+      await Future<void>.delayed(Duration.zero);
+      final stopping = session.stop();
+      await Future.wait([starting, stopping]);
+      expect(cancellable.cancellations, greaterThan(0));
+      expect(receiver.calls, isNot(contains('load')));
+      expect(returns, hasLength(1));
+    },
+  );
+
+  test(
+    'receiver endpoint reaches address selection and a no-fetch failure is actionable',
+    () async {
+      relay = DiagnosticRelay();
+      receiver.failLoad = true;
+      final endpoint = Uri.parse('http://192.168.1.3/control');
+      await session.start(
+        CastTarget('tv', '电视', 'DLNA', () => receiver, receiver: endpoint),
+      );
+      expect(relay.receiverAddress, endpoint);
+      expect(session.error, contains('电视尚未读取视频'));
+      expect(session.error, contains('本地网络权限'));
+      expect(returns, hasLength(1));
+    },
+  );
+  test(
+    'transport failure is retained after cleanup and differs from receiver decoding failure',
+    () async {
+      final diagnostic = DiagnosticRelay()
+        ..mediaRequested = true
+        ..transferError = '视频源返回 403';
+      relay = diagnostic;
+      receiver.failLoad = true;
+      await session.start(receiver.target);
+      expect(session.error, contains('视频源返回 403'));
+      expect(relay.closes, 1);
+      diagnostic.transferError = null;
+      diagnostic.bytesSent = 1024;
+      await session.start(receiver.target);
+      expect(session.error, contains('电视已读取视频，但未确认播放'));
+      expect(returns, hasLength(2));
+    },
+  );
 
   test(
     'source is captured at device choice and TV receives actual position and pause intent',

@@ -47,6 +47,7 @@ class PlaybackLifecycleController {
   bool _closed = false;
   bool _foreground = true, _pipActive = false;
   bool _externalPlayback = false;
+  bool _airPlayActive = false;
   bool _playIntent = true, _pendingPlay = false;
   bool _restoreOnResume = false, _resumePlay = false;
   Duration? _resumePosition;
@@ -57,7 +58,15 @@ class PlaybackLifecycleController {
   bool get pipActive => _pipActive;
   bool get playIntent => _playIntent;
   bool get canPlay =>
-      !_closed && !_externalPlayback && (_foreground || _pipActive);
+      !_closed &&
+      !_externalPlayback &&
+      (_foreground || _pipActive || _airPlayActive);
+
+  void setAirPlayActive(bool active) {
+    if (_closed) return;
+    _airPlayActive = active;
+    if (active) _backgroundTimer?.cancel();
+  }
 
   void setExternalPlayback(bool active) {
     if (_closed || _externalPlayback == active) return;
@@ -154,7 +163,7 @@ class PlaybackLifecycleController {
         unawaited(play());
       }
       schedulePrefetch();
-    } else if (!_foreground) {
+    } else if (!_foreground && !_airPlayActive) {
       _updateIntent(false);
       _pendingPlay = false;
       cancelPrefetch();
@@ -177,7 +186,7 @@ class PlaybackLifecycleController {
       if (!_pipActive) {
         cancelPrefetch();
         _backgroundTimer?.cancel();
-        if (_externalPlayback) return;
+        if (_externalPlayback || _airPlayActive) return;
         final ticket = session.generation;
         _backgroundTimer = _timerFactory(const Duration(milliseconds: 800), () {
           if (!_closed &&

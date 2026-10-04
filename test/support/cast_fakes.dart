@@ -7,9 +7,15 @@ import 'package:guoguo_mobile/domain/models.dart';
 class FakeCastRelay implements CastRelayHandle {
   int starts = 0, closes = 0;
   Completer<String>? startGate;
+  Uri? receiverAddress;
   @override
-  Future<String> start(ResolvedMedia media, String? localPath) async {
+  Future<String> start(
+    ResolvedMedia media,
+    String? localPath, {
+    Uri? receiver,
+  }) async {
     starts++;
+    receiverAddress = receiver;
     return await startGate?.future ?? 'http://192.168.1.2:8080/token/0.mp4';
   }
 

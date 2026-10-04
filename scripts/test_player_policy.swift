@@ -17,6 +17,11 @@ struct PlayerPolicyTests {
             let actual = GuoguoMediaPolicy.allowsVideoComposition(formatHint: hint, url: URL(string: address)!)
             precondition(actual == expected, "Unexpected composition policy for \(address)")
         }
-        print("Player media policy: \(cases.count) cases passed")
+        for pip in [false, true] {
+            for external in [false, true] {
+                precondition(GuoguoMediaPolicy.shouldPauseInBackground(pipActive: pip, externalPlaybackActive: external) == (!pip && !external))
+            }
+        }
+        print("Player media policy: \(cases.count + 4) cases passed")
     }
 }

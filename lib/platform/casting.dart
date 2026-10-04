@@ -8,9 +8,80 @@ import '../domain/models.dart';
 import 'provider_client.dart';
 import 'cast_session.dart';
 
+typedef CastNetworkAddress = ({String name, InternetAddress address});
+
+InternetAddress selectCastAddress(
+  List<CastNetworkAddress> addresses, {
+  InternetAddress? route,
+}) {
+  final candidates = addresses
+      .where(
+        (item) =>
+            item.address.type == InternetAddressType.IPv4 &&
+            !item.address.isLoopback &&
+            !item.address.isMulticast &&
+            item.address.address != '0.0.0.0' &&
+            !RegExp(
+              r'^(utun|tun|tap|ipsec|ppp|wg|tailscale|pdp_ip|rmnet|ccmni|docker|veth|br-)|vpn',
+              caseSensitive: false,
+            ).hasMatch(item.name),
+      )
+      .toList();
+  for (final item in candidates) {
+    if (item.address.address == route?.address) return item.address;
+  }
+  int priority(String name) {
+    name = name.toLowerCase();
+    if (name == 'en0' ||
+        name.startsWith('wlan') ||
+        name.startsWith('wlp') ||
+        name.contains('wi-fi') ||
+        name.contains('wifi')) {
+      return 2;
+    }
+    if (name.startsWith('en') || name.startsWith('eth')) return 1;
+    return 0;
+  }
+
+  candidates.sort((a, b) => priority(b.name).compareTo(priority(a.name)));
+  if (candidates.isEmpty) {
+    throw const ProviderException('未找到可供电视访问的局域网地址，请连接同一 Wi-Fi');
+  }
+  return candidates.first.address;
+}
+
+Future<InternetAddress> _castAddress(Uri? receiver) async {
+  final networks = await NetworkInterface.list(
+    type: InternetAddressType.IPv4,
+    includeLoopback: false,
+  );
+  InternetAddress? route;
+  if (receiver != null) {
+    try {
+      final socket = await Socket.connect(
+        receiver.host,
+        receiver.port,
+        timeout: const Duration(seconds: 2),
+      );
+      route = socket.address;
+      socket.destroy();
+    } catch (_) {
+      // The normal control request will report a receiver connection failure.
+    }
+  }
+  return selectCastAddress([
+    for (final network in networks)
+      for (final address in network.addresses)
+        (name: network.name, address: address),
+  ], route: route);
+}
+
 /// A per-session relay. Only registered media resources are exposed; there is no
 /// arbitrary URL parameter or filesystem route. Closed when casting ends.
-class CastRelay implements CastRelayHandle {
+class CastRelay implements CastRelayHandle, CastRelayDiagnostics {
+  CastRelay({Future<InternetAddress> Function(Uri?)? addressResolver})
+    : _addressResolver = addressResolver ?? _castAddress;
+  final Future<InternetAddress> Function(Uri?) _addressResolver;
   HttpServer? _server;
   final http.Client _client = http.Client();
   final Map<String, Uri> _resources = {};
@@ -24,24 +95,23 @@ class CastRelay implements CastRelayHandle {
   Map<String, String> _headers = {};
   late String _base;
   @override
-  Future<String> start(ResolvedMedia media, String? local) async {
+  bool mediaRequested = false;
+  @override
+  int bytesSent = 0;
+  @override
+  String? transferError;
+  @override
+  Future<String> start(
+    ResolvedMedia media,
+    String? local, {
+    Uri? receiver,
+  }) async {
     if (_closed || _server != null) throw StateError('投屏会话已关闭或已启动');
-    final networks = await NetworkInterface.list(
-      type: InternetAddressType.IPv4,
-      includeLoopback: false,
-    );
-    final candidates = networks
-        .expand((n) => n.addresses)
-        .where(
-          (a) =>
-              a.address.startsWith('192.168.') ||
-              a.address.startsWith('10.') ||
-              (a.rawAddress[0] == 172 &&
-                  a.rawAddress[1] >= 16 &&
-                  a.rawAddress[1] <= 31),
-        )
-        .toList();
-    if (candidates.isEmpty) throw const ProviderException('请将手机与电视连接到同一 Wi-Fi');
+    if (local != null &&
+        (!await File(local).exists() || await File(local).length() == 0)) {
+      throw const ProviderException('本地视频不可读取，请重新准备视频');
+    }
+    final address = await _addressResolver(receiver);
     if (_closed) throw StateError('投屏会话已关闭');
     final server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
     if (_closed) {
@@ -49,7 +119,7 @@ class CastRelay implements CastRelayHandle {
       throw StateError('投屏会话已关闭');
     }
     _server = server;
-    _base = 'http://${candidates.first.address}:${_server!.port}/$_token/';
+    _base = 'http://${address.address}:${_server!.port}/$_token/';
     _local = local;
     _headers = media.headers;
     _resources['0'] = Uri.parse(media.url);
@@ -66,11 +136,11 @@ class CastRelay implements CastRelayHandle {
       request.response.headers.set('Access-Control-Allow-Origin', '*');
       request.response.headers.set(
         'Access-Control-Allow-Headers',
-        'Range, Content-Type',
+        'Range, Content-Type, getcontentFeatures.dlna.org, transferMode.dlna.org',
       );
       request.response.headers.set(
         'Access-Control-Expose-Headers',
-        'Content-Length, Content-Range, Accept-Ranges',
+        'Content-Length, Content-Range, Accept-Ranges, contentFeatures.dlna.org, transferMode.dlna.org',
       );
       if (request.method == 'OPTIONS') {
         request.response.statusCode = 204;
@@ -91,20 +161,39 @@ class CastRelay implements CastRelayHandle {
         request.response.statusCode = 404;
         return;
       }
+      if (request.method == 'GET') mediaRequested = true;
+      transferError = null;
+      request.response.headers.set('transferMode.dlna.org', 'Streaming');
       if (_local != null && key == '0') {
         final file = File(_local!);
         final size = await file.length();
         var start = 0, end = size - 1;
         final range = request.headers.value('range');
-        if (range != null) {
-          final match = RegExp(r'^bytes=(\d+)-(\d*)$').firstMatch(range);
-          if (match == null) {
-            request.response.statusCode = 416;
-            return;
+        // HEAD describes the full representation. Unknown or multiple ranges
+        // may be ignored; single byte ranges include end-relative requests.
+        if (request.method == 'GET' &&
+            range != null &&
+            range.startsWith('bytes=') &&
+            !range.contains(',')) {
+          final match = RegExp(r'^bytes=(\d*)-(\d*)$').firstMatch(range.trim());
+          if (match == null || (match[1]!.isEmpty && match[2]!.isEmpty)) {
+            start = size;
+          } else if (match[1]!.isEmpty) {
+            final suffix = BigInt.parse(match[2]!);
+            final remaining = BigInt.from(size) - suffix;
+            start = suffix == BigInt.zero
+                ? size
+                : remaining.isNegative
+                ? 0
+                : remaining.toInt();
+          } else {
+            final first = BigInt.parse(match[1]!);
+            start = first > BigInt.from(size) ? size : first.toInt();
+            if (match[2]!.isNotEmpty) {
+              final last = BigInt.parse(match[2]!);
+              end = last > BigInt.from(end) ? end : last.toInt();
+            }
           }
-          start = int.parse(match[1]!);
-          if (match[2]!.isNotEmpty) end = int.parse(match[2]!);
-          end = min(end, size - 1);
           if (start > end || start >= size) {
             request.response.statusCode = 416;
             request.response.headers.set('Content-Range', 'bytes */$size');
@@ -118,14 +207,21 @@ class CastRelay implements CastRelayHandle {
         }
         request.response.headers.contentType = ContentType('video', 'mp4');
         request.response.headers.set('Accept-Ranges', 'bytes');
-        request.response.contentLength = end - start + 1;
+        request.response.headers.set(
+          'contentFeatures.dlna.org',
+          'DLNA.ORG_OP=01',
+        );
+        request.response.contentLength = max(0, end - start + 1);
         if (request.method != 'HEAD') {
-          await request.response.addStream(file.openRead(start, end + 1));
+          await request.response.addStream(
+            _count(file.openRead(start, end + 1)),
+          );
         }
         return;
       }
       final outgoing = http.Request(request.method, remote)
-        ..headers.addAll(_headers);
+        ..headers.addAll(_headers)
+        ..headers['Accept-Encoding'] = 'identity';
       if (request.headers.value('range') case final range?) {
         outgoing.headers['Range'] = range;
       }
@@ -133,6 +229,9 @@ class CastRelay implements CastRelayHandle {
           .send(outgoing)
           .timeout(const Duration(seconds: 25));
       request.response.statusCode = response.statusCode;
+      if (response.statusCode >= 400) {
+        transferError = '视频源返回 ${response.statusCode}，请重新获取视频后投屏';
+      }
       final contentType = response.headers['content-type'] ?? '';
       final playlist =
           remote.path.endsWith('.m3u8') || contentType.contains('mpegurl');
@@ -175,16 +274,30 @@ class CastRelay implements CastRelayHandle {
             request.response.headers.set(header, value);
           }
         }
-        await request.response.addStream(response.stream);
+        await request.response.addStream(_count(response.stream));
       }
-    } catch (_) {
+    } catch (problem) {
+      if (!_closed) {
+        transferError = problem is FileSystemException
+            ? '本地视频读取失败，请重新准备视频'
+            : '视频传输中断，请检查手机网络后重试';
+      }
       try {
         request.response.statusCode = 502;
       } catch (_) {}
     } finally {
-      await request.response.close();
+      try {
+        await request.response.close();
+      } catch (_) {
+        /* Receiver may close a probe early. */
+      }
     }
   }
+
+  Stream<List<int>> _count(Stream<List<int>> stream) => stream.map((bytes) {
+    bytesSent += bytes.length;
+    return bytes;
+  });
 
   @override
   Future<void> close() {
@@ -195,6 +308,13 @@ class CastRelay implements CastRelayHandle {
     return _closing =
         _server?.close(force: true).then((_) {}) ?? Future.value();
   }
+}
+
+class DlnaCommandException extends ProviderException {
+  const DlnaCommandException(this.action, this.code)
+    : super('电视未完成 $action 操作（DLNA $code）');
+  final String action;
+  final int? code;
 }
 
 class DlnaDevice {
@@ -237,16 +357,25 @@ class DlnaDevice {
       },
       body: builder.buildDocument().toXmlString(),
     ).timeout(const Duration(seconds: 10));
-    if (response.statusCode >= 300) {
-      throw const ProviderException('电视未接受播放操作，请检查接收端是否支持 DLNA');
-    }
     if (response.bodyBytes.length > 128 * 1024) {
       throw const FormatException('电视状态响应超过限制');
     }
-    final document = XmlDocument.parse(response.body);
+    XmlDocument document;
+    try {
+      document = XmlDocument.parse(response.body);
+    } catch (_) {
+      throw const ProviderException('电视返回的 DLNA 响应无效');
+    }
     final elements = document.descendants.whereType<XmlElement>();
     if (elements.any((element) => element.name.local == 'Fault')) {
-      throw const ProviderException('电视未支持或未完成此操作');
+      final code = elements
+          .where((element) => element.name.local == 'errorCode')
+          .firstOrNull
+          ?.innerText;
+      throw DlnaCommandException(action, int.tryParse(code ?? ''));
+    }
+    if (response.statusCode >= 300) {
+      throw const ProviderException('电视未接受播放操作，请检查接收端是否支持 DLNA');
     }
     final result = elements
         .where((element) => element.name.local == '${action}Response')

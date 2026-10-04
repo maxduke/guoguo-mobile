@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_chrome_cast/flutter_chrome_cast.dart';
 import 'package:guoguo_mobile/platform/cast_receivers.dart';
 import 'package:guoguo_mobile/platform/cast_session.dart';
+import 'package:guoguo_mobile/domain/models.dart';
+import 'package:guoguo_mobile/platform/provider_client.dart';
 import 'package:guoguo_mobile/platform/casting.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -143,6 +145,204 @@ GoggleCastMediaStatus mediaStatus(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test(
+    'DLNA metadata provides escaped video title, media type and URL including local MP4',
+    () {
+      final original = castSource();
+      final source = CastSource(
+        media: original.media,
+        title: '作品 <一> & "二"',
+        position: original.position,
+        duration: original.duration,
+        playing: true,
+      );
+      final metadata = XmlDocument.parse(
+        dlnaMediaMetadata('$url?one=1&two=2', source),
+      );
+      final elements = metadata.descendants.whereType<XmlElement>();
+      expect(
+        elements.firstWhere((e) => e.name.local == 'title').innerText,
+        source.title,
+      );
+      expect(
+        elements.firstWhere((e) => e.name.local == 'class').innerText,
+        'object.item.videoItem',
+      );
+      final resource = elements.firstWhere((e) => e.name.local == 'res');
+      expect(resource.innerText, '$url?one=1&two=2');
+      expect(resource.getAttribute('protocolInfo'), 'http-get:*:video/mp4:*');
+      final hls = CastSource(
+        media: ResolvedMedia.fromJson({
+          'url': url,
+          'remoteUrl': url,
+          'hls': true,
+        }),
+        title: source.title,
+        position: source.position,
+        duration: source.duration,
+        playing: true,
+      );
+      expect(
+        dlnaMediaMetadata(url, hls),
+        contains('application/vnd.apple.mpegurl'),
+      );
+      final local = CastSource(
+        media: hls.media,
+        localPath: '/fixture/complete.mp4',
+        title: source.title,
+        position: source.position,
+        duration: source.duration,
+        playing: true,
+      );
+      expect(dlnaMediaMetadata(url, local), contains('video/mp4'));
+    },
+  );
+  test(
+    'DLNA waits for renderer readiness and retries only a transient seek transition',
+    () async {
+      var transports = 0, seeks = 0;
+      final calls = <String>[];
+      final receiver = DlnaCastReceiver(
+        DlnaDevice('电视', Uri.parse('http://192.168.1.3/control'), service),
+        delay: (_) async {},
+        client: MockClient((request) async {
+          final name = action(request);
+          calls.add(name);
+          if (name == 'GetTransportInfo') {
+            transports++;
+            return http.Response(
+              reply(
+                name,
+                '<CurrentTransportState>${transports < 3 ? 'TRANSITIONING' : 'PLAYING'}</CurrentTransportState>',
+              ),
+              200,
+            );
+          }
+          if (name == 'Seek' && ++seeks < 3) {
+            return http.Response(
+              '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><s:Fault><detail><UPnPError><errorCode>701</errorCode></UPnPError></detail></s:Fault></s:Body></s:Envelope>',
+              500,
+            );
+          }
+          if (name == 'SetAVTransportURI') {
+            final soap = XmlDocument.parse(request.body);
+            final metadata = soap
+                .findAllElements('CurrentURIMetaData')
+                .single
+                .innerText;
+            expect(
+              XmlDocument.parse(
+                metadata,
+              ).findAllElements('res').single.innerText,
+              url,
+            );
+          }
+          return http.Response(reply(name), 200);
+        }),
+      );
+      await receiver.load(url, castSource(position: 37));
+      expect(transports, 3);
+      expect(seeks, 3);
+      expect(
+        calls.indexOf('Seek'),
+        greaterThan(calls.lastIndexOf('GetTransportInfo')),
+      );
+      await receiver.close();
+    },
+  );
+  test(
+    'DLNA permanently stopped renderer cannot be reported as playing',
+    () async {
+      var transports = 0;
+      final receiver = DlnaCastReceiver(
+        DlnaDevice('电视', Uri.parse('http://192.168.1.3/control'), service),
+        delay: (_) async {},
+        client: MockClient((request) async {
+          if (action(request) == 'GetTransportInfo') {
+            transports++;
+            return http.Response(
+              reply(
+                'GetTransportInfo',
+                '<CurrentTransportState>STOPPED</CurrentTransportState>',
+              ),
+              200,
+            );
+          }
+          return http.Response(reply(action(request)), 200);
+        }),
+      );
+      await expectLater(
+        receiver.load(url, castSource(position: 37)),
+        throwsA(isA<ProviderException>()),
+      );
+      expect(transports, 16);
+      await receiver.close();
+    },
+  );
+  test(
+    'DLNA cancels a transient Play retry before it can restart TV after stop',
+    () async {
+      var plays = 0;
+      final retry = Completer<void>(), waiting = Completer<void>();
+      final receiver = DlnaCastReceiver(
+        DlnaDevice('电视', Uri.parse('http://192.168.1.3/control'), service),
+        delay: (_) {
+          waiting.complete();
+          return retry.future;
+        },
+        client: MockClient((request) async {
+          if (action(request) == 'Play') {
+            plays++;
+            return http.Response(
+              '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><s:Fault><detail><UPnPError><errorCode>701</errorCode></UPnPError></detail></s:Fault></s:Body></s:Envelope>',
+              500,
+            );
+          }
+          return http.Response(
+            action(request) == 'GetPositionInfo'
+                ? positionReply()
+                : reply(action(request)),
+            200,
+          );
+        }),
+      );
+      final loading = receiver.load(url, castSource());
+      final cancelled = expectLater(loading, throwsA(isA<CastCancelled>()));
+      await waiting.future;
+      receiver.cancelLoad();
+      await receiver.stop();
+      retry.complete();
+      await cancelled;
+      expect(plays, 1);
+      await receiver.close();
+    },
+  );
+  test(
+    'DLNA unsupported seek is not retried and native HTTP 500 fault preserves code',
+    () async {
+      var seeks = 0;
+      final receiver = DlnaCastReceiver(
+        DlnaDevice('电视', Uri.parse('http://192.168.1.3/control'), service),
+        delay: (_) async {},
+        client: MockClient((request) async {
+          if (action(request) == 'Seek') {
+            seeks++;
+            return http.Response(
+              '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><s:Fault><detail><UPnPError><errorCode>710</errorCode></UPnPError></detail></s:Fault></s:Body></s:Envelope>',
+              500,
+            );
+          }
+          return http.Response(reply(action(request)), 200);
+        }),
+      );
+      await expectLater(
+        receiver.load(url, castSource()),
+        throwsA(isA<DlnaCommandException>().having((e) => e.code, 'code', 710)),
+      );
+      expect(seeks, 1);
+      await receiver.close();
+    },
+  );
+  test(
     'DLNA times preserve actual fractional seconds and reject unsupported/invalid values',
     () {
       expect(
@@ -184,11 +384,12 @@ void main() {
       expect(calls, [
         'SetAVTransportURI',
         'Play',
+        'GetTransportInfo',
         'Seek',
         'GetPositionInfo',
         'Pause',
       ]);
-      final seek = XmlDocument.parse(bodies[2]);
+      final seek = XmlDocument.parse(bodies[3]);
       expect(seek.findAllElements('Unit').single.innerText, 'REL_TIME');
       expect(seek.findAllElements('Target').single.innerText, '00:00:37');
       await receiver.close();
@@ -197,7 +398,7 @@ void main() {
   test(
     'DLNA status reads position and pause state and refuses another media identity',
     () async {
-      var foreign = false;
+      var foreign = false, paused = false;
       final receiver = dlna(
         MockClient(
           (request) async => http.Response(
@@ -206,7 +407,7 @@ void main() {
                 : action(request) == 'GetTransportInfo'
                 ? reply(
                     'GetTransportInfo',
-                    '<CurrentTransportState>PAUSED_PLAYBACK</CurrentTransportState>',
+                    '<CurrentTransportState>${paused ? 'PAUSED_PLAYBACK' : 'PLAYING'}</CurrentTransportState>',
                   )
                 : reply(action(request)),
             200,
@@ -214,6 +415,7 @@ void main() {
         ),
       );
       await receiver.load(url, castSource());
+      paused = true;
       final status = await receiver.status();
       expect(status.position, const Duration(seconds: 42, milliseconds: 250));
       expect(status.duration, const Duration(seconds: 120));
