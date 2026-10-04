@@ -1,7 +1,7 @@
 name: guoguo_mobile
 description: 果果 — 随时接着看，独立运行的短剧应用。
 publish_to: none
-version: 0.12.1+28
+version: 0.13.0+29
 environment:
   sdk: '>=3.11.0 <4.0.0'
 dependencies:
@@ -23,7 +23,8 @@ dependencies:
   http: ^1.6.0
   path: ^1.9.1
   ffmpeg_kit_flutter_new_full: ^2.5.2
-  flutter_chrome_cast: ^1.4.8
+  # Cast load awaits the verified 1.4.8 platform channel contract.
+  flutter_chrome_cast: 1.4.8
   xml: ^7.0.1
   flutter_cache_manager: ^3.4.2
   package_info_plus: ^10.2.1

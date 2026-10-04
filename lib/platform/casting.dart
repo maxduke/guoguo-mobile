@@ -6,10 +6,11 @@ import 'package:http/http.dart' as http;
 import 'package:xml/xml.dart';
 import '../domain/models.dart';
 import 'provider_client.dart';
+import 'cast_session.dart';
 
 /// A per-session relay. Only registered media resources are exposed; there is no
 /// arbitrary URL parameter or filesystem route. Closed when casting ends.
-class CastRelay {
+class CastRelay implements CastRelayHandle {
   HttpServer? _server;
   final http.Client _client = http.Client();
   final Map<String, Uri> _resources = {};
@@ -18,9 +19,13 @@ class CastRelay {
     (_) => Random.secure().nextInt(256).toRadixString(16).padLeft(2, '0'),
   ).join();
   String? _local;
+  bool _closed = false;
+  Future<void>? _closing;
   Map<String, String> _headers = {};
   late String _base;
+  @override
   Future<String> start(ResolvedMedia media, String? local) async {
+    if (_closed || _server != null) throw StateError('投屏会话已关闭或已启动');
     final networks = await NetworkInterface.list(
       type: InternetAddressType.IPv4,
       includeLoopback: false,
@@ -37,7 +42,13 @@ class CastRelay {
         )
         .toList();
     if (candidates.isEmpty) throw const ProviderException('请将手机与电视连接到同一 Wi-Fi');
-    _server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
+    if (_closed) throw StateError('投屏会话已关闭');
+    final server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
+    if (_closed) {
+      await server.close(force: true);
+      throw StateError('投屏会话已关闭');
+    }
+    _server = server;
     _base = 'http://${candidates.first.address}:${_server!.port}/$_token/';
     _local = local;
     _headers = media.headers;
@@ -48,6 +59,10 @@ class CastRelay {
 
   Future<void> _serve(HttpRequest request) async {
     try {
+      if (_closed) {
+        request.response.statusCode = 410;
+        return;
+      }
       request.response.headers.set('Access-Control-Allow-Origin', '*');
       request.response.headers.set(
         'Access-Control-Allow-Headers',
@@ -171,18 +186,26 @@ class CastRelay {
     }
   }
 
-  Future<void> close() async {
+  @override
+  Future<void> close() {
+    if (_closing != null) return _closing!;
+    _closed = true;
     _client.close();
-    await _server?.close(force: true);
     _resources.clear();
+    return _closing =
+        _server?.close(force: true).then((_) {}) ?? Future.value();
   }
 }
 
 class DlnaDevice {
-  DlnaDevice(this.name, this.control, this.serviceType);
+  DlnaDevice(this.name, this.control, this.serviceType, {this.client});
   final String name, serviceType;
   final Uri control;
-  Future<void> command(String action, Map<String, String> parameters) async {
+  final http.Client? client;
+  Future<Map<String, String>> command(
+    String action,
+    Map<String, String> parameters,
+  ) async {
     final builder = XmlBuilder();
     builder.element(
       's:Envelope',
@@ -206,19 +229,33 @@ class DlnaDevice {
         );
       },
     );
-    final response = await http
-        .post(
-          control,
-          headers: {
-            'Content-Type': 'text/xml; charset="utf-8"',
-            'SOAPAction': '"$serviceType#$action"',
-          },
-          body: builder.buildDocument().toXmlString(),
-        )
-        .timeout(const Duration(seconds: 10));
+    final response = await (client?.post ?? http.post)(
+      control,
+      headers: {
+        'Content-Type': 'text/xml; charset="utf-8"',
+        'SOAPAction': '"$serviceType#$action"',
+      },
+      body: builder.buildDocument().toXmlString(),
+    ).timeout(const Duration(seconds: 10));
     if (response.statusCode >= 300) {
       throw const ProviderException('电视未接受播放操作，请检查接收端是否支持 DLNA');
     }
+    if (response.bodyBytes.length > 128 * 1024) {
+      throw const FormatException('电视状态响应超过限制');
+    }
+    final document = XmlDocument.parse(response.body);
+    final elements = document.descendants.whereType<XmlElement>();
+    if (elements.any((element) => element.name.local == 'Fault')) {
+      throw const ProviderException('电视未支持或未完成此操作');
+    }
+    final result = elements
+        .where((element) => element.name.local == '${action}Response')
+        .firstOrNull;
+    if (result == null) throw const FormatException('电视状态响应不完整');
+    return {
+      for (final element in result.childElements)
+        element.name.local: element.innerText.trim(),
+    };
   }
 
   Future<void> play(String url) async {
