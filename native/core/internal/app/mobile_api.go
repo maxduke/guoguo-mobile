@@ -26,6 +26,7 @@ type MobileClient struct {
 	covers           coverImageCache
 	catalogMu        sync.Mutex
 	known            []Drama
+	huangguo         map[string]mobileHuangguoCursor
 }
 
 func NewMobileClient(directory string) (*MobileClient, error) {
@@ -43,11 +44,12 @@ func NewMobileClient(directory string) (*MobileClient, error) {
 	cfg.Retries = 2
 	downloader := NewDownloader(cfg)
 	var known []Drama
+	var huangguo map[string]mobileHuangguoCursor
 	if cache, err := readLibraryCache(directory); err == nil {
 		downloader.restoreHongguoCatalog(cache.HongguoApp)
-		known = cache.Dramas
+		known, huangguo = cache.Dramas, cache.Huangguo
 	}
-	return &MobileClient{downloader: downloader, proxies: make(map[string]*hlsProxy), known: known}, nil
+	return &MobileClient{downloader: downloader, proxies: make(map[string]*hlsProxy), known: known, huangguo: huangguo}, nil
 }
 
 type mobileRequest struct {
@@ -110,7 +112,11 @@ func (c *MobileClient) Call(raw string) (string, error) {
 		}
 		value = result
 	case "cover":
-		source, _, _ := splitProviderDramaID(request.ID)
+		source, _, valid := splitProviderDramaID(request.ID)
+		if !valid && rankingSourceID.MatchString(request.ID) {
+			source = "cloudfront"
+		}
+		request.URL = mobileCoverURL(request.ID, request.URL)
 		cacheKey := request.URL
 		if request.ID != "" {
 			cacheKey = "drama:" + request.ID + "\x00" + request.URL
@@ -127,7 +133,7 @@ func (c *MobileClient) Call(raw string) (string, error) {
 			if err != nil {
 				return nil, err
 			}
-			return c.downloader.fetchCoverImage(ctx, address, decodeImageBytes, false)
+			return c.downloader.fetchCoverImage(ctx, mobileCoverURL(request.ID, address), decodeImageBytes, false)
 		})
 		if err != nil {
 			return "", publicError(err)
@@ -161,6 +167,30 @@ func (c *MobileClient) Call(raw string) (string, error) {
 			value = result
 			break
 		}
+		if request.Source == "huangguo" {
+			page := max(1, request.Page)
+			if request.Page < 0 || page > 200 {
+				return "", errors.New("页码超出范围")
+			}
+			c.catalogMu.Lock()
+			defer c.catalogMu.Unlock()
+			if page == 1 || c.huangguo == nil {
+				c.huangguo = map[string]mobileHuangguoCursor{}
+			}
+			rows, more, err := c.downloader.mobileHuangguoCatalog(context.WithValue(ctx, providerTextNoCacheKey{}, true), page, c.huangguo)
+			if saveErr := writeLibraryCache(c.downloader.cfg.dataDirectory(), libraryCache{HongguoApp: c.downloader.hongguoCatalogSnapshot(), Dramas: c.known, Huangguo: c.huangguo}); saveErr != nil {
+				err = errors.Join(err, saveErr)
+			}
+			warning := ""
+			if err != nil {
+				if len(rows) == 0 {
+					return "", publicError(err)
+				}
+				warning = publicError(err).Error()
+			}
+			value = map[string]any{"items": mobileDramas(rows), "hasMore": more && page < 200, "page": page, "warning": warning, "catalogScope": "page"}
+			break
+		}
 		c.catalogMu.Lock()
 		defer c.catalogMu.Unlock()
 		if request.Source != "hongguo" && request.Source != "huangdou" && request.Source != "huangguo" {
@@ -191,7 +221,7 @@ func (c *MobileClient) Call(raw string) (string, error) {
 				c.known = append(c.known, row)
 			}
 			hasMore = hongguoCatalogHasMore(state)
-			if saveErr := writeLibraryCache(c.downloader.cfg.dataDirectory(), libraryCache{HongguoApp: state, Dramas: c.known}); saveErr != nil && err == nil {
+			if saveErr := writeLibraryCache(c.downloader.cfg.dataDirectory(), libraryCache{HongguoApp: state, Dramas: c.known, Huangguo: c.huangguo}); saveErr != nil && err == nil {
 				err = saveErr
 			}
 		} else if request.Source == sourceHuangdou && request.Page > 1 {

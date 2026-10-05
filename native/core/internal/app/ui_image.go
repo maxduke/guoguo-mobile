@@ -47,19 +47,7 @@ func (downloader *Downloader) fetchCoverImage(ctx context.Context, remoteURL str
 	if !validImageURL(request.URL) {
 		return nil, errors.New("封面地址不受支持")
 	}
-	referer := imageReferer(remoteURL)
-	switch source, _ := ctx.Value(coverSourceKey{}).(string); source {
-	case sourceHuangdou:
-		referer = strings.TrimRight(downloader.huangdouRequestBaseURL(), "/") + "/"
-	case sourceHongguo:
-		referer = hongguoBaseURL + "/"
-	case sourceHuangguoAI:
-		referer = downloader.providerBaseURL(sourceHuangguoAI) + "/"
-	case sourceHuangju, sourceYeguo, sourceDSD:
-		referer = downloader.providerBaseURL(source) + "/"
-	case sourceHuangguoVideo:
-		referer = downloader.providerBaseURL(sourceHuangguoVideo) + "/"
-	}
+	referer := downloader.coverReferer(ctx, remoteURL)
 	request.Header.Set("Referer", referer)
 	request.Header.Set("User-Agent", userAgent)
 	request.Header.Set("Accept", "image/webp,image/jpeg,image/png,image/gif,*/*;q=0.5")

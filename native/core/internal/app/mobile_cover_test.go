@@ -85,7 +85,7 @@ func TestHuangguoCoverHostValidation(t *testing.T) {
 		if got, ok := buildImageURL(address); !ok || got != address {
 			t.Fatalf("supported cover rejected or modified: %q", got)
 		}
-		if imageReferer(address) != "https://huangguoai.com/" {
+		if imageReferer(address) != huangguoAIBaseURL+"/" {
 			t.Fatal("incorrect Huangguo referer")
 		}
 	}

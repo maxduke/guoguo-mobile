@@ -7,6 +7,43 @@ import (
 	"strings"
 )
 
+// Repair old legacy artwork without rewriting another provider's CDN URLs.
+func mobileCoverURL(dramaID, address string) string {
+	if rankingSourceID.MatchString(dramaID) {
+		parsed, err := url.Parse(address)
+		media, _ := url.Parse(defaultCDNURL)
+		if err == nil && parsed.User == nil && parsed.Port() == "" &&
+			strings.EqualFold(parsed.Hostname(), media.Hostname()) && parsed.Scheme == "https" {
+			parsed.Scheme, parsed.Host = "", ""
+			address = parsed.String()
+		}
+	}
+	if resolved, ok := buildImageURL(address); ok {
+		return resolved
+	}
+	return address
+}
+
+func (d *Downloader) coverReferer(ctx context.Context, address string) string {
+	source, _ := ctx.Value(coverSourceKey{}).(string)
+	if source == "cloudfront" {
+		if parsed, err := url.Parse(address); err == nil && isHuangguoImageHost(parsed.Hostname()) {
+			return d.providerBaseURL(sourceHuangguoAI) + "/"
+		}
+	}
+	if source == sourceHuangdou {
+		if parsed, err := url.Parse(address); err == nil &&
+			(strings.EqualFold(parsed.Hostname(), "tideember.cc") || strings.EqualFold(parsed.Hostname(), "xqjurgek.top")) {
+			return parsed.Scheme + "://" + parsed.Host + "/home"
+		}
+		return strings.TrimRight(d.huangdouRequestBaseURL(), "/") + "/home"
+	}
+	if isHuangguoProviderSource(source) {
+		return d.providerBaseURL(source) + "/"
+	}
+	return imageReferer(address)
+}
+
 // Resolve missing or expired artwork by identity, including old saved records.
 func (d *Downloader) mobileCoverAddress(ctx context.Context, dramaID string) (string, error) {
 	source, id, ok := splitProviderDramaID(dramaID)

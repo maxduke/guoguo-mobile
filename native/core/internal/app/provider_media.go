@@ -59,7 +59,7 @@ func providerSourceForURL(raw string) string {
 	switch {
 	case host == "huangju.net" || host == "www.huangju.net" || host == "api.huangju.net":
 		return sourceHuangju
-	case host == "ygdj7.com" || host == "www.ygdj7.com" || host == "yeguodj.com" || host == "www.yeguodj.com" || strings.HasSuffix(host, ".ygrwdsgt.cc") || strings.HasSuffix(host, ".buxefaex.cc") || strings.HasSuffix(host, ".fzchosdi.cc"):
+	case host == "ygdj7.com" || host == "www.ygdj7.com" || host == "yeguodj.com" || host == "www.yeguodj.com" || strings.HasSuffix(host, ".ygrwdsgt.cc") || strings.HasSuffix(host, ".buxefaex.cc") || strings.HasSuffix(host, ".callawtj.cc") || strings.HasSuffix(host, ".fzchosdi.cc"):
 		return sourceYeguo
 	case host == "dsd.com.se" || host == "www.dsd.com.se":
 		return sourceDSD

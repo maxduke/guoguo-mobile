@@ -764,6 +764,9 @@ func coverPathFromAny(v any) string {
 				}
 			}
 		}
+		if strings.HasPrefix(s, "//") {
+			return "https:" + s
+		}
 		if u, err := url.Parse(s); err == nil && u.IsAbs() {
 			return u.String()
 		}
@@ -814,6 +817,9 @@ func (a *UIApp) handleImage(w http.ResponseWriter, r *http.Request) {
 
 func buildImageURL(imgPath string) (string, bool) {
 	imgPath = strings.TrimSpace(imgPath)
+	if strings.HasPrefix(imgPath, "//") {
+		imgPath = "https:" + imgPath
+	}
 	if imgPath == "" {
 		return "", false
 	}
@@ -846,11 +852,11 @@ func allowedImageHost(host string) bool {
 func imageReferer(remoteURL string) string {
 	if u, err := url.Parse(remoteURL); err == nil {
 		if isHuangguoImageHost(u.Hostname()) {
-			return "https://huangguoai.com/"
+			return huangguoAIBaseURL + "/"
 		}
 		switch u.Hostname() {
 		case "pic.zdmhyg.cn", "huangguoai.com", "www.huangguoai.com":
-			return "https://huangguoai.com/"
+			return huangguoAIBaseURL + "/"
 		case "huangguo.video", "cdn.huangguo.video":
 			return "https://huangguo.video/"
 		case "tideember.cc", "xqjurgek.top":

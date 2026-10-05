@@ -125,7 +125,10 @@ func (d *Downloader) duanjuBaseURL(source string) string {
 	if !found {
 		return ""
 	}
-	if configured := d.providerHosts[canonicalProviderSource(source)]; configured != "" {
+	d.providerMu.Lock()
+	configured := d.providerHosts[canonicalProviderSource(source)]
+	d.providerMu.Unlock()
+	if configured != "" {
 		return strings.TrimRight(configured, "/")
 	}
 	return strings.TrimRight(spec.Base, "/")

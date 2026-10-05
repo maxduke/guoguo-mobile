@@ -28,7 +28,7 @@ type maccmsSourceProfile struct {
 
 var maccmsEpisodeLink = regexp.MustCompile(`(?i)/(?:vod/)?play/|/vodplay/|/drama-play|episode_id=`)
 
-var maccmsDetailLink = regexp.MustCompile(`(?i)/(?:index\.php/vod/)?(?:detail|vod|show|view|movie|drama|zywview)/`)
+var maccmsDetailLink = regexp.MustCompile(`(?i)/(?:index\.php/vod/)?(?:detail|vod|show|view|movie|drama|zywview|xzyxvd)/`)
 
 func maccmsEpisodeNodes(document *html.Node) []*html.Node {
 	var nodes []*html.Node
