@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'cast_session.dart';
+import 'provider_client.dart';
 
 /// Media leases for a dedicated native queue, independent of the phone player.
 /// Only native item changes advance the episode; Flutter never drives its end.
@@ -45,6 +46,10 @@ class AirPlaySession extends ChangeNotifier {
   final _relays = <int, CastRelayHandle>{};
   final _appending = <String, Future<void>>{};
   final _failedNext = <String>{};
+  final _pendingSources = <int>{};
+  final _closingSources = <CastRelayHandle, int>{};
+  final _closingRelays = <Future<void>>{};
+  Set<int> _nativeRetained = {};
   Future<void> _native = Future.value();
   Future<void>? _releasing;
   String? _id;
@@ -114,6 +119,23 @@ class AirPlaySession extends ChangeNotifier {
     ended = state['ended'] == true;
     if (state['error'] case final String failure when failure.isNotEmpty) {
       error = failure;
+    } else if (!_failedNext.contains('$index')) {
+      error = null;
+    }
+    if (state['retainedItemIds'] case final List ids) {
+      _nativeRetained = ids
+          .map((id) => int.tryParse('$id'))
+          .whereType<int>()
+          .toSet();
+    }
+    if (state['rejectedItemId'] ?? state['failedItemId']
+        case final String failed) {
+      final failedIndex = int.tryParse(failed);
+      if (failedIndex == _queuedIndex &&
+          !_nativeRetained.contains(failedIndex)) {
+        _queuedIndex = null;
+        _failedNext.add('$index');
+      }
     }
     if (state['closed'] == true) {
       engaged = preparing = active = false;
@@ -123,21 +145,45 @@ class AirPlaySession extends ChangeNotifier {
     _notify();
     if (!engaged) return;
     final revision = _revision;
-    // Native has removed the preceding item before reporting the next one.
-    unawaited(_releaseBefore(index, revision));
+    // currentItem KVO is not proof that the receiver finished the old URL.
+    // Native explicitly retains the outgoing item through the handoff.
+    unawaited(_releaseUnused(revision));
     if (state['needsNext'] == true && autoAdvance()) {
       unawaited(_append('$index'));
     }
   }
 
-  Future<void> _releaseBefore(int current, int revision) async {
+  void _retain() => retainSources({
+    ..._relays.keys,
+    ..._nativeRetained,
+    ..._pendingSources,
+    ..._closingSources.values,
+    index,
+    ?_queuedIndex,
+  });
+
+  Future<void> _releaseUnused(int revision) async {
     for (final previous in _relays.keys.toList()) {
-      if (previous >= current || revision != _revision) continue;
+      if (revision != _revision || !engaged) return;
+      if (_nativeRetained.contains(previous) ||
+          _pendingSources.contains(previous)) {
+        continue;
+      }
       final lease = _relays.remove(previous);
-      await lease?.close();
+      if (lease != null) await _closeLease(previous, lease);
     }
-    if (revision == _revision && engaged && current == index) {
-      retainSources({current, ?_queuedIndex});
+    if (revision == _revision && engaged) _retain();
+  }
+
+  Future<void> _closeLease(int index, CastRelayHandle relay) async {
+    _closingSources[relay] = index;
+    final task = relay.close();
+    _closingRelays.add(task);
+    try {
+      await task;
+    } finally {
+      _closingRelays.remove(task);
+      _closingSources.remove(relay);
     }
   }
 
@@ -157,6 +203,8 @@ class AirPlaySession extends ChangeNotifier {
     _sequence = -1;
     _failedNext.clear();
     _appending.clear();
+    _pendingSources.clear();
+    _nativeRetained = {initialIndex};
     index = initialIndex;
     position = initialPosition;
     duration = Duration.zero;
@@ -167,15 +215,18 @@ class AirPlaySession extends ChangeNotifier {
     _notify();
     CastRelayHandle? lease;
     var submitted = false;
+    var stage = 'source.prepare';
     try {
       final source = await loadSource(index);
       _check(revision);
+      stage = 'relay.start';
       lease = relayFactory();
       final url = await lease
           .start(source.media, source.localPath)
           .timeout(const Duration(seconds: 8));
       _check(revision);
       _relays[index] = lease;
+      stage = 'player.open';
       await _command(() async {
         _check(revision);
         submitted = true;
@@ -205,7 +256,7 @@ class AirPlaySession extends ChangeNotifier {
         await lease?.close();
       }
       if (revision == _revision) {
-        error = 'AirPlay 播放准备失败，请重试';
+        error = _failure('AirPlay 播放准备失败', stage, failure);
         await release();
       }
       rethrow;
@@ -227,22 +278,25 @@ class AirPlaySession extends ChangeNotifier {
     late final Future<void> operation;
     operation = () async {
       CastRelayHandle? lease;
-      var submitted = false;
+      var stage = 'source.prepare';
+      var accepted = false;
       try {
         // Retain a pending preparation even while native sends progress events.
         _queuedIndex = next;
-        retainSources({index, next});
+        _pendingSources.add(next);
+        _retain();
         final source = await loadSource(next);
         _check(revision);
+        stage = 'relay.start';
         lease = relayFactory();
         final url = await lease
             .start(source.media, source.localPath)
             .timeout(const Duration(seconds: 8));
         _check(revision);
         _relays[next] = lease;
+        stage = 'queue.append';
         await _command(() async {
           _check(revision);
-          submitted = true;
           await channel.invokeMethod<void>('append', {
             'sessionId': _id,
             'afterId': afterId,
@@ -253,9 +307,17 @@ class AirPlaySession extends ChangeNotifier {
               'hasNext': next + 1 < episodeCount,
             },
           });
+          accepted = true;
         });
+        _check(revision);
+        // An asynchronous queued-item rejection can arrive before the method
+        // response. Do not resurrect its lease/clear its retry state afterward.
+        if (_queuedIndex == next || index == next) {
+          _nativeRetained.add(next);
+          if (_failedNext.remove(afterId)) error = null;
+        }
       } catch (failure) {
-        if (!submitted) {
+        if (!accepted) {
           if (lease != null && identical(_relays[next], lease)) {
             _relays.remove(next);
           }
@@ -264,7 +326,7 @@ class AirPlaySession extends ChangeNotifier {
         if (revision == _revision && engaged) {
           _queuedIndex = null;
           _failedNext.add(afterId);
-          error = '下一集准备失败，请检查网络后点击下一集重试';
+          error = _failure('下一集准备失败', stage, failure);
           _notify();
           await _command(() async {
             if (revision != _revision || !engaged) return;
@@ -275,6 +337,14 @@ class AirPlaySession extends ChangeNotifier {
           }).catchError((Object _) {});
         }
       } finally {
+        if (revision == _revision) {
+          _pendingSources.remove(next);
+          // A successful append emits the authoritative retained set before
+          // completing. A rejected append never owns the submitted URL.
+          if (engaged) {
+            await _releaseUnused(revision);
+          }
+        }
         if (identical(_appending[afterId], operation)) {
           _appending.remove(afterId);
         }
@@ -282,6 +352,48 @@ class AirPlaySession extends ChangeNotifier {
     }();
     _appending[afterId] = operation;
     return operation;
+  }
+
+  // Error codes are a closed vocabulary: never expose URL/key-bearing native
+  // messages or arbitrary exception text in the UI.
+  String _failure(String label, String stage, Object failure) {
+    final code = failure is TimeoutException
+        ? 'timeout'
+        : failure is ProviderException
+        ? _sourceFailureCode(failure.message)
+        : failure is PlatformException &&
+              const {
+                'airplay_stale',
+                'airplay_queue_full',
+                'airplay_queue',
+                'airplay_session',
+                'airplay_unavailable',
+                'airplay_audio',
+                'airplay_player_failed',
+              }.contains(failure.code)
+        ? failure.code
+        : 'failed';
+    final action = code == 'airplay_player_failed'
+        ? '请先点原生播放器中的重试本集'
+        : code == 'storage_full'
+        ? '请清理手机存储空间后重试'
+        : stage == 'source.prepare'
+        ? '请重试以重新获取并准备视频'
+        : stage == 'relay.start'
+        ? '请确认手机与电视在同一局域网后重试'
+        : '请点击下一集重试；若仍失败请重新打开投放';
+    return '$label（$stage/$code）。$action';
+  }
+
+  String _sourceFailureCode(String message) {
+    if (message.contains('存储空间不足')) return 'storage_full';
+    if (message.contains('链接已失效')) return 'source_expired';
+    if (message.contains('视频处理组件不兼容')) return 'remux_component';
+    if (message.contains('视频处理失败')) return 'remux_failed';
+    if (message.contains('准备超时')) return 'timeout';
+    if (message.contains('已取消')) return 'cancelled';
+    if (message.contains('本地视频不可读取')) return 'file_missing';
+    return 'source_failed';
   }
 
   /// Native must detach every consumer before receiver URLs/files are released.
@@ -299,7 +411,10 @@ class AirPlaySession extends ChangeNotifier {
       await relay.close();
     }
     _relays.clear();
+    await Future.wait(_closingRelays.toList());
     _queuedIndex = null;
+    _nativeRetained.clear();
+    _pendingSources.clear();
     retainSources({});
     _notify();
   }().whenComplete(() => _releasing = null);

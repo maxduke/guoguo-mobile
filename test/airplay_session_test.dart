@@ -27,8 +27,9 @@ void main() {
   late List<int> loads;
   late List<Set<int>> retained;
   bool advance = true, route = false, failClose = false, failNext = false;
+  bool rejectAppend = false;
   Completer<CastSource>? sourceGate;
-  Completer<void>? nativeGate;
+  Completer<void>? nativeGate, appendGate;
   int sequence = 0;
   String? identity;
 
@@ -39,6 +40,9 @@ void main() {
     bool needsNext = false,
     String? id,
     int? revision,
+    List<int>? retainedItems,
+    int? failedItem,
+    String? error,
   }) async {
     final done = Completer<void>();
     messenger.handlePlatformMessage(
@@ -56,6 +60,11 @@ void main() {
           'closed': closed,
           'ended': ended,
           'needsNext': needsNext,
+          'retainedItemIds': (retainedItems ?? [index])
+              .map((i) => '$i')
+              .toList(),
+          if (failedItem != null) 'rejectedItemId': '$failedItem',
+          'error': ?error,
         }),
       ),
       (_) => done.complete(),
@@ -77,9 +86,9 @@ void main() {
     loads = [];
     retained = [];
     advance = true;
-    route = failClose = failNext = false;
+    route = failClose = failNext = rejectAppend = false;
     sourceGate = null;
-    nativeGate = null;
+    nativeGate = appendGate = null;
     identity = null;
     sequence = 0;
     messenger.setMockMethodCallHandler(channel, (call) async {
@@ -88,6 +97,13 @@ void main() {
       if (call.method == 'open') {
         identity = (call.arguments as Map)['sessionId'] as String;
         await nativeGate?.future;
+      }
+      if (call.method == 'append') await appendGate?.future;
+      if (call.method == 'append' && rejectAppend) {
+        throw PlatformException(
+          code: 'airplay_queue',
+          message: 'secret URL and key',
+        );
       }
       if (call.method == 'close') {
         await nativeGate?.future;
@@ -118,6 +134,137 @@ void main() {
     session.dispose();
     messenger.setMockMethodCallHandler(channel, null);
   });
+
+  Future<void> requestNext([int after = 0]) async {
+    final done = Completer<void>();
+    messenger.handlePlatformMessage(
+      channel.name,
+      const StandardMethodCodec().encodeMethodCall(
+        MethodCall('requestNext', {'sessionId': identity, 'afterId': '$after'}),
+      ),
+      (_) => done.complete(),
+    );
+    await done.future;
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  test(
+    'promotion keeps outgoing HTTP URL and files until confirmed native release',
+    () async {
+      await open();
+      await Future<void>.delayed(Duration.zero);
+      await emit(index: 1, retainedItems: [0, 1]);
+      expect(relays[0].closes, 0);
+      expect(retained.last, containsAll([0, 1]));
+      // Repeated KVO/progress events must not cancel the outgoing receiver reads.
+      await emit(index: 1, retainedItems: [0, 1]);
+      expect(relays[0].closes, 0);
+      await emit(index: 1, retainedItems: [1]);
+      expect(relays[0].closes, 1);
+      expect(relays[1].closes, 0);
+      expect(retained.last, {1});
+    },
+  );
+
+  test(
+    'rejected native append closes its relay and manual retry owns a fresh lease',
+    () async {
+      rejectAppend = true;
+      await open();
+      await Future<void>.delayed(Duration.zero);
+      expect(relays[1].closes, 1);
+      expect(relays[0].closes, 0);
+      expect(session.error, contains('queue.append/airplay_queue'));
+      expect(session.error, isNot(contains('secret')));
+      rejectAppend = false;
+      await requestNext();
+      expect(loads, [0, 1, 1]);
+      expect(relays[2].closes, 0);
+      await session.close();
+      expect(relays.map((r) => r.closes), [1, 1, 1]);
+    },
+  );
+
+  test(
+    'close during accepted append keeps receiver URLs until native detach acknowledges',
+    () async {
+      advance = false;
+      await open();
+      appendGate = Completer();
+      await requestNext();
+      expect(relays, hasLength(2));
+      nativeGate = Completer();
+      final closing = session.close();
+      appendGate!.complete();
+      await Future<void>.delayed(Duration.zero);
+      expect(calls.last.method, 'close');
+      expect(relays.map((r) => r.closes), [0, 0]);
+      nativeGate!.complete();
+      await closing;
+      expect(relays.map((r) => r.closes), [1, 1]);
+    },
+  );
+
+  test(
+    'queued native load failure frees next slot and same episode is retryable',
+    () async {
+      await open();
+      await Future<void>.delayed(Duration.zero);
+      await emit(
+        retainedItems: [0],
+        failedItem: 1,
+        needsNext: true,
+        error: '下一集未就绪（item.load/av:-11800）',
+      );
+      expect(relays[1].closes, 1);
+      expect(loads, [0, 1]); // No progress-event retry loop.
+      expect(session.error, contains('item.load'));
+      await requestNext();
+      expect(loads, [0, 1, 1]);
+      expect(relays[2].closes, 0);
+      expect(session.error, isNull);
+    },
+  );
+
+  test(
+    'queued rejection before append response is not resurrected by late acceptance',
+    () async {
+      advance = false;
+      await open();
+      appendGate = Completer();
+      await requestNext();
+      await emit(
+        retainedItems: [0],
+        failedItem: 1,
+        needsNext: true,
+        error: '下一集未就绪（item.load/av:-11800）',
+      );
+      expect(relays[1].closes, 0); // Keep submitted URL until response settles.
+      appendGate!.complete();
+      await Future<void>.delayed(Duration.zero);
+      expect(relays[1].closes, 1);
+      expect(session.error, contains('item.load'));
+      appendGate = null;
+      await requestNext();
+      expect(loads, [0, 1, 1]);
+      expect(relays[2].closes, 0);
+    },
+  );
+
+  test(
+    'native progress during source preparation retains the pending remux',
+    () async {
+      advance = false;
+      await open();
+      sourceGate = Completer();
+      await requestNext();
+      await emit(retainedItems: [0]);
+      expect(retained.last, {0, 1});
+      sourceGate!.complete(castSource());
+      await Future<void>.delayed(Duration.zero);
+      expect(relays[1].closes, 0);
+    },
+  );
 
   test(
     'independent native player receives current and upcoming item without a texture',
@@ -270,7 +417,10 @@ void main() {
     outgoing.closeGate = Completer();
     await emit(index: 1, needsNext: true);
     await emit(index: 2);
-    expect(retained.last, {2});
+    expect(retained.last, {
+      0,
+      2,
+    }); // Files outlive the draining old HTTP server.
     outgoing.closeGate!.complete();
     await Future<void>.delayed(Duration.zero);
     expect(retained.last, {2});

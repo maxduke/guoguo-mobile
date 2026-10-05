@@ -194,13 +194,18 @@ private final class AirPlayNativeSession: NSObject {
     private(set) var closing = false
     var didClose: (() -> Void)?
     private let emit: (String, [String: Any]) -> Void
-    private let player = AVQueuePlayer()
+    private var player = AVQueuePlayer()
     private let controller: AVPlayerViewController
     private let navigation: AirPlayNavigationController
     private let errorLabel = UILabel()
     private var nextButton: UIBarButtonItem?
     private var queue: AirPlayQueueState
-    private let firstID: String
+    private var firstID: String
+    private var failedItemID: String?
+    private var rejectedItemID: String?
+    private var currentFailed = false
+    private var retryPlaying = false
+    private var retryButton: UIBarButtonItem?
     private var lastCurrent: ObjectIdentifier?
     private weak var readyHandledItem: AVPlayerItem?
     private var records: [ObjectIdentifier: (AVPlayerItem, AirPlayMedia)] = [:]
@@ -292,7 +297,8 @@ private final class AirPlayNativeSession: NSObject {
         errorLabel.textColor = .white
         errorLabel.backgroundColor = UIColor.black.withAlphaComponent(0.8)
         errorLabel.textAlignment = .center
-        errorLabel.isHidden = true
+        errorLabel.text = error
+        errorLabel.isHidden = error == nil
         errorLabel.translatesAutoresizingMaskIntoConstraints = false
         overlay.addSubview(errorLabel)
         NSLayoutConstraint.activate([
@@ -321,6 +327,14 @@ private final class AirPlayNativeSession: NSObject {
     }
 
     private func installObservers() {
+        observations.append(player.observe(\.status, options: [.new]) { [weak self] observed, _ in
+            DispatchQueue.main.async { [weak self, weak observed] in
+                guard let self, let observed, self.player === observed, !self.closing,
+                      observed.status == .failed,
+                      let item = observed.currentItem ?? self.records.values.first(where: { $0.1.id == self.queue.currentID })?.0 else { return }
+                self.itemFailed(item, stage: "player.status", underlying: observed.error as NSError?)
+            }
+        })
         observations.append(player.observe(\.currentItem, options: [.new]) { [weak self] _, _ in
             DispatchQueue.main.async { [weak self] in self?.currentChanged() }
         })
@@ -348,20 +362,22 @@ private final class AirPlayNativeSession: NSObject {
         }
         failedObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: nil, queue: .main) { [weak self] notification in
             guard let self, !self.closing, let item = notification.object as? AVPlayerItem,
-                  self.player.currentItem === item else { return }
-            self.fail("视频播放中断，请关闭后重试")
+                  self.records[ObjectIdentifier(item)] != nil else { return }
+            self.itemFailed(item, stage: "item.end", underlying: notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? NSError)
         }
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 600), queue: .main) { [weak self] _ in
             guard let self, !self.closing else { return }
             self.capturePosition()
+            self.confirmHandoff()
             self.checkConnection()
             self.sendState()
         }
     }
 
     private func ready(_ item: AVPlayerItem?) {
-        guard !closing, presented, let item, player.currentItem === item else { return }
-        if item.status == .failed { fail("视频加载失败，请关闭后重试"); return }
+        guard !closing, let item else { return }
+        if item.status == .failed { itemFailed(item, stage: "item.load", underlying: item.error as NSError?); return }
+        guard presented, player.currentItem === item else { return }
         guard item.status == .readyToPlay else { return }
         if let requested = initialPosition {
             guard !seeking else { return }
@@ -395,6 +411,7 @@ private final class AirPlayNativeSession: NSObject {
             }
             if record.1.id != queue.currentID {
                 queue.becameCurrent(record.1.id)
+                clearItemFailure()
                 positionMs = 0
                 durationMs = 0
                 error = nil
@@ -406,22 +423,114 @@ private final class AirPlayNativeSession: NSObject {
             nextButton?.isEnabled = record.1.hasNext
             if changed { ready(current) }
         }
-        // Release old native media/observers before the event lets Dart close
-        // the corresponding relay. Keep the last completed values when empty.
-        let retained = Set(player.items().map { ObjectIdentifier($0) })
-        for key in Array(records.keys) where !retained.contains(key) {
-            // With no successor, retain the outgoing identity until its real
-            // end notification arrives. Never manufacture EOF from polling.
-            if let record = records[key], record.1.id == queue.currentID,
-               player.currentItem == nil, !queue.ended { continue }
-            itemObservations.removeValue(forKey: key)?.invalidate()
-            records[key]?.0.cancelPendingSeeks()
-            records[key]?.0.asset.cancelLoading()
-            records.removeValue(forKey: key)
-        }
+        releaseDetachedItems()
         capturePosition()
         checkConnection()
         sendState()
+    }
+
+    private func releaseDetachedItems() {
+        let retained = Set(player.items().map { ObjectIdentifier($0) })
+        for key in Array(records.keys) where !retained.contains(key) {
+            guard let record = records[key] else { continue }
+            // Current identity survives an empty queue at EOF. Keep every
+            // outgoing URL until the latest successor advances on the TV;
+            // rapid Next taps may promote another item before the first handoff.
+            if record.1.id == queue.currentID || queue.outgoingIDs.contains(record.1.id) { continue }
+            if record.1.id == queue.nextID {
+                // AVFoundation may remove a failed queued item before its
+                // status callback reaches main. Reconcile the slot before
+                // invalidating observers, or that callback would be lost.
+                itemFailed(record.0, stage: "queue.removed", underlying: record.0.error as NSError?)
+                continue
+            }
+            discardItem(record.0)
+        }
+    }
+
+    private func discardItem(_ item: AVPlayerItem) {
+        let key = ObjectIdentifier(item)
+        itemObservations.removeValue(forKey: key)?.invalidate()
+        item.cancelPendingSeeks()
+        item.asset.cancelLoading()
+        records.removeValue(forKey: key)
+    }
+
+    private func confirmHandoff() {
+        guard let current = player.currentItem, let record = records[ObjectIdentifier(current)],
+              player.timeControlStatus == .playing,
+              !AirPlayBridge.routed || player.isExternalPlaybackActive else { return }
+        queue.confirmedPlayback(record.1.id, advanced: milliseconds(current.currentTime()) > 0)
+        releaseDetachedItems()
+    }
+
+    private func itemFailed(_ item: AVPlayerItem, stage: String, underlying: NSError?) {
+        guard !closing, let record = records[ObjectIdentifier(item)] else { return }
+        if player.currentItem === item && record.1.id != queue.currentID {
+            // Failure KVO may beat promotion KVO. Commit the transition before
+            // pausing so it cannot erase the failed item's retry/play intent.
+            currentChanged()
+        }
+        let message = "视频播放失败（\(stage)/\(AirPlayFailure.code(underlying))）。"
+        if player.currentItem === item || record.1.id == queue.currentID {
+            if !currentFailed { retryPlaying = queue.wantsPlayback }
+            currentFailed = true
+            failedItemID = record.1.id
+            if retryButton == nil {
+                let button = UIBarButtonItem(title: "重试本集", style: .plain, target: self, action: #selector(retryCurrent))
+                retryButton = button
+                controller.navigationItem.rightBarButtonItems?.insert(button, at: 0)
+            }
+            fail(message + "请点重试本集；若仍失败请重新选择电视。")
+        } else if queue.rejectNext(record.1.id) {
+            rejectedItemID = record.1.id
+            player.remove(item)
+            discardItem(item)
+            if currentFailed { sendState() }
+            else { reportError(message + "下一集未就绪，请点下一集重试。") }
+        }
+    }
+
+    private func clearItemFailure() {
+        currentFailed = false
+        failedItemID = nil
+        rejectedItemID = nil
+        if let retryButton {
+            controller.navigationItem.rightBarButtonItems?.removeAll { $0 === retryButton }
+        }
+        retryButton = nil
+    }
+
+    @objc private func retryCurrent() {
+        guard !closing, currentFailed,
+              let media = records.values.first(where: { $0.1.id == queue.currentID })?.1 else { return }
+        capturePosition()
+        let resume = positionMs
+        let next = records.values.first(where: { $0.1.id == queue.nextID })?.1
+        // AVPlayer's failed status is terminal. A new queue is required; simply
+        // reinserting an item into the failed player cannot recover playback.
+        stopObserving()
+        player.pause()
+        player.removeAllItems()
+        for record in Array(records.values) { discardItem(record.0) }
+        player = AVQueuePlayer()
+        player.allowsExternalPlayback = true
+        player.actionAtItemEnd = .advance
+        controller.player = player
+        queue.retryCurrent(playing: retryPlaying)
+        firstID = media.id
+        initialPosition = resume
+        seeking = false
+        lastCurrent = nil
+        readyHandledItem = nil
+        clearItemFailure()
+        error = nil
+        errorLabel.isHidden = true
+        controller.navigationItem.prompt = nil
+        installObservers()
+        player.insert(makeItem(media), after: nil)
+        if let next { player.insert(makeItem(next), after: nil) }
+        currentChanged()
     }
 
     private func playbackChanged() {
@@ -470,6 +579,9 @@ private final class AirPlayNativeSession: NSObject {
 
     func append(_ media: AirPlayMedia, after: String) -> FlutterError? {
         currentChanged()
+        guard player.status != .failed else {
+            return FlutterError(code: "airplay_player_failed", message: "请先重试本集", details: nil)
+        }
         let previousQueue = queue
         switch queue.append(id: media.id, after: after) {
         case .duplicate: return nil
@@ -477,16 +589,19 @@ private final class AirPlayNativeSession: NSObject {
         case .full: return FlutterError(code: "airplay_queue_full", message: "下一集已准备好", details: nil)
         case .queued, .advance: break
         }
-        error = nil
-        errorLabel.isHidden = true
-        controller.navigationItem.prompt = nil
+        rejectedItemID = nil
+        if !currentFailed {
+            failedItemID = nil
+            error = nil
+            errorLabel.isHidden = true
+            controller.navigationItem.prompt = nil
+        }
         let item = makeItem(media)
         // A nil predecessor appends to the queue without retaining an item
         // that AVFoundation could remove concurrently at its natural end.
         guard player.canInsert(item, after: nil) else {
             queue = previousQueue
-            itemObservations.removeValue(forKey: ObjectIdentifier(item))?.invalidate()
-            records.removeValue(forKey: ObjectIdentifier(item))
+            discardItem(item)
             return FlutterError(code: "airplay_queue", message: "无法加入下一集，请重试", details: nil)
         }
         // Inserting into an empty queue makes the late successor current.
@@ -503,6 +618,10 @@ private final class AirPlayNativeSession: NSObject {
         guard !closing else { return }
         currentChanged()
         guard nextButton?.isEnabled == true else { return }
+        // Manual Next after a terminal player error must rebuild the player
+        // before either advancing its queued item or accepting a late append.
+        if player.status == .failed { retryCurrent() }
+        else if currentFailed { queue.wantsPlayback = retryPlaying }
         queue.requestNext()
         if queue.nextID != nil {
             capturePosition()
@@ -535,7 +654,7 @@ private final class AirPlayNativeSession: NSObject {
         connectionDeadline = Timer.scheduledTimer(withTimeInterval: 20, repeats: false) { [weak self, weak item] _ in
             guard let self, !self.closing, let item, self.player.currentItem === item,
                   self.queue.wantsPlayback, AirPlayBridge.routed, !self.player.isExternalPlaybackActive else { return }
-            self.fail("电视未接管视频。请重新选择电视，再点播放重试。")
+            self.fail("电视未接管视频（route.video_timeout）。请重新选择电视，再点播放重试。")
         }
     }
 
@@ -581,11 +700,9 @@ private final class AirPlayNativeSession: NSObject {
         let last = records.values.first { $0.1.id == queue.currentID }
         guard let item = player.currentItem ?? last?.0,
               let record = records[ObjectIdentifier(item)] else { return }
-        if record.1.id != queue.currentID {
-            guard queue.becameCurrent(record.1.id) else { return }
-            positionMs = 0
-            durationMs = 0
-        }
+        // Only currentChanged commits identity/promotion and its lifecycle.
+        // A snapshot must not silently consume the transition before KVO.
+        guard record.1.id == queue.currentID else { return }
         if initialPosition == nil { positionMs = milliseconds(item.currentTime()) }
         let duration = milliseconds(item.duration)
         if duration > 0 { durationMs = duration }
@@ -603,6 +720,8 @@ private final class AirPlayNativeSession: NSObject {
             "retainedItemIds": records.values.map { $0.1.id }
         ]
         if let error { state["error"] = error }
+        if let failedItemID { state["failedItemId"] = failedItemID }
+        if let rejectedItemID { state["rejectedItemId"] = rejectedItemID }
         return state
     }
 
@@ -611,12 +730,7 @@ private final class AirPlayNativeSession: NSObject {
         emit("state", snapshot())
     }
 
-    func close(animated: Bool = true, completion: @escaping () -> Void) {
-        if closed { completion(); return }
-        closeCompletions.append(completion)
-        if closing { return }
-        closing = true
-        capturePosition()
+    private func stopObserving() {
         cancelConnectionDeadline()
         observations.forEach { $0.invalidate() }
         observations.removeAll()
@@ -628,6 +742,16 @@ private final class AirPlayNativeSession: NSObject {
         failedObserver = nil
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         timeObserver = nil
+    }
+
+    func close(animated: Bool = true, completion: @escaping () -> Void) {
+        if closed { completion(); return }
+        closeCompletions.append(completion)
+        if closing { return }
+        closing = true
+        capturePosition()
+        cancelConnectionDeadline()
+        stopObserving()
         player.pause()
         let oldItems = records.values.map { $0.0 }
         oldItems.forEach { $0.cancelPendingSeeks() }

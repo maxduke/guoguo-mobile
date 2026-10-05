@@ -12,6 +12,10 @@
 
 [发现页预览](screenshots/recommendations-light.png) · [深色发现页](screenshots/recommendations-dark.png) · [新版详情页](screenshots/detail-phone-light.png) · [平板详情页](screenshots/detail-tablet-dark.png)
 
+## 0.15.1 AirPlay 换集资源保留与重试
+
+针对红果投到安卓电视蓝莓投屏时自动换集中断、手动下一集准备失败，修复旧中转过早释放、下一集原生加载失败后无法重新入队和失败中转泄漏。投屏完整文件由独立会话持有；上一集保留到新集实际推进后再释放。原生失败显示阶段与安全错误码，并提供“重试本集”。三集真实红果解析、解密和 HTTP 取流验证通过；蓝莓接收器的实际换集仍需真机复测，见[修复与验证记录](docs/airplay-next-repair-2026-10-05.md)。
+
 ## 0.15.0 AirPlay 独立原生队列
 
 用户真机反馈 0.14.0 连播仍卡住，本次删除与手机播放器共用实例的投屏实现，改用独立 iOS 系统播放器和原生队列。提前准备并入队下一集，切集不经过手机结束事件或页面重新安装；关闭先停止并撤下队列，再释放中转和准备文件。手机播放器保持独立，系统仍选着电视时暂停手机，切回 iPhone 后按实际分集、进度和暂停意图恢复。参考 app 实现的是同款 app 间局域网推送，并没有 AirPlay。完整说明见 [重做记录](docs/airplay-native-queue-2026-10-04.md)；安卓接收软件仍需真机验证。

@@ -9,6 +9,8 @@ import 'package:guoguo_mobile/data/download_store.dart';
 import 'package:guoguo_mobile/data/storage.dart';
 import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/platform/cast_session.dart';
+import 'package:guoguo_mobile/platform/media_preparer.dart';
+import 'package:guoguo_mobile/platform/provider_client.dart';
 import 'package:guoguo_mobile/ui/cast_sheet.dart';
 import 'package:guoguo_mobile/ui/episode_pager.dart';
 import 'package:guoguo_mobile/ui/player_page.dart';
@@ -18,9 +20,39 @@ import 'widget_test.dart' show NoNetwork;
 
 class LocalDownloads extends DownloadStore {
   LocalDownloads(super.store);
+  bool available = true;
   @override
   Future<String?> localFile(Drama drama, Episode episode) async =>
-      '/tmp/cast-${episode.id}.mp4';
+      available ? '/tmp/cast-${episode.id}.mp4' : null;
+}
+
+class AirPlayFixtureProvider extends NoNetwork {
+  @override
+  Future<Map<String, dynamic>> call(
+    String method, [
+    Map<String, dynamic> arguments = const {},
+  ]) async => method == 'resolve'
+      ? {
+          'url': 'https://fixture.test/video.mp4',
+          'remoteUrl': 'https://fixture.test/video.mp4',
+          'contentKey': 'fixture',
+        }
+      : {};
+}
+
+class AirPlayFixturePreparer extends MediaPreparer {
+  AirPlayFixturePreparer(this.identity);
+  final int identity;
+  bool disposed = false;
+  @override
+  Future<String> prepare(
+    ResolvedMedia media, {
+    bool progressive = false,
+  }) async => '/tmp/owned-$identity.mp4';
+  @override
+  Future<void> dispose() async {
+    disposed = true;
+  }
 }
 
 class RelayLease implements CastRelayHandle {
@@ -124,15 +156,19 @@ void main() {
     bool autoAdvance = true,
     int initialIndex = 0,
     void Function(NativeCastPlayer)? configureNative,
+    ProviderClient? provider,
+    MediaPreparer Function()? preparerFactory,
+    bool downloaded = true,
   }) async {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     final native = NativeCastPlayer()..install();
     configureNative?.call(native);
     final receiver = FakeCastReceiver(), relay = FakeCastRelay();
-    final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
-      ..prefetch = false
-      ..autoAdvance = autoAdvance;
-    final downloads = LocalDownloads(store);
+    final store =
+        AppStore(storage: MemoryStorage(), provider: provider ?? NoNetwork())
+          ..prefetch = false
+          ..autoAdvance = autoAdvance;
+    final downloads = LocalDownloads(store)..available = downloaded;
     addTearDown(() {
       native.uninstall();
       downloads.dispose();
@@ -157,6 +193,7 @@ void main() {
           castRelayFactory: () => RelayLease(relay),
           castDiscoveryFactory: () => FakeCastDiscovery(receiver),
           airPlayChannel: airPlayChannel,
+          preparerFactory: preparerFactory,
         ),
       ),
     );
@@ -234,6 +271,46 @@ void main() {
         );
     await done.future;
   }
+
+  testWidgets('AirPlay owns CENC files independently of phone cache trimming', (
+    tester,
+  ) async {
+    installAirPlay();
+    final jobs = <AirPlayFixturePreparer>[];
+    await mount(
+      tester,
+      airPlayChannel: airPlayChannel,
+      downloaded: false,
+      provider: AirPlayFixtureProvider(),
+      preparerFactory: () {
+        final job = AirPlayFixturePreparer(jobs.length);
+        jobs.add(job);
+        return job;
+      },
+    );
+    expect(jobs, hasLength(1));
+    await tester.tap(find.byTooltip('AirPlay'));
+    await tester.pumpAndSettle();
+    // Phone current + native current + native upcoming have separate owners.
+    expect(jobs, hasLength(3));
+    expect(jobs.every((job) => !job.disposed), true);
+    await emitAirPlay(index: 1);
+    await tester.pumpAndSettle();
+    final done = Completer<void>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .handlePlatformMessage(
+          NativeCastPlayer.connectivityEvents.name,
+          const StandardMethodCodec().encodeSuccessEnvelope(['mobile']),
+          (_) => done.complete(),
+        );
+    await done.future;
+    await tester.pumpAndSettle();
+    expect(jobs[0].disposed, true);
+    expect(jobs[1].disposed, false);
+    expect(jobs[2].disposed, false);
+    await unmount(tester);
+    expect(jobs.every((job) => job.disposed), true);
+  });
 
   for (final paused in [false, true]) {
     testWidgets(

@@ -60,6 +60,50 @@ struct PlayerPolicyTests {
         precondition(manual.becameCurrent("b"))
         precondition(!manual.advanceRequested && manual.wantsPlayback)
         precondition(!manual.becameCurrent("unknown") && manual.currentID == "b")
+        // Promotion is not a receiver handoff acknowledgment. Old media must
+        // survive zero-position KVO and stale progress until b advances.
+        var handoff = AirPlayQueueState(id: "a", playing: true)
+        precondition(handoff.append(id: "b", after: "a") == .queued)
+        precondition(handoff.becameCurrent("b"))
+        precondition(handoff.outgoingIDs == ["a"])
+        handoff.confirmedPlayback("a", advanced: true)
+        handoff.confirmedPlayback("b", advanced: false)
+        precondition(handoff.outgoingIDs == ["a"])
+        handoff.confirmedPlayback("b", advanced: true)
+        precondition(handoff.outgoingIDs.isEmpty)
+
+        // Two manual skips can precede remote start. Confirming an intermediate
+        // item must not release the receiver's still-readable first URL.
+        var skipped = AirPlayQueueState(id: "a", playing: true)
+        precondition(skipped.append(id: "b", after: "a") == .queued)
+        precondition(skipped.becameCurrent("b"))
+        precondition(skipped.append(id: "c", after: "b") == .queued)
+        precondition(skipped.becameCurrent("c"))
+        skipped.confirmedPlayback("b", advanced: true)
+        precondition(skipped.outgoingIDs == ["a", "b"])
+        skipped.confirmedPlayback("c", advanced: true)
+        precondition(skipped.outgoingIDs.isEmpty)
+
+        // Queued failure/removal (including removal before status KVO) previously
+        // occupied the slot/dedupe set
+        // forever, so a manual Next could not retry the same episode.
+        var failure = AirPlayQueueState(id: "a", playing: true)
+        precondition(failure.append(id: "b", after: "a") == .queued)
+        precondition(!failure.rejectNext("a"))
+        precondition(failure.rejectNext("b"))
+        precondition(failure.needsNext && failure.wantsPlayback)
+        failure.requestNext()
+        precondition(failure.append(id: "b", after: "a") == .advance)
+        precondition(failure.becameCurrent("b"))
+        failure.wantsPlayback = false
+        failure.retryCurrent(playing: true)
+        precondition(failure.wantsPlayback && !failure.ended && failure.currentID == "b")
+        let sensitive = NSError(domain: "AVFoundationErrorDomain", code: -11800,
+            userInfo: [NSLocalizedDescriptionKey: "https://signed.test/?key=secret",
+                       NSUnderlyingErrorKey: NSError(domain: NSURLErrorDomain, code: -1004)])
+        precondition(AirPlayFailure.code(sensitive) == "av:-11800/url:-1004")
+        precondition(AirPlayFailure.code(NSError(domain: "secret-token", code: 7)) == "native:7")
+        precondition(AirPlayFailure.code(nil) == "unknown")
         print("Player HLS policy: \(cases.count) cases; native AirPlay queue races passed")
     }
 }
