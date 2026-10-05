@@ -986,17 +986,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       provider: widget.store.provider,
       drama: widget.drama,
       episodes: widget.episodes,
-      localFile: (index) async {
-        final prepared = _session.peek(index);
-        // Completed phone media remains owned by the phone session. This
-        // queue only borrows it; its own preparer never deletes that file.
-        if (prepared != null &&
-            !prepared.preparer.streaming &&
-            !prepared.path.startsWith('http')) {
-          return prepared.path;
-        }
-        return widget.downloads.localFile(widget.drama, widget.episodes[index]);
-      },
+      // Never borrow the phone session's temporary files: cache trimming on
+      // connectivity/lifecycle changes can delete them while the TV reads.
+      localFile: (index) =>
+          widget.downloads.localFile(widget.drama, widget.episodes[index]),
       canResolve: () => !widget.localOnly && !widget.store.offline,
       progressive: (_) => false,
       onPhase: (_, label) {
@@ -1014,9 +1007,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       );
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('AirPlay 准备失败，请检查网络后重试')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(airplay.error ?? 'AirPlay 准备失败，请重试')),
+        );
         unawaited(_returnFromAirPlay());
       }
     } finally {
