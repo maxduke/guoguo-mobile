@@ -1,6 +1,24 @@
 --- a/ios/better_player_plus/Sources/better_player_plus/BetterPlayer.swift
 +++ b/ios/better_player_plus/Sources/better_player_plus/BetterPlayer.swift
-@@ -203,7 +203,7 @@
+@@ -12,6 +12,8 @@
+ private var presentationSizeContext = 0
+ 
+ public class BetterPlayer: NSObject, FlutterPlatformView, FlutterStreamHandler, AVPictureInPictureControllerDelegate {
++    // Process-local exclusion only; media/session state belongs to guoguo_core.
++    public static var airPlaySessionActive = false
+     public private(set) var player: AVPlayer
+     public private(set) var loaderDelegate: BetterPlayerEzDrmAssetsLoaderDelegate?
+     public var eventChannel: FlutterEventChannel?
+@@ -52,6 +54,8 @@
+         self.player = AVPlayer()
+         super.init()
+         self.player.actionAtItemEnd = .none
++        // AirPlay belongs to the independent AVKit queue, never this local player.
++        self.player.allowsExternalPlayback = false
+         if #available(iOS 10.0, *) {
+             self.player.automaticallyWaitsToMinimizeStalling = false
+         }
+@@ -203,7 +207,7 @@
          }
      }
  
@@ -9,7 +27,7 @@
          self.overriddenDuration = 0
          var finalHeaders = headers
          if finalHeaders["dummy"] == nil {} // keep dictionary type stable
-@@ -231,31 +231,31 @@
+@@ -231,31 +235,31 @@
          if #available(iOS 10.0, *), overriddenDuration > 0 {
              self.overriddenDuration = overriddenDuration
          }
@@ -58,9 +76,268 @@
                              #if !targetEnvironment(simulator)
                              let videoComposition = self.getVideoComposition(transform: self.preferredTransform, asset: asset, videoTrack: videoTrack)
                              item.videoComposition = videoComposition
+@@ -379,6 +383,11 @@
+     }
+ 
+     public func updatePlayingState() {
++        guard !Self.airPlaySessionActive else {
++            isPlaying = false
++            player.pause()
++            return
++        }
+         guard isInitialized, key != nil else { return }
+         if !observersAdded, let current = player.currentItem { addObservers(current) }
+         if isPlaying {
+@@ -388,7 +397,24 @@
+         }
+     }
+ 
++    public var hasAirPlayAudioRoute: Bool {
++        AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .airPlay }
++    }
++
+     private func applyPlayerRate() {
++        // Close the system-route query/play race, including delayed stall/seek
++        // callbacks. Never resume phone video with its audio still on the TV.
++        if Self.airPlaySessionActive {
++            isPlaying = false
++            player.pause()
++            return
++        }
++        guard !GuoguoMediaPolicy.shouldHoldLocalPlayback(airPlaySessionActive: Self.airPlaySessionActive, routed: hasAirPlayAudioRoute) else {
++            isPlaying = false
++            player.pause()
++            eventSink?(FlutterError(code: "airplay_route", message: "请先在系统投放菜单中选择 iPhone", details: nil))
++            return
++        }
+         if #available(iOS 16, *) {
+             player.defaultRate = playerRate
+         }
 --- a/ios/better_player_plus/Sources/better_player_plus/SwiftBetterPlayerPlugin.swift
 +++ b/ios/better_player_plus/Sources/better_player_plus/SwiftBetterPlayerPlugin.swift
-@@ -244,6 +244,7 @@
+@@ -8,6 +8,7 @@
+ public class BetterPlayerPlugin: NSObject, FlutterPlugin, FlutterPlatformViewFactory {
+     private let messenger: FlutterBinaryMessenger
+     private var players: [Int64: BetterPlayer] = [:]
++    private var airPlayOwnershipObservers: [NSObjectProtocol] = []
+     private let registrar: FlutterPluginRegistrar
+ 
+     private var dataSourceDict: [Int64: [String: Any]] = [:]
+@@ -17,6 +18,8 @@
+     private var texturesCount: Int64 = -1
+     private var notificationPlayer: BetterPlayer?
+     private var remoteCommandsInitialized = false
++    private var remoteCommandTargets: [(MPRemoteCommand, Any)] = []
++    private var notificationGeneration = 0
+ 
+     init(registrar: FlutterPluginRegistrar) {
+         self.messenger = registrar.messenger()
+@@ -24,12 +27,22 @@
+         self.cacheManager = CacheManager()
+         super.init()
+         self.cacheManager.setup()
++        for (name, active) in [("guoguoAirPlaySessionDidBegin", true), ("guoguoAirPlaySessionDidEnd", false)] {
++            airPlayOwnershipObservers.append(NotificationCenter.default.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] _ in
++                BetterPlayer.airPlaySessionActive = active
++                if active {
++                    self?.players.values.forEach { $0.pause() }
++                    self?.suspendRemoteNotifications()
++                }
++            })
++        }
+     }
+ 
+     @objc public static func register(with registrar: FlutterPluginRegistrar) {
+         let channel = FlutterMethodChannel(name: "better_player_channel", binaryMessenger: registrar.messenger())
+         let instance = BetterPlayerPlugin(registrar: registrar)
+         registrar.addMethodCallDelegate(instance, channel: channel)
++        registrar.publish(instance)
+         registrar.register(instance, withId: "com.jhomlala/better_player")
+     }
+ 
+@@ -58,6 +71,8 @@
+     }
+ 
+     private func setupRemoteNotification(_ player: BetterPlayer) {
++        guard !BetterPlayer.airPlaySessionActive else { return }
++        notificationGeneration += 1
+         notificationPlayer = player
+         stopOtherUpdateListener(player)
+         guard let dataSource = dataSourceDict[keyForPlayer(player)] else { return }
+@@ -79,10 +94,43 @@
+     }
+ 
+     private func setRemoteCommandsNotificationNotActive() {
++        guard !BetterPlayer.airPlaySessionActive else { return }
+         if players.isEmpty {
+             try? AVAudioSession.sharedInstance().setActive(false)
+         }
+         UIApplication.shared.endReceivingRemoteControlEvents()
++    }
++
++    private func addRemoteTarget(_ command: MPRemoteCommand, handler: @escaping (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus) {
++        let target = command.addTarget { event in
++            guard !BetterPlayer.airPlaySessionActive else { return .commandFailed }
++            return handler(event)
++        }
++        remoteCommandTargets.append((command, target))
++    }
++
++    private func removeRemoteTargets() {
++        // Remove only our tokens, never AVKit's handlers on the shared center.
++        remoteCommandTargets.forEach { $0.0.removeTarget($0.1) }
++        remoteCommandTargets.removeAll()
++        remoteCommandsInitialized = false
++    }
++
++    private func removeUpdateListeners() {
++        for (textureId, observer) in timeObserverIdDict {
++            players[textureId]?.player.removeTimeObserver(observer)
++        }
++        timeObserverIdDict.removeAll()
++    }
++
++    private func suspendRemoteNotifications() {
++        notificationGeneration += 1 // Invalidate in-flight artwork and ticks.
++        notificationPlayer = nil
++        removeRemoteTargets()
++        removeUpdateListeners()
++        artworkImageDict.removeAll()
++        // AVKit enables its own Now Playing publication after this handoff.
++        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+     }
+ 
+     private func setupRemoteCommands(_ player: BetterPlayer) {
+@@ -97,24 +145,24 @@
+             commandCenter.changePlaybackPositionCommand.isEnabled = true
+         }
+ 
+-        commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
++        addRemoteTarget(commandCenter.togglePlayPauseCommand) { [weak self] _ in
+             guard let self = self, let player = self.notificationPlayer else { return .commandFailed }
+             if player.isPlaying { player.eventSink?(["event": "play"]) } else { player.eventSink?(["event": "pause"]) }
+             return .success
+         }
+ 
+-        commandCenter.playCommand.addTarget { [weak self] _ in
++        addRemoteTarget(commandCenter.playCommand) { [weak self] _ in
+             guard let self = self, let player = self.notificationPlayer else { return .commandFailed }
+             player.eventSink?(["event": "play"]) ; return .success
+         }
+ 
+-        commandCenter.pauseCommand.addTarget { [weak self] _ in
++        addRemoteTarget(commandCenter.pauseCommand) { [weak self] _ in
+             guard let self = self, let player = self.notificationPlayer else { return .commandFailed }
+             player.eventSink?(["event": "pause"]) ; return .success
+         }
+ 
+         if #available(iOS 9.1, *) {
+-            commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
++            addRemoteTarget(commandCenter.changePlaybackPositionCommand) { [weak self] event in
+                 guard let self = self, let player = self.notificationPlayer, let playbackEvent = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+                 let time = CMTimeMakeWithSeconds(playbackEvent.positionTime, preferredTimescale: 1)
+                 let millis = BetterPlayerTimeUtils.cmTimeToMillis(time)
+@@ -127,6 +175,7 @@
+     }
+ 
+     private func setupRemoteCommandNotification(_ player: BetterPlayer, title: String?, author: String?, imageUrl: String?) {
++        guard !BetterPlayer.airPlaySessionActive, notificationPlayer === player else { return }
+         let positionSeconds = Double(player.position()) / 1000.0
+         let durationSeconds = Double(player.duration()) / 1000.0
+         var nowPlayingInfo: [String: Any] = [
+@@ -143,20 +192,29 @@
+                 nowPlayingInfo[MPMediaItemPropertyArtwork] = artwork
+                 MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+             } else {
+-                DispatchQueue.global(qos: .default).async { [weak self] in
+-                    guard let self = self else { return }
++                let generation = notificationGeneration
++                let sourceKey = player.key
++                let baseInfo = nowPlayingInfo
++                DispatchQueue.global(qos: .default).async { [weak self, weak player] in
+                     var tempImage: UIImage?
+                     if imageUrl.contains("http") {
+                         if let url = URL(string: imageUrl), let data = try? Data(contentsOf: url) { tempImage = UIImage(data: data) }
+                     } else {
+                         tempImage = UIImage(contentsOfFile: imageUrl)
+                     }
+-                    if let image = tempImage {
+-                        let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+-                        self.artworkImageDict[key] = artwork
+-                        nowPlayingInfo[MPMediaItemPropertyArtwork] = artwork
++                    let image = tempImage
++                    DispatchQueue.main.async {
++                        guard let self, let player, !BetterPlayer.airPlaySessionActive,
++                              self.notificationGeneration == generation,
++                              self.notificationPlayer === player, player.key == sourceKey else { return }
++                        var updatedInfo = baseInfo
++                        if let image {
++                            let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
++                            self.artworkImageDict[key] = artwork
++                            updatedInfo[MPMediaItemPropertyArtwork] = artwork
++                        }
++                        MPNowPlayingInfoCenter.default().nowPlayingInfo = updatedInfo
+                     }
+-                    MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+                 }
+             }
+         } else {
+@@ -170,8 +228,12 @@
+     }
+ 
+     private func setupUpdateListener(_ player: BetterPlayer, title: String?, author: String?, imageUrl: String?) {
+-        let id = player.player.addPeriodicTimeObserver(forInterval: CMTimeMake(value: 1, timescale: 1), queue: nil) { [weak self] _ in
+-            guard let self = self else { return }
++        let generation = notificationGeneration
++        let sourceKey = player.key
++        let id = player.player.addPeriodicTimeObserver(forInterval: CMTimeMake(value: 1, timescale: 1), queue: .main) { [weak self] _ in
++            guard let self, !BetterPlayer.airPlaySessionActive,
++                  self.notificationGeneration == generation,
++                  self.notificationPlayer === player, player.key == sourceKey else { return }
+             self.setupRemoteCommandNotification(player, title: title, author: author, imageUrl: imageUrl)
+         }
+         let key = keyForPlayer(player)
+@@ -179,27 +241,29 @@
+     }
+ 
+     private func disposeNotificationData(_ player: BetterPlayer) {
+-        if player === notificationPlayer {
++        let ownedNotifications = player === notificationPlayer
++        if ownedNotifications {
++            notificationGeneration += 1
+             notificationPlayer = nil
+-            remoteCommandsInitialized = false
++            removeRemoteTargets()
+         }
+         let key = keyForPlayer(player)
+         if let id = timeObserverIdDict[key] { player.player.removeTimeObserver(id); timeObserverIdDict.removeValue(forKey: key) }
+         artworkImageDict.removeValue(forKey: key)
+-        MPNowPlayingInfoCenter.default().nowPlayingInfo = [:]
++        if ownedNotifications && !BetterPlayer.airPlaySessionActive {
++            MPNowPlayingInfoCenter.default().nowPlayingInfo = [:]
++        }
+     }
+ 
+     private func stopOtherUpdateListener(_ player: BetterPlayer) {
+-        let currentPlayerKey = keyForPlayer(player)
+-        for (textureId, timeObserver) in timeObserverIdDict where textureId != currentPlayerKey {
+-            if let playerToRemoveListener = players[textureId] {
+-                playerToRemoveListener.player.removeTimeObserver(timeObserver)
+-            }
+-        }
+-        timeObserverIdDict.removeAll()
++        // setupRemoteNotification installs a fresh listener, including on the
++        // same player. Keep no untracked timer that could later overwrite AVKit.
++        removeUpdateListeners()
+     }
+ 
+     private func disposeAllPlayers() {
++        notificationGeneration += 1
++        removeRemoteTargets()
+         for (_, player) in players {
+             player.dispose()
+             disposeNotificationData(player)
+@@ -244,6 +308,7 @@
              let cacheKey = dataSource["cacheKey"] as? String
              let maxCacheSize = dataSource["maxCacheSize"] as? NSNumber
              let videoExtension = dataSource["videoExtension"] as? String
@@ -68,7 +345,7 @@
              let overriddenDuration = (dataSource["overriddenDuration"] as? NSNumber)?.intValue ?? 0
  
              let useCache = (dataSource["useCache"] as? NSNumber)?.boolValue ?? false
-@@ -258,7 +259,7 @@
+@@ -258,7 +323,7 @@
                  }
                  player.setDataSourceAsset(assetPath, key: key, certificateUrl: certificateUrl, licenseUrl: licenseUrl, cacheKey: cacheKey, cacheManager: cacheManager, overriddenDuration: overriddenDuration)
              } else if let uriArg = uriArg, let url = URL(string: uriArg) {
@@ -77,3 +354,38 @@
              } else {
                  result(FlutterMethodNotImplemented)
                  return
+@@ -273,7 +338,7 @@
+             setRemoteCommandsNotificationNotActive()
+             players.removeValue(forKey: textureId)
+             dataSourceDict.removeValue(forKey: textureId)
+-            if players.isEmpty { try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation]) }
++            if players.isEmpty && !BetterPlayer.airPlaySessionActive { try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation]) }
+             result(nil)
+         case "setLooping":
+             if let looping = (argsMap["looping"] as? NSNumber)?.boolValue { player.isLooping = looping }
+@@ -282,6 +347,15 @@
+             if let vol = (argsMap["volume"] as? NSNumber)?.doubleValue { player.setVolume(vol) }
+             result(nil)
+         case "play":
++            if BetterPlayer.airPlaySessionActive {
++                player.pause()
++                result(nil) // BetterPlayer can invoke this unawaited for stale events.
++                return
++            }
++            guard !player.hasAirPlayAudioRoute else {
++                result(FlutterError(code: "airplay_route", message: "请先在系统投放菜单中选择 iPhone", details: nil))
++                return
++            }
+             setupRemoteNotification(player)
+             player.play(); result(nil)
+         case "position":
+@@ -377,6 +451,9 @@
+     }
+ 
+     public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
++        airPlayOwnershipObservers.forEach { NotificationCenter.default.removeObserver($0) }
++        airPlayOwnershipObservers.removeAll()
++        BetterPlayer.airPlaySessionActive = false
+         disposeAllPlayers()
+     }
+ }

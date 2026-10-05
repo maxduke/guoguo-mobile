@@ -64,7 +64,7 @@ jobs:
       - name: Verify iOS player correction
         run: |
           python3 scripts/prepare_ios_player.py
-          swiftc patches/better_player_plus/GuoguoMediaPolicy.swift scripts/test_player_policy.swift -o "$RUNNER_TEMP/player-policy-tests"
+          swiftc patches/better_player_plus/GuoguoMediaPolicy.swift packages/guoguo_core/ios/guoguo_core/Sources/guoguo_core/AirPlayQueueState.swift scripts/test_player_policy.swift -o "$RUNNER_TEMP/player-policy-tests"
           "$RUNNER_TEMP/player-policy-tests"
       - name: Prepare linked media libraries
         run: scripts/prepare_ios_media.sh

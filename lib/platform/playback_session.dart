@@ -139,6 +139,9 @@ class PlaybackSessionController {
     return operation;
   }
 
+  /// Teardown must wait for an already submitted native source replacement.
+  Future<void> drainSources() => _sourceSetup;
+
   Future<PreparedEpisode> _load(
     int index,
     EpisodeCancellation cancellation,

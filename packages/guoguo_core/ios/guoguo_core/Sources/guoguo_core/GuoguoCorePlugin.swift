@@ -1,17 +1,21 @@
 import Flutter
 import UIKit
-import AVKit
 import GuoguoMobile
 
 public class GuoguoCorePlugin: NSObject, FlutterPlugin {
     private var client: MobileClient?
+    private var airPlay: AirPlayBridge?
     private let queue = DispatchQueue(label: "guoguo.providers", qos: .userInitiated, attributes: .concurrent)
     private let lock = NSLock()
 
     public static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(name: "guoguo/core", binaryMessenger: registrar.messenger())
-        registrar.addMethodCallDelegate(GuoguoCorePlugin(), channel: channel)
-        registrar.register(AirPlayFactory(), withId: "guoguo/airplay")
+        let plugin = GuoguoCorePlugin()
+        let airPlayChannel = FlutterMethodChannel(name: "guoguo/airplay", binaryMessenger: registrar.messenger())
+        plugin.airPlay = AirPlayBridge(channel: airPlayChannel, registrar: registrar)
+        registrar.addMethodCallDelegate(plugin, channel: channel)
+        // Flutter only calls detachFromEngine for published plugin instances.
+        registrar.publish(plugin)
     }
 
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -50,22 +54,9 @@ public class GuoguoCorePlugin: NSObject, FlutterPlugin {
             }
         }
     }
+    public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
+        airPlay?.shutdown()
+        airPlay = nil
+    }
     deinit { client?.close() }
-}
-
-private class AirPlayFactory: NSObject, FlutterPlatformViewFactory {
-    func create(withFrame frame: CGRect, viewIdentifier viewId: Int64, arguments args: Any?) -> FlutterPlatformView {
-        return AirPlayView(frame: frame)
-    }
-}
-private class AirPlayView: NSObject, FlutterPlatformView {
-    private let picker: AVRoutePickerView
-    init(frame: CGRect) {
-        picker = AVRoutePickerView(frame: frame)
-        picker.tintColor = .white
-        picker.activeTintColor = UIColor(red: 0.62, green: 0.8, blue: 0.69, alpha: 1)
-        picker.prioritizesVideoDevices = true
-        super.init()
-    }
-    func view() -> UIView { picker }
 }

@@ -46,6 +46,8 @@ class PlaybackLifecycleController {
   Timer? _backgroundTimer;
   bool _closed = false;
   bool _foreground = true, _pipActive = false;
+  bool _externalPlayback = false;
+  bool _airPlayActive = false;
   bool _playIntent = true, _pendingPlay = false;
   bool _restoreOnResume = false, _resumePlay = false;
   Duration? _resumePosition;
@@ -55,7 +57,27 @@ class PlaybackLifecycleController {
   bool get foreground => _foreground;
   bool get pipActive => _pipActive;
   bool get playIntent => _playIntent;
-  bool get canPlay => !_closed && (_foreground || _pipActive);
+  bool get canPlay =>
+      !_closed &&
+      !_externalPlayback &&
+      (_foreground || _pipActive || _airPlayActive);
+
+  void setAirPlayActive(bool active) {
+    if (_closed) return;
+    _airPlayActive = active;
+    if (active) _backgroundTimer?.cancel();
+  }
+
+  void setExternalPlayback(bool active) {
+    if (_closed || _externalPlayback == active) return;
+    _externalPlayback = active;
+    if (active) {
+      _pendingPlay = false;
+      _restoreOnResume = false;
+      _pipEntryWasPlaying = null;
+      _backgroundTimer?.cancel();
+    }
+  }
 
   PlaybackResumeIntent captureIntent(bool play) =>
       PlaybackResumeIntent._(_intentRevision, play);
@@ -115,7 +137,7 @@ class PlaybackLifecycleController {
     final wasPlaying = _pipEntryWasPlaying;
     _pipEntryWasPlaying = null;
     final state = snapshot();
-    if (!_closed && wasPlaying == true && state.active && !state.loading) {
+    if (canPlay && wasPlaying == true && state.active && !state.loading) {
       unawaited(play());
     }
   }
@@ -131,6 +153,7 @@ class PlaybackLifecycleController {
     final state = snapshot();
     if (active) {
       _backgroundTimer?.cancel();
+      if (!canPlay) return;
       if (_restoreOnResume && state.streaming) {
         _restore();
         return;
@@ -140,7 +163,7 @@ class PlaybackLifecycleController {
         unawaited(play());
       }
       schedulePrefetch();
-    } else if (!_foreground) {
+    } else if (!_foreground && !_airPlayActive) {
       _updateIntent(false);
       _pendingPlay = false;
       cancelPrefetch();
@@ -163,15 +186,24 @@ class PlaybackLifecycleController {
       if (!_pipActive) {
         cancelPrefetch();
         _backgroundTimer?.cancel();
+        if (_externalPlayback || _airPlayActive) return;
         final ticket = session.generation;
         _backgroundTimer = _timerFactory(const Duration(milliseconds: 800), () {
-          if (!_closed && session.isCurrent(ticket) && !canPlay) {
+          if (!_closed &&
+              !_externalPlayback &&
+              session.isCurrent(ticket) &&
+              !canPlay) {
             trim();
             if (snapshot().streaming) _suspend(_playIntent);
           }
         });
       }
     } else {
+      if (_externalPlayback) {
+        _backgroundTimer?.cancel();
+        syncPage();
+        return;
+      }
       if (_backgroundTimer?.isActive == true &&
           state.streaming &&
           _playIntent) {
