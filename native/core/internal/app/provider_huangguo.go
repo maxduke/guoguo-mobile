@@ -131,7 +131,7 @@ func canonicalProviderSource(source string) string {
 		return sourceHongguo
 	case "huangju", "huangju.net", "www.huangju.net", "api.huangju.net":
 		return sourceHuangju
-	case "yeguo", "analyze.buxefaex.cc", "delta.ygrwdsgt.cc", "yeguodj.com", "ygdj7.com", "www.yeguodj.com", "www.ygdj7.com":
+	case "yeguo", "analyze.callawtj.cc", "analyze.buxefaex.cc", "delta.ygrwdsgt.cc", "yeguodj.com", "ygdj7.com", "www.yeguodj.com", "www.ygdj7.com":
 		return sourceYeguo
 	case "dsd", "dsd.com.se", "www.dsd.com.se":
 		return sourceDSD

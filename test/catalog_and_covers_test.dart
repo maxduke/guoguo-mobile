@@ -7,6 +7,8 @@ import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/platform/provider_client.dart';
 
 class _Pages implements ProviderClient {
+  _Pages([this.source = DramaSource.hongguo]);
+  final DramaSource source;
   final requested = <int>[];
   @override
   Future<Map<String, dynamic>> call(
@@ -18,7 +20,7 @@ class _Pages implements ProviderClient {
     return {
       'items': [
         for (final id in page == 1 ? ['1', '2'] : ['2', '3'])
-          Drama(id: id, source: DramaSource.hongguo, title: id).toJson(),
+          Drama(id: id, source: source, title: id).toJson(),
       ],
       'hasMore': page < 3,
       'warning': page == 2 ? '部分分类暂时不可用' : '',
@@ -86,28 +88,34 @@ void main() {
       }
     },
   );
-  test(
-    'pagination deduplicates, retains partial errors and resumes after restart',
-    () async {
-      final storage = MemoryStorage();
-      final provider = _Pages();
-      final store = AppStore(storage: storage, provider: provider);
-      await store.refresh();
-      await Future.wait([store.loadMore(), store.loadMore()]);
-      expect(provider.requested, [1, 2]);
-      expect(store.library.length, 3);
-      expect(store.sourceErrors[DramaSource.hongguo], contains('部分分类'));
-      final restored = AppStore(storage: storage, provider: provider);
-      await restored.load();
-      await restored.loadMore();
-      await restored.loadMore();
-      expect(provider.requested, [1, 2, 3]);
-      expect(restored.hasMore[DramaSource.hongguo], isFalse);
-      expect(restored.library.length, 3);
-      store.dispose();
-      restored.dispose();
-    },
-  );
+  for (final source in [DramaSource.hongguo, DramaSource.huangguo]) {
+    test(
+      '${source.name} pagination deduplicates, retains warnings and resumes',
+      () async {
+        final storage = MemoryStorage();
+        final provider = _Pages(source);
+        final store = AppStore(storage: storage, provider: provider);
+        await store.selectSource(source);
+        await store.refresh();
+        await Future.wait([store.loadMore(), store.loadMore()]);
+        expect(provider.requested, [1, 2]);
+        expect(store.library.length, 3);
+        expect(store.sourceErrors[source], contains('部分分类'));
+        final restored = AppStore(storage: storage, provider: provider);
+        await restored.load();
+        await restored.loadMore();
+        await restored.loadMore();
+        expect(provider.requested, [1, 2, 3]);
+        expect(restored.hasMore[source], isFalse);
+        expect(restored.library.length, 3);
+        await restored.refresh();
+        expect(provider.requested, [1, 2, 3, 1]);
+        expect(restored.library.length, 3);
+        store.dispose();
+        restored.dispose();
+      },
+    );
+  }
   test(
     'cover cache receives decoded bytes with a reusable cache lifetime',
     () async {

@@ -86,6 +86,13 @@ func providerCoverAddress(value any, pageURL string) string {
 		}
 		if base, err := url.Parse(pageURL); err == nil && base.IsAbs() {
 			address = base.ResolveReference(address)
+		} else if strings.HasPrefix(strings.TrimSpace(item), "//") {
+			address.Scheme = "https"
+		}
+		// Some catalogs publish HTTP artwork on HTTPS-capable CDNs. Never
+		// downgrade the image request or permit nonstandard ports.
+		if address.Scheme == "http" && address.Port() == "" {
+			address.Scheme = "https"
 		}
 		if validImageURL(address) {
 			return address.String()

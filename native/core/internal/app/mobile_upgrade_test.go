@@ -103,7 +103,7 @@ func TestMobileCoverRetainsSourceAcrossSharedCacheAndUpdatesURL(t *testing.T) {
 	calls := 0
 	d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {
 		calls++
-		if r.Header.Get("Referer") != "https://alternate.example.org/" {
+		if r.Header.Get("Referer") != "https://alternate.example.org/home" {
 			t.Errorf("lost source referer: %s", r.Header.Get("Referer"))
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader([]byte{255, 216, 255, 0})), Request: r}, nil

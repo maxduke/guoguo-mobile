@@ -101,7 +101,7 @@ func TestMobileEncryptedCoverUsesHeadersAndCachesDecodedBytes(t *testing.T) {
 			requests := 0
 			c.downloader.client.Transport = rankingTransport(func(request *http.Request) (*http.Response, error) {
 				requests++
-				if request.Header.Get("Referer") != "https://huangguoai.com/" || request.Header.Get("User-Agent") == "" {
+				if request.Header.Get("Referer") != huangguoAIBaseURL+"/" || request.Header.Get("User-Agent") == "" {
 					t.Fatal("missing cover headers")
 				}
 				return rankingHTTPResponse(request, 200, string(encrypted)), nil

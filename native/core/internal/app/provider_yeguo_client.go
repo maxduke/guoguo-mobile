@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	yeguoBaseURL    = "https://analyze.buxefaex.cc"
+	yeguoBaseURL    = "https://analyze.callawtj.cc"
 	yeguoTransitURL = "https://ygdj7.com"
 )
 
@@ -113,7 +113,7 @@ func isYeguoActiveSite(raw string) bool {
 	host := strings.ToLower(address.Hostname())
 	return host == "analyze.buxefaex.cc" ||
 		strings.HasSuffix(host, ".buxefaex.cc") ||
-		strings.HasSuffix(host, ".fzchosdi.cc")
+		strings.HasSuffix(host, ".callawtj.cc") || strings.HasSuffix(host, ".fzchosdi.cc")
 }
 
 func yeguoTransitDecodedText(body string) string {
@@ -181,7 +181,7 @@ func yeguoTransitSites(body string) []string {
 	for _, match := range yeguoTransitLiteral.FindAllString(text, 32) {
 		if parsed, err := url.Parse(match); err == nil {
 			host := strings.ToLower(parsed.Hostname())
-			if strings.HasSuffix(host, ".buxefaex.cc") || strings.HasSuffix(host, ".fzchosdi.cc") {
+			if strings.HasSuffix(host, ".buxefaex.cc") || strings.HasSuffix(host, ".callawtj.cc") || strings.HasSuffix(host, ".fzchosdi.cc") {
 				add(match)
 			}
 		}
@@ -200,6 +200,7 @@ func yeguoTransitSites(body string) []string {
 }
 
 func (client *yeguoAPIClient) discoverTransitSites(ctx context.Context) []string {
+	ctx = context.WithValue(ctx, providerTextExactURLKey{}, true)
 	body, err := client.downloader.fetchProviderText(context.WithValue(ctx, providerTextNoCacheKey{}, true), yeguoTransitURL+"/", yeguoTransitURL+"/")
 	if err != nil {
 		return nil
@@ -417,6 +418,8 @@ func (client *yeguoAPIClient) discoverConfiguration(ctx context.Context) (*yeguo
 }
 
 func (client *yeguoAPIClient) discoverConfigurationAt(ctx context.Context, site string) (*yeguoAccess, error) {
+	// HTML and its module imports must stay on the explicitly selected line.
+	ctx = context.WithValue(ctx, providerTextExactURLKey{}, true)
 	d := client.downloader
 	document, pageURL, err := d.fetchProviderPage(ctx, site+"/", site+"/", "")
 	if err != nil {

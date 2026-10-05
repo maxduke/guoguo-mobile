@@ -496,22 +496,24 @@ func TestDuanjuMaoguoSearchSignatureFollowsReferenceOrder(t *testing.T) {
 }
 
 func TestDuanjuMaccmsFallsBackToDetailAnchors(t *testing.T) {
-	document, err := html.Parse(strings.NewReader(`<html><body>
-	<div class="random-hash-outer"><ul><li class="x1 y2 z3"><div class="q9 w8 e7 thumb">
-	<a class="a1 b2 v-thumb stui-vodlist__thumb lazyload" href="/detail/269321.html" title="都市古仙医" data-original="https://image.example.cn/a.jpg">
-	<span class="c3 pic-text text-right">第216集</span></a></div></li></ul></div></body></html>`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cards := maccmsCards(document, sourceWuguo, "https://www.example.cn")
-	if len(cards) != 1 || cards[0].SourceID != "269321" {
-		t.Fatalf("anchor fallback cards are wrong: %+v", cards)
-	}
-	if cards[0].DisplayTitle() != "都市古仙医" || cards[0].Remark != "第216集" {
-		t.Fatalf("anchor fallback metadata is wrong: %+v", cards[0])
-	}
-	if cards[0].Cover != "https://image.example.cn/a.jpg" {
-		t.Fatalf("anchor fallback cover is wrong: %q", cards[0].Cover)
+	for _, route := range []string{"detail", "xzyxvd"} {
+		document, err := html.Parse(strings.NewReader(`<html><body>
+		<div class="random-hash-outer"><ul><li class="x1 y2 z3"><div class="q9 w8 e7 thumb">
+		<a class="a1 b2 v-thumb stui-vodlist__thumb lazyload" href="/` + route + `/269321.html" title="都市古仙医" data-original="https://image.example.cn/a.jpg">
+		<span class="c3 pic-text text-right">第216集</span></a></div></li></ul></div></body></html>`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cards := maccmsCards(document, sourceWuguo, "https://www.example.cn")
+		if len(cards) != 1 || cards[0].SourceID != "269321" {
+			t.Fatalf("%s anchor fallback cards are wrong: %+v", route, cards)
+		}
+		if cards[0].DisplayTitle() != "都市古仙医" || cards[0].Remark != "第216集" {
+			t.Fatalf("anchor fallback metadata is wrong: %+v", cards[0])
+		}
+		if cards[0].Cover != "https://image.example.cn/a.jpg" {
+			t.Fatalf("anchor fallback cover is wrong: %q", cards[0].Cover)
+		}
 	}
 }
 
@@ -680,7 +682,7 @@ func TestDuanjuXingguoSearchUsesKeyParameter(t *testing.T) {
 	if gotQuery.Get("token") != xingguoToken || gotQuery.Get("pageSize") == "" {
 		t.Fatalf("xingguo search dropped required parameters: %q", gotQuery.Encode())
 	}
-	if items[0].Title != "都市联盟" || !strings.HasPrefix(items[0].SourceID, "461565999316993") {
+	if items[0].Title != "都市联盟" || !strings.HasPrefix(items[0].SourceID, "461565999316993") || items[0].Cover != "https://img.novel.wsljf.xyz/a.jpg" {
 		t.Fatalf("xingguo search item is wrong: %+v", items[0])
 	}
 }

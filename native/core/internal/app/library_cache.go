@@ -11,11 +11,12 @@ import (
 )
 
 type libraryCache struct {
-	Dramas     []Drama                       `json:"dramas"`
-	LoadedAt   time.Time                     `json:"loadedAt"`
-	LastError  string                        `json:"lastError,omitempty"`
-	Sources    map[string]librarySourceState `json:"sources,omitempty"`
-	HongguoApp *hongguoCatalogState          `json:"hongguoApp,omitempty"`
+	Dramas     []Drama                         `json:"dramas"`
+	LoadedAt   time.Time                       `json:"loadedAt"`
+	LastError  string                          `json:"lastError,omitempty"`
+	Sources    map[string]librarySourceState   `json:"sources,omitempty"`
+	HongguoApp *hongguoCatalogState            `json:"hongguoApp,omitempty"`
+	Huangguo   map[string]mobileHuangguoCursor `json:"huangguo,omitempty"`
 }
 
 func libraryCachePath(outputDir string) string {

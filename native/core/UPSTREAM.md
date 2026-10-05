@@ -46,3 +46,17 @@ from guoapp `0.2.55+61`, downloaded from
 `bdfd0294ae270fa7327143e27331224832f6647df3d4dffab9b084d3855f1e31`).
 See `docs/upstream-refresh-2026-09-28.md` at the repository root for the
 selection, mobile integration, and validation details.
+
+## October 5 catalog and cover compatibility refresh
+
+Huangguo paged catalog requests, cover Referer selection and legacy image URL
+repair, and MacCMS `/xzyxvd/` detail anchors are selectively adapted from guoapp
+`5999e469e1281e55dcf603c980f83cd0ba00206d`. The mobile aggregate source keeps its
+existing identities, with independent persistent cursors and bounded requests.
+HTTPS-only image transport and source isolation are retained; HTTP artwork
+metadata is upgraded to HTTPS rather than allowing plaintext image requests.
+
+Yeguo's current `.callawtj.cc` routes and exact-origin configuration discovery
+are local fixes verified against the published routes (the reference revision
+still has the old behavior). See `docs/source-catalog-covers-2026-10-05.md` at the
+repository root for tests, per-source network sampling and remaining limits.
