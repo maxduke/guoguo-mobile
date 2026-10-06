@@ -288,15 +288,12 @@ class RecordBackup {
   final List<WatchRecord> history;
   final List<SeasonReminder> seasonReminders;
   factory RecordBackup.fromJson(Map<String, dynamic> json) {
-    if (json['format'] != 'guoguo.records' ||
-        !const [1, 2].contains(json['version'])) {
+    if (json['format'] != 'guoguo.records' || json['version'] != 2) {
       throw const FormatException('不支持的备份格式或版本');
     }
     final favorites = json['favorites'] as List;
     final history = json['history'] as List;
-    final reminders = json['version'] == 2
-        ? json['seasonReminders'] as List
-        : const [];
+    final reminders = json['seasonReminders'] as List;
     if (favorites.length > 100000 ||
         history.length > 100000 ||
         reminders.length > 1000) {
@@ -321,12 +318,11 @@ class RecordBackup {
       seasonReminders: parsedReminders,
     );
   }
-  Map<String, dynamic> toJson() => {
+  Map<String, dynamic> toJson({List<Map<String, dynamic>>? historyRows}) => {
     'format': 'guoguo.records',
-    'version': seasonReminders.isEmpty ? 1 : 2,
+    'version': 2,
     'favorites': favorites.map((v) => v.toJson()).toList(),
-    'history': history.map((v) => v.toJson()).toList(),
-    if (seasonReminders.isNotEmpty)
-      'seasonReminders': seasonReminders.map((v) => v.toJson()).toList(),
+    'history': historyRows ?? history.map((v) => v.toJson()).toList(),
+    'seasonReminders': seasonReminders.map((v) => v.toJson()).toList(),
   };
 }

@@ -195,7 +195,6 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     final state = await _storage!.read();
     if (state != null) {
       entries = (state['jobs'] as List)
-          .where((v) => !isDeletedDramaSource((v as Map)['drama']['source']))
           .map(
             (v) => DownloadEntry.fromJson(Map<String, dynamic>.from(v as Map)),
           )
