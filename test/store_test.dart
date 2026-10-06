@@ -80,7 +80,13 @@ void main() {
       final json = jsonDecode(store.exportBackup()) as Map;
       expect(
         json.keys,
-        unorderedEquals(['format', 'version', 'favorites', 'history']),
+        unorderedEquals([
+          'format',
+          'version',
+          'favorites',
+          'history',
+          'seasonReminders',
+        ]),
       );
     },
   );
@@ -89,7 +95,8 @@ void main() {
     await store.toggleFavorite(red);
     final raw = jsonEncode({
       'format': 'guoguo.records',
-      'version': 1,
+      'version': 2,
+      'seasonReminders': [],
       'favorites': [
         yellow.toJson(),
         {'id': 'invalid'},

@@ -242,33 +242,54 @@ void main() {
     },
   );
 
+  test('record backups use v2 and preserve latest reminder state', () async {
+    var date = DateTime.utc(2026, 10, 3);
+    final source = makeStore(null, () => date);
+    await baseline(source);
+    date = date.add(const Duration(minutes: 1));
+    await source.observeSeasons(
+      firstSeason,
+      const CatalogSearchResult([thirdSeason]),
+    );
+    final unread = source.inspectBackup(source.exportBackup());
+    expect(jsonDecode(source.exportBackup())['version'], 2);
+    date = date.add(const Duration(minutes: 1));
+    await source.markSeasonRead(thirdSeason.key);
+    final read = source.inspectBackup(source.exportBackup());
+    final restored = makeStore();
+    await restored.importBackup(unread);
+    await restored.importBackup(read);
+    await restored.importBackup(unread);
+    expect(restored.seasonReminders[firstSeason.key]!.unreadCount, 0);
+    final withoutReminders = restored.inspectBackup(
+      jsonEncode(RecordBackup([firstSeason], []).toJson()),
+    );
+    await restored.importBackup(withoutReminders);
+    expect(restored.favorites, contains(firstSeason.key));
+    expect(restored.seasonReminders[firstSeason.key]!.unreadCount, 0);
+  });
+
   test(
-    'record backups migrate v1 and preserve latest reminder state in v2',
+    'empty reminders retain the current schema and old versions are rejected',
     () async {
-      var date = DateTime.utc(2026, 10, 3);
-      final source = makeStore(null, () => date);
-      await baseline(source);
-      date = date.add(const Duration(minutes: 1));
-      await source.observeSeasons(
-        firstSeason,
-        const CatalogSearchResult([thirdSeason]),
+      final store = makeStore();
+      final exported = jsonDecode(store.exportBackup()) as Map<String, dynamic>;
+      expect(exported['version'], 2);
+      expect(exported['seasonReminders'], isEmpty);
+      expect(store.snapshot()['records'], exported);
+      for (final version in [1, 99]) {
+        expect(
+          () => store.inspectBackup(
+            jsonEncode({...exported, 'version': version}),
+          ),
+          throwsFormatException,
+        );
+      }
+      exported.remove('seasonReminders');
+      expect(
+        () => store.inspectBackup(jsonEncode(exported)),
+        throwsFormatException,
       );
-      final unread = source.inspectBackup(source.exportBackup());
-      expect(jsonDecode(source.exportBackup())['version'], 2);
-      date = date.add(const Duration(minutes: 1));
-      await source.markSeasonRead(thirdSeason.key);
-      final read = source.inspectBackup(source.exportBackup());
-      final restored = makeStore();
-      await restored.importBackup(unread);
-      await restored.importBackup(read);
-      await restored.importBackup(unread);
-      expect(restored.seasonReminders[firstSeason.key]!.unreadCount, 0);
-      final legacy = restored.inspectBackup(
-        jsonEncode(RecordBackup([firstSeason], []).toJson()),
-      );
-      await restored.importBackup(legacy);
-      expect(restored.favorites, contains(firstSeason.key));
-      expect(restored.seasonReminders[firstSeason.key]!.unreadCount, 0);
     },
   );
 

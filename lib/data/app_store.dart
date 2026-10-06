@@ -189,7 +189,6 @@ class AppStore extends ChangeNotifier {
 
   Future<void> load() async {
     final state = await storage.read();
-    if (state != null) discardDeletedSources(state);
     if (state == null) return;
     if (state['version'] != 1) throw const FormatException('本地数据版本不受支持，已保留原文件');
     // Validate durable records before mutating state; cache is loaded separately.
@@ -333,16 +332,11 @@ class AppStore extends ChangeNotifier {
     'playbackSpeed': playbackSpeed,
     'hideVip': hideVip,
     'recentSearches': List<String>.of(recentSearches),
-    'records': {
-      'format': 'guoguo.records',
-      'version': seasonReminders.isEmpty ? 1 : 2,
-      'favorites': favorites.values.map((d) => d.toJson()).toList(),
-      'history': _historyRows(),
-      if (seasonReminders.isNotEmpty)
-        'seasonReminders': seasonReminders.values
-            .map((r) => r.toJson())
-            .toList(),
-    },
+    'records': RecordBackup(
+      favorites.values.toList(),
+      history.values.toList(),
+      seasonReminders: seasonReminders.values.toList(),
+    ).toJson(historyRows: _historyRows()),
     // This baseline reflects what the user has read, not disposable metadata.
     'episodeSeenIds': {
       for (final entry in episodeSeenIds.entries)
@@ -1374,7 +1368,6 @@ class AppStore extends ChangeNotifier {
     }
     try {
       final decoded = Map<String, dynamic>.from(jsonDecode(raw) as Map);
-      discardDeletedSources(decoded);
       return RecordBackup.fromJson(decoded);
     } catch (_) {
       throw const FormatException('备份损坏或格式不兼容，原记录未修改');
@@ -1439,46 +1432,4 @@ class AppStore extends ChangeNotifier {
       }
     }
   }
-}
-
-bool isDeletedDramaSource(Object? source) =>
-    source == 'wangguo' || source == 'faguo';
-
-// Dropped sources are deliberately discarded; no historical identity migration.
-void discardDeletedSources(Map<String, dynamic> state) {
-  bool removed(Object? source) => isDeletedDramaSource(source);
-  final records = state['records'] as Map? ?? state;
-  for (final name in ['favorites', 'history']) {
-    final list = records[name];
-    if (list is List) {
-      list.removeWhere(
-        (row) =>
-            removed(name == 'history' ? row['drama']['source'] : row['source']),
-      );
-    }
-  }
-  for (final name in [
-    'catalogs',
-    'selectedCategories',
-    'sourceCategories',
-    'pages',
-    'hasMore',
-  ]) {
-    final values = state[name];
-    if (values is Map) values.removeWhere((key, _) => removed(key));
-  }
-  for (final name in [
-    'categorySlices',
-    'episodes',
-    'episodeUpdatedAt',
-    'episodeSeenIds',
-  ]) {
-    final values = state[name];
-    if (values is Map) {
-      values.removeWhere(
-        (key, _) => removed('$key'.split(RegExp(r'[:|]')).first),
-      );
-    }
-  }
-  if (removed(state['source'])) state['source'] = 'hongguo';
 }

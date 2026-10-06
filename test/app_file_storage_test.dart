@@ -29,7 +29,7 @@ WatchRecord watch(int position) => WatchRecord(
 AppStore makeStore(LocalStorage storage) =>
     AppStore(storage: storage, provider: NoNetwork());
 
-Future<Map<String, dynamic>> legacyState() async {
+Future<Map<String, dynamic>> savedState() async {
   final store = makeStore(MemoryStorage());
   await store.saveWatch(watch(1));
   await store.toggleFavorite(anchor);
@@ -63,69 +63,44 @@ void main() {
   File file(String name) => File('${directory.path}/$name');
 
   test(
-    'legacy migration survives records-only interruption and retires old file after both commits',
+    'fresh install ignores old state and writes only current partitions',
     () async {
-      await FileStorage(directory).write(await legacyState());
-      final store = makeStore(AppFileStorage(directory));
-      await store.load();
-      expect(store.newEpisodeCount(anchor), 1);
-      await store.saveWatch(watch(42000));
-      expect(await file('state.json').exists(), true);
-      expect(await file('records.json').exists(), true);
-      expect(await file('catalog-cache.json').exists(), false);
-      final restarted = makeStore(AppFileStorage(directory));
-      await restarted.load();
-      expect(restarted.history[anchor.key]!.positionMs, 42000);
-      expect(restarted.catalogPages[DramaSource.hongguo], 3);
-      expect(restarted.newEpisodeCount(anchor), 1);
-      expect(restarted.themeMode, ThemeMode.dark);
-      expect(restarted.progressivePreparation, true);
-      expect(restarted.playbackSpeed, 1.5);
-      expect(restarted.selectedCategories[DramaSource.huangguo], 'ai');
-      expect(restarted.favorites.keys, [anchor.key]);
-      expect(
-        restarted.seasonReminders[anchor.key]!.seasons[season.key]!.read,
-        false,
-      );
-      await restarted.persist();
-      expect(await file('state.json').exists(), false);
+      await FileStorage(directory).write(await savedState());
+      final oldBytes = await file('state.json').readAsBytes();
+      final storage = AppFileStorage(directory);
+      expect(await storage.read(), isNull);
+      await storage.write(await savedState());
+      expect(await file('state.json').readAsBytes(), oldBytes);
+      final restored = makeStore(AppFileStorage(directory));
+      await restored.load();
+      expect(restored.history[anchor.key]!.positionMs, 1);
+      expect(restored.catalogPages[DramaSource.hongguo], 3);
+      expect(restored.newEpisodeCount(anchor), 1);
+      expect(restored.themeMode, ThemeMode.dark);
+      expect(restored.progressivePreparation, true);
+      expect(restored.playbackSpeed, 1.5);
+      expect(restored.selectedCategories[DramaSource.huangguo], 'ai');
+      expect(restored.favorites.keys, [anchor.key]);
+      expect(restored.seasonReminders[anchor.key]!.unreadCount, 1);
       final durable =
           jsonDecode(await file('records.json').readAsString()) as Map;
       expect(durable.keys, isNot(contains('catalogs')));
       expect(durable.keys, isNot(contains('episodes')));
-      expect((durable['records'] as Map)['version'], 2);
       final cached =
           jsonDecode(await file('catalog-cache.json').readAsString()) as Map;
       expect((cached['cache'] as Map).keys, isNot(contains('records')));
       expect((cached['cache'] as Map).keys, isNot(contains('episodeSeenIds')));
-      final finalStore = makeStore(AppFileStorage(directory));
-      await finalStore.load();
-      expect(finalStore.history[anchor.key]!.positionMs, 42000);
-      expect(finalStore.newEpisodeCount(anchor), 1);
-      expect(
-        finalStore.seasonReminders[anchor.key]!.seasons[season.key]!.read,
-        false,
-      );
     },
   );
 
-  test(
-    'cache-only migration preserves legacy records until new records commit',
-    () async {
-      final legacy = await legacyState();
-      await FileStorage(directory).write(legacy);
-      final storage = AppFileStorage(directory);
-      final loaded = (await storage.read())!;
-      await storage.writeCache(loaded);
-      expect(await file('state.json').exists(), true);
-      expect(await file('records.json').exists(), false);
-      final restarted = makeStore(AppFileStorage(directory));
-      await restarted.load();
-      expect(restarted.history[anchor.key]!.positionMs, 1);
-      await restarted.saveWatch(watch(2));
-      expect(await file('state.json').exists(), false);
-    },
-  );
+  test('records without a cache restore with an empty catalog', () async {
+    await AppFileStorage(directory).writeRecords(await savedState());
+    final restored = makeStore(AppFileStorage(directory));
+    await restored.load();
+    expect(restored.history[anchor.key]!.positionMs, 1);
+    expect(restored.catalogs, isEmpty);
+    expect(restored.cachePersistenceError, isNull);
+  });
 
   test('saving a watch record leaves cache file bytes unchanged', () async {
     final store = makeStore(AppFileStorage(directory));
@@ -143,7 +118,7 @@ void main() {
   test(
     'corrupt JSON cache cannot block durable records, settings or seen baselines',
     () async {
-      await AppFileStorage(directory).write(await legacyState());
+      await AppFileStorage(directory).write(await savedState());
       await file('catalog-cache.json').writeAsString('{broken');
       final store = makeStore(AppFileStorage(directory));
       await store.load();
@@ -163,7 +138,7 @@ void main() {
   test(
     'malformed cache rows and unknown cache versions are discarded independently',
     () async {
-      await AppFileStorage(directory).write(await legacyState());
+      await AppFileStorage(directory).write(await savedState());
       for (final bad in [
         {
           'format': 'guoguo.catalog-cache',
@@ -188,46 +163,20 @@ void main() {
     },
   );
 
-  test(
-    'corrupt authoritative record file never falls back to stale legacy history',
-    () async {
-      final legacy = await legacyState();
-      await FileStorage(directory).write(legacy);
-      final store = makeStore(AppFileStorage(directory));
-      await store.load();
-      await store.saveWatch(watch(20000));
-      await file('records.json').writeAsString('{broken');
-      final restarted = makeStore(AppFileStorage(directory));
-      await expectLater(restarted.load(), throwsFormatException);
-      expect(restarted.history, isEmpty);
-      expect(await file('records.json').readAsString(), '{broken');
-      expect(await file('state.json').exists(), true);
-    },
-  );
-
-  test(
-    'a damaged legacy cache still permits migrating its valid records',
-    () async {
-      final state = await legacyState();
-      state['catalogs'] = {'hongguo': 'broken'};
-      await FileStorage(directory).write(state);
-      final store = makeStore(AppFileStorage(directory));
-      await store.load();
-      expect(store.history[anchor.key]!.positionMs, 1);
-      expect(store.catalogs, isEmpty);
-      expect(store.cachePersistenceError, isNotNull);
-      await store.saveWatch(watch(2));
-      final restarted = makeStore(AppFileStorage(directory));
-      await restarted.load();
-      expect(restarted.history[anchor.key]!.positionMs, 2);
-    },
-  );
+  test('corrupt record file is preserved and never silently reset', () async {
+    await AppFileStorage(directory).write(await savedState());
+    await file('records.json').writeAsString('{broken');
+    final restarted = makeStore(AppFileStorage(directory));
+    await expectLater(restarted.load(), throwsFormatException);
+    expect(restarted.history, isEmpty);
+    expect(await file('records.json').readAsString(), '{broken');
+  });
 
   test(
     'queued full writes detach inputs and preserve order in both files',
     () async {
       final storage = AppFileStorage(directory);
-      final first = await legacyState();
+      final first = await savedState();
       final saving = storage.write(first);
       (first['records'] as Map)['history'] = [];
       first['catalogs'] = {};
@@ -236,7 +185,7 @@ void main() {
         ((await storage.read())!['records'] as Map)['history'],
         hasLength(1),
       );
-      final second = await legacyState(), third = await legacyState();
+      final second = await savedState(), third = await savedState();
       ((second['records'] as Map)['history'] as List).single['positionMs'] = 2;
       ((third['records'] as Map)['history'] as List).single['positionMs'] = 3;
       second['pages'] = {'hongguo': 2};
@@ -274,9 +223,9 @@ void main() {
   );
 
   test(
-    'failed cache migration retains legacy file and committed new watch position',
+    'failed cache write preserves committed records and permits retry',
     () async {
-      await FileStorage(directory).write(await legacyState());
+      await AppFileStorage(directory).write(await savedState());
       final store = makeStore(AppFileStorage(directory));
       await store.load();
       await store.saveWatch(watch(40000));
@@ -285,14 +234,13 @@ void main() {
       await store.persist();
       expect(store.persistenceError, isNull);
       expect(store.cachePersistenceError, isNotNull);
-      expect(await file('state.json').exists(), true);
       final restarted = makeStore(AppFileStorage(directory));
       await restarted.load();
       expect(restarted.history[anchor.key]!.positionMs, 40000);
       expect(restarted.catalogs[DramaSource.hongguo], hasLength(2));
       await obstacle.delete();
-      await restarted.persist();
-      expect(await file('state.json').exists(), false);
+      await store.persist();
+      expect(store.cachePersistenceError, isNull);
     },
   );
 }

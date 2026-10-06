@@ -73,37 +73,25 @@ class PendingFailingStorage extends MemoryStorage {
 
 void main() {
   test(
-    'removed sources are discarded without blocking surviving records',
+    'unknown record sources are rejected without mutating existing data',
     () async {
       final storage = MemoryStorage();
-      final original = AppStore(storage: storage, provider: RefreshProvider());
-      final state = original.snapshot();
-      state['source'] = 'wangguo';
-      state['catalogs'] = {
-        'wangguo': [
-          {'source': 'wangguo'},
-        ],
-        'hongguo': [drama.toJson()],
-      };
+      final store = AppStore(storage: storage, provider: RefreshProvider());
+      await store.toggleFavorite(drama);
+      final state = store.snapshot();
       final records = state['records'] as Map;
       records['favorites'] = [
-        {'source': 'faguo'},
-        drama.toJson(),
+        {...drama.toJson(), 'source': 'unknown'},
       ];
-      records['history'] = [
-        {
-          'drama': {'source': 'wangguo'},
-        },
-      ];
-      final backup = original.inspectBackup(jsonEncode(records));
-      expect(backup.favorites.single.key, drama.key);
+      expect(
+        () => store.inspectBackup(jsonEncode(records)),
+        throwsFormatException,
+      );
+      expect(store.favorites.keys, [drama.key]);
       await storage.write(state);
       final restored = AppStore(storage: storage, provider: RefreshProvider());
-      await restored.load();
-      expect(restored.source, DramaSource.hongguo);
-      expect(restored.catalogs.keys, [DramaSource.hongguo]);
-      expect(restored.favorites.keys, [drama.key]);
-      expect(restored.history, isEmpty);
+      await expectLater(restored.load(), throwsFormatException);
+      expect(restored.favorites, isEmpty);
     },
   );
   test(
