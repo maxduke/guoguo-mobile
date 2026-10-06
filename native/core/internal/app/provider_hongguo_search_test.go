@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -60,89 +58,6 @@ func TestHongguoHeatTextFallback(t *testing.T) {
 				t.Fatalf("heat = %q, want %q", got, test.want)
 			}
 		})
-	}
-}
-
-func TestLibrarySearchReturnsMergedSortMetadata(t *testing.T) {
-	var calls atomic.Int32
-	release := make(chan struct{})
-	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
-		if request.URL.Path == "/incent_resource/suggestion" {
-			return rankingHTTPResponse(request, http.StatusOK, `{"suggest_list":[]}`), nil
-		}
-		if request.URL.Path == "/search/测试" {
-			calls.Add(1)
-			return rankingHTTPResponse(request, http.StatusOK, searchSortFixture), nil
-		}
-		select {
-		case <-release:
-		case <-request.Context().Done():
-			return nil, request.Context().Err()
-		}
-		switch request.URL.Path {
-		case "/detail":
-			if request.URL.Query().Get("series_id") != "7000000000000000002" {
-				t.Error("search automatically enrolled an existing cache entry")
-			}
-			return rankingHTTPResponse(request, 200, sortDetailFixture("7000000000000000002", "1773662280")), nil
-		case "/novel/player/video_detail/v1/":
-			return rankingHTTPResponse(request, 200, `{"data":{"video_data":{"series_id_str":"7000000000000000002","hot_score":0,"series_play_cnt":0}}}`), nil
-		default:
-			t.Errorf("unexpected search metadata request: %s", request.URL.Path)
-			return rankingHTTPResponse(request, 404, ""), nil
-		}
-	})
-	a := &UIApp{downloader: d, cfg: d.cfg, dramas: []Drama{
-		{ID: "hongguo:7000000000000000001", Source: sourceHongguo, Title: "旧标题", Heat: "100", Views: "320次播放", OnlineDate: "2026-09-01"},
-		{ID: "hongguo:7000000000000000003", Source: sourceHongguo, Title: "已知剧", Heat: "800", Views: "0"},
-		{ID: "huangdou:existing", Source: sourceHuangdou, Title: "保留其他站源"},
-	}}
-	t.Cleanup(a.stopSortMetadata)
-	for attempt := 0; attempt < 2; attempt++ {
-		writer := httptest.NewRecorder()
-		a.handleLibrarySearch(writer, httptest.NewRequest(http.MethodGet, "/api/ui/search?q=测试", nil))
-		if writer.Code != http.StatusOK {
-			t.Fatal(writer.Body.String())
-		}
-		var result struct {
-			Data  []Drama `json:"data"`
-			Saved bool    `json:"saved"`
-		}
-		if err := json.Unmarshal(writer.Body.Bytes(), &result); err != nil {
-			t.Fatal(err)
-		}
-		if len(result.Data) != 3 || len(a.dramas) != 4 || !result.Saved {
-			t.Fatal("search did not merge and persist all matching dramas")
-		}
-		first := result.Data[0]
-		if first.Heat != "20019" || first.Views != "320次播放" || first.OnlineDate != "2026-09-01" || first.Title != "测试甲" {
-			t.Errorf("search must return fresh heat together with previously known sort metadata: heat=%q views=%q date=%q title=%q", first.Heat, first.Views, first.OnlineDate, first.Title)
-		}
-		if result.Data[2].Heat != "800" || result.Data[2].Views != "0" {
-			t.Error("missing search fields must not erase previously known metrics or zero")
-		}
-		for _, drama := range result.Data {
-			for _, cached := range a.dramas {
-				if cached.ID == drama.ID && (cached.Heat != drama.Heat || cached.Views != drama.Views || cached.OnlineDate != drama.OnlineDate) {
-					t.Error("search response and library snapshot disagree about sort metadata")
-				}
-			}
-		}
-	}
-	if calls.Load() != 1 {
-		t.Fatal("repeated searches should reuse upstream metadata")
-	}
-	close(release)
-	waitSortMetadataQueue(t, a)
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	for _, row := range a.dramas {
-		if row.ID == "hongguo:7000000000000000002" && (row.OnlineDate != "2026-03-16" || row.Heat != "0" || row.Views != "0" || row.SortMetadata.Version != sortMetadataVersion) {
-			t.Fatal("new search entry was not completed asynchronously")
-		}
-		if row.ID == "hongguo:7000000000000000003" && row.SortMetadata != nil {
-			t.Fatal("existing search entry must wait for manual backfill")
-		}
 	}
 }
 

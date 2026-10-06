@@ -6,9 +6,9 @@
 - Commit: `9f1a1b5886ad5d86f85e6bfb7bf8de5536bc8cf9`
 - Original module: `juku`
 
-The original provider implementations, embedded Web UI, and tests are retained to keep the port auditable. The mobile application does not start that Web UI or call its desktop FFmpeg installer. The mobile facade lives in `internal/app/mobile*.go`, `mobile/`, and `cmd/probe/`.
+The provider implementations and their regression tests are retained. The desktop Web UI, CLI, task/history management, executable media processing, and FFmpeg installer were removed in the mobile-only cleanup. Shared cover, identity, episode metadata, and media-resolution helpers now live outside desktop-named files. The mobile facade lives in `internal/app/mobile*.go`, `mobile/`, and `cmd/probe/`; the original reference remains available through the revision above and git history.
 
-Provider parsing is invoked through a linked gomobile library. Desktop media subprocess logic remains reference code; actual mobile media processing uses linked native libraries through Flutter.
+Provider parsing is invoked through a linked gomobile library. Mobile media processing uses linked native libraries through Flutter. The Go HLS/media HTTP proxy remains part of the mobile runtime; it is not a desktop UI server. Explicit/environment proxy support remains, without desktop registry/scutil subprocess discovery. FFmpeg subprocesses are permitted only in local synthetic-media tests.
 
 No new license grant is asserted for the copied source. This repository is intended for the user's private development and distribution workflow.
 
@@ -19,8 +19,8 @@ Huangguo browser compatibility, and HLS transport fixes were ported from
 `675f347b4c47301baf79628f97e61b72464cea0b` (upstream v0.4.0).
 Mobile facade, legacy cover mappings, and Huangguo ranking artwork enrichment are
 retained. Upstream HTTP/account route tests are adapted to the mobile JSON API;
-provider parsing and transport fixtures are retained. Desktop/account/Emby/UI
-code remains at the earlier baseline unless needed by shared parser types.
+provider parsing and transport fixtures are retained. At that point, desktop/account/Emby/UI
+code remained at the earlier baseline; it has since been removed from the mobile core.
 See `docs/upstream-refresh-2026-09.md` at the repository root for scope and validation.
 
 ## September 27 guoapp selective port

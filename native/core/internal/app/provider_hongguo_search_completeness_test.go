@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -233,28 +231,6 @@ func TestHongguoSearchCanceledOwnerDoesNotStrandAnotherBrowser(t *testing.T) {
 	}
 	if err := <-waiter; err != nil || calls.Load() != 2 {
 		t.Fatal("waiting browser inherited cancellation", err, calls.Load())
-	}
-}
-
-func TestLibrarySearchCompletenessResponseAndPersistence(t *testing.T) {
-	page, names := hongguoSearchCompletenessFixtures()
-	d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {
-		if strings.HasPrefix(r.URL.Path, "/search/") {
-			return rankingHTTPResponse(r, 200, page), nil
-		}
-		return rankingHTTPResponse(r, 200, names), nil
-	})
-	a := &UIApp{downloader: d, cfg: d.cfg, metadataClosed: true}
-	w := httptest.NewRecorder()
-	a.handleLibrarySearch(w, httptest.NewRequest(http.MethodGet, "/api/ui/search?q="+url.QueryEscape(hongguoSeasonSearchQuery), nil))
-	var response struct {
-		Query   string  `json:"query"`
-		Data    []Drama `json:"data"`
-		Limited bool    `json:"limited"`
-		Saved   bool    `json:"saved"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil || w.Code != 200 || response.Query != hongguoSeasonSearchQuery || len(response.Data) != 28 || !response.Saved || !response.Limited || len(a.dramas) != 28 {
-		t.Fatal("search response/import lost completed results", w.Code, err)
 	}
 }
 

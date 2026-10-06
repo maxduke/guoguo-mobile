@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type Drama struct {
@@ -103,22 +102,4 @@ type Task struct {
 	Total         int     `json:"total"`
 	OutPath       string  `json:"outPath"`
 	ReleaseStatus string  `json:"releaseStatus,omitempty"`
-}
-
-type Result struct {
-	Task Task   `json:"task"`
-	OK   bool   `json:"ok"`
-	Err  string `json:"err,omitempty"`
-}
-
-type DownloadProgress struct {
-	Percent             int
-	DownloadedBytes     int64
-	TotalBytes          int64
-	SpeedBytesPerSecond float64
-	Elapsed             time.Duration
-	Remaining           time.Duration
-	MediaElapsed        time.Duration
-	MediaTotal          time.Duration
-	Phase               string
 }

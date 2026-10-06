@@ -2,10 +2,7 @@ package app
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -104,34 +101,9 @@ func TestDiagnosticWriteFailureDoesNotReplacePlaybackError(t *testing.T) {
 		t.Fatal("unwritable diagnostics unexpectedly succeeded")
 	}
 	d := &Downloader{diagnostics: log}
-	d.recordTaskFailure("playback.failed", Task{}, 49, errors.New("unexpected EOF"))
+	d.recordDiagnostic(diagnosticEvent{Event: "playback.failed", Message: "unexpected EOF"})
 	data, err := os.ReadFile(filepath.Join(directory, "logs"))
 	if err != nil || string(data) != "keep" {
 		t.Fatal("diagnostics replaced an existing file", err)
-	}
-}
-
-func TestPlaybackFailureLogIncludesEpisodeAndSkipsStoppedRun(t *testing.T) {
-	app, session := prefetchFixtureApp(t)
-	session.tasks[0] = Task{DramaID: "hongguo:7000000000000000001", DramaTitle: "合成播放条目", Index: 1}
-	run, _, err := app.beginPlayback(context.Background(), "fixture", 1, 49, 0, 1, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer run.stop()
-	app.finishPlaybackRun(run, errors.New("unexpected EOF"), false)
-	app.finishPlaybackRun(run, context.Canceled, true)
-	events := readDiagnosticEvents(t, app.downloader.diagnostics.path)
-	failures := 0
-	for _, event := range events {
-		if event.Event == "playback.failed" {
-			failures++
-			if event.DramaID != run.task.DramaID || event.DramaTitle != run.task.DramaTitle || event.Episode != 1 || event.StartSeconds != 49 || event.Message != "unexpected EOF" {
-				t.Fatal("playback failure lost its diagnostic context", fmt.Sprint(event))
-			}
-		}
-	}
-	if failures != 1 {
-		t.Fatal("stopping playback generated a false diagnostic failure")
 	}
 }

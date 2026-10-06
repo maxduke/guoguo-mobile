@@ -191,7 +191,7 @@ func (d *Downloader) backfillSortMetadata(ctx context.Context, source string) ([
 		}
 		patches = append(patches, patch)
 		progress.Checked++
-		reportLibraryProgress(ctx, provider, []Drama{patch}, nil, false)
+
 		reportMetadataProgress(ctx, progress)
 	}
 	if progress.Checked < len(batch) {
@@ -212,12 +212,12 @@ func (d *Downloader) fetchMoreLibrary(ctx context.Context, source string) ([]Dra
 		if err != nil {
 			failures[sourceHongguo] = errors.Join(failures[sourceHongguo], err)
 		}
-		reportLibraryProgress(ctx, sourceHongguo, items, failures[sourceHongguo], true)
+
 		patches = mergeSourceDramas(patches, items, nil, sourceHongguo)
 	}
 	for _, provider := range []string{"cloudfront", sourceHuangguoAI, sourceHuangguoVideo, sourceHuangdou} {
 		if matchesSourceFilter(provider, source) {
-			reportLibraryProgress(ctx, provider, nil, failures[provider], true)
+
 		}
 	}
 	if len(failures) > 0 {

@@ -39,7 +39,6 @@ func NewMobileClient(directory string) (*MobileClient, error) {
 	cfg := defaultConfig()
 	cfg.dataDir = directory
 	cfg.OutputDir = filepath.Join(directory, "media")
-	cfg.settingsLoaded = true
 	cfg.MaxPagesPerSort = 1
 	cfg.Retries = 2
 	downloader := NewDownloader(cfg)
@@ -124,7 +123,7 @@ func (c *MobileClient) Call(raw string) (string, error) {
 		data, err := c.covers.load(ctx, cacheKey, func(ctx context.Context) ([]byte, error) {
 			ctx = context.WithValue(ctx, coverSourceKey{}, source)
 			if request.URL != "" {
-				data, err := c.downloader.fetchCoverImage(ctx, request.URL, decodeImageBytes, false)
+				data, err := c.downloader.fetchCoverImage(ctx, request.URL, decodeImageBytes)
 				if err == nil || request.ID == "" {
 					return data, err
 				}
@@ -133,7 +132,7 @@ func (c *MobileClient) Call(raw string) (string, error) {
 			if err != nil {
 				return nil, err
 			}
-			return c.downloader.fetchCoverImage(ctx, mobileCoverURL(request.ID, address), decodeImageBytes, false)
+			return c.downloader.fetchCoverImage(ctx, mobileCoverURL(request.ID, address), decodeImageBytes)
 		})
 		if err != nil {
 			return "", publicError(err)

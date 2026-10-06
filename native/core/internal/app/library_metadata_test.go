@@ -2,12 +2,9 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -74,110 +71,6 @@ func TestSortMetadataSelectionAndResume(t *testing.T) {
 	}
 }
 
-func TestManualBackfillPersistsPartialResultsAndContinuesAfterCatalogEnd(t *testing.T) {
-	first, bad, unknown := "7615465407347952664", "7498612570866076734", "7677914379060251673"
-	var calls atomic.Int32
-	var fail atomic.Bool
-	fail.Store(true)
-	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
-		calls.Add(1)
-		switch request.URL.Path {
-		case "/detail":
-			id := request.URL.Query().Get("series_id")
-			stamp := "1773662280"
-			if id == unknown {
-				stamp = "0"
-			}
-			return rankingHTTPResponse(request, 200, sortDetailFixture(id, stamp)), nil
-		case "/novel/player/video_detail/v1/":
-			var body struct {
-				ID string `json:"series_id"`
-			}
-			json.NewDecoder(request.Body).Decode(&body)
-			if body.ID == bad && fail.Load() {
-				return rankingHTTPResponse(request, 503, "temporary failure"), nil
-			}
-			return rankingHTTPResponse(request, 200, fmt.Sprintf(`{"data":{"video_data":{"series_id_str":%q,"series_title":"测试剧","hot_score":20019,"series_play_cnt":10019}}}`, body.ID)), nil
-		default:
-			t.Errorf("backfill requested a non-detail resource: %s", request.URL.Path)
-			return rankingHTTPResponse(request, 404, ""), nil
-		}
-	})
-	client := d.hongguoClient()
-	client.mu.Lock()
-	for _, genre := range hongguoAppGenres {
-		client.state.Feeds[genre.key] = hongguoCatalogCursor{Initialized: true, Exhausted: true}
-	}
-	client.mu.Unlock()
-	a := &UIApp{downloader: d, cfg: d.cfg, libraryAttempted: true, librarySources: map[string]librarySourceState{}, libraryApp: d.hongguoCatalogSnapshot(), dramas: []Drama{
-		{ID: "hongguo:" + first, Source: sourceHongguo, Title: "原有标题", Views: "0"},
-		{ID: "hongguo:" + bad, Source: sourceHongguo, Title: "暂时失败", Heat: "800"},
-		{ID: "hongguo:" + unknown, Source: sourceHongguo, Title: "站点日期未知"},
-		{ID: "huangdou:preserve", Source: sourceHuangdou, Title: "保留另一站"},
-	}}
-	t.Cleanup(a.stopSortMetadata)
-	plain := httptest.NewRecorder()
-	a.handleDramas(plain, httptest.NewRequest("GET", "/api/ui/dramas", nil))
-	if calls.Load() != 0 {
-		t.Fatal("ordinary library reads must not backfill")
-	}
-	before := a.librarySnapshotLocked(0)
-	if before["hasMoreBySource"].(map[string]bool)[sourceHongguo] != true {
-		t.Fatal("backfill must remain available after the catalog is exhausted")
-	}
-	writer := httptest.NewRecorder()
-	a.handleDramas(writer, httptest.NewRequest("GET", "/api/ui/dramas?more=1&source=hongguo&priority=hongguo:"+first, nil))
-	if writer.Code != 200 {
-		t.Fatal(writer.Body.String())
-	}
-	waitSortMetadataQueue(t, a)
-	a.mu.Lock()
-	rows := append([]Drama(nil), a.dramas...)
-	progress := a.libraryMetadata
-	a.mu.Unlock()
-	if progress.Checked != 3 || progress.Failed != 1 {
-		t.Fatalf("unexpected progress: %+v", progress)
-	}
-	for _, row := range rows {
-		switch row.ID {
-		case "hongguo:" + first:
-			if row.OnlineDate != "2026-03-16" || row.Heat != "20019" || row.Views != "10019次播放" || row.SortMetadata.Version != sortMetadataVersion {
-				t.Fatal("fresh sorting fields were not merged")
-			}
-		case "hongguo:" + bad:
-			if row.OnlineDate == "" || row.Heat != "800" || row.SortMetadata.Version != 0 {
-				t.Fatal("partial success must survive a failed metrics request")
-			}
-		case "hongguo:" + unknown:
-			if row.OnlineDate != "" || row.SortMetadata.Version != sortMetadataVersion {
-				t.Fatal("a valid response with no date must not be retried forever or invent a date")
-			}
-		case "huangdou:preserve":
-			if row.SortMetadata != nil || row.Title != "保留另一站" {
-				t.Fatal("modified another source")
-			}
-		}
-	}
-	saved, err := readLibraryCache(d.cfg.dataDirectory())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if batch := selectSortMetadataBatch(saved.Dramas, sourceHongguo, nil, time.Now()); len(batch) != 0 {
-		t.Fatal("restart lost completed checks or failure cooldown")
-	}
-	for index, row := range saved.Dramas {
-		if row.ID == "hongguo:"+bad {
-			saved.Dramas[index].SortMetadata = &sortMetadataState{CheckedAt: time.Now().Add(-sortMetadataRetryDelay - time.Second)}
-		}
-	}
-	fail.Store(false)
-	previous := calls.Load()
-	patches, failures := d.backfillSortMetadata(withKnownHongguoDramas(context.Background(), saved.Dramas), sourceHongguo)
-	if len(failures) != 0 || len(patches) != 1 || patches[0].ID != "hongguo:"+bad || calls.Load()-previous != 1 {
-		t.Fatal("retry did not resume only the failed entry")
-	}
-}
-
 func TestHuangdouHistoricalFieldsUseMatchingListItem(t *testing.T) {
 	var listCalls atomic.Int32
 	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
@@ -204,25 +97,5 @@ func TestHuangdouHistoricalFieldsUseMatchingListItem(t *testing.T) {
 	}
 	if patch.Cover != nil || patch.CoverURL != nil {
 		t.Fatal("historical metadata must not collect images")
-	}
-}
-
-func TestManualMetadataPriorityValidation(t *testing.T) {
-	a := &UIApp{}
-	for _, path := range []string{
-		"/api/ui/dramas?more=1&source=invalid",
-		"/api/ui/dramas?more=1&refresh=1",
-		"/api/ui/dramas?update=1&refresh=1",
-		"/api/ui/dramas?update=1&more=1",
-		"/api/ui/dramas?update=1&source=invalid",
-		"/api/ui/dramas?update=1&priority=" + strings.Repeat("hongguo:700001,", sortMetadataBatchSize),
-		"/api/ui/dramas?update=1&priority=hongguo:" + strings.Repeat("1", 121),
-		"/api/ui/dramas?more=1&priority=" + strings.Repeat("id,", sortMetadataBatchSize),
-	} {
-		writer := httptest.NewRecorder()
-		a.handleDramas(writer, httptest.NewRequest("GET", path, nil))
-		if writer.Code != 400 {
-			t.Fatalf("invalid request was not rejected: %d", writer.Code)
-		}
 	}
 }

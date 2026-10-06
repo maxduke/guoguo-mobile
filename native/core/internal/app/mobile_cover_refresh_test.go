@@ -49,7 +49,7 @@ func TestSourceCoverReferers(t *testing.T) {
 			d.cfg.HuangguoAIURL = huangguoAIBaseURL
 			d.providerHosts[sourceXingguo] = "https://xingguo.example.org"
 			ctx := context.WithValue(context.Background(), coverSourceKey{}, test.source)
-			if _, err := d.fetchCoverImage(ctx, test.address, decodeImageBytes, false); err != nil {
+			if _, err := d.fetchCoverImage(ctx, test.address, decodeImageBytes); err != nil {
 				t.Fatal(err)
 			}
 		})
