@@ -34,13 +34,13 @@ void main() {
   test('manual refresh reports a shared automatic request failure', () async {
     final provider = Chapters();
     final store = AppStore(storage: MemoryStorage(), provider: provider);
-    await store.episodes(updateDrama);
-    store.episodeUpdatedAt.clear();
+    await store.catalog.episodes(updateDrama);
+    store.catalog.episodeUpdatedAt.clear();
     provider.fail = true;
     provider.gate = Completer<void>();
-    final automatic = store.episodes(updateDrama);
+    final automatic = store.catalog.episodes(updateDrama);
     final manual = expectLater(
-      store.episodes(updateDrama, refresh: true),
+      store.catalog.episodes(updateDrama, refresh: true),
       throwsA(isA<ProviderException>()),
     );
     provider.gate!.complete();
@@ -59,35 +59,35 @@ void main() {
       provider: provider,
       now: () => now,
     );
-    final first = await store.episodes(updateDrama);
-    await store.markEpisodesSeen(updateDrama, first);
-    await store.episodes(updateDrama);
+    final first = await store.catalog.episodes(updateDrama);
+    await store.records.markEpisodesSeen(updateDrama, first);
+    await store.catalog.episodes(updateDrama);
     expect(provider.calls, 1);
     now = now.add(const Duration(hours: 7));
     provider.count = 3;
-    await store.episodes(updateDrama);
-    expect(store.newEpisodeCount(updateDrama), 1);
+    await store.catalog.episodes(updateDrama);
+    expect(store.records.newEpisodeCount(updateDrama), 1);
     final restored = AppStore(
       storage: storage,
       provider: provider,
       now: () => now,
     );
     await restored.load();
-    expect(restored.newEpisodeCount(updateDrama), 1);
-    await restored.episodes(updateDrama);
+    expect(restored.records.newEpisodeCount(updateDrama), 1);
+    await restored.catalog.episodes(updateDrama);
     expect(provider.calls, 2);
     restored.setOffline(true);
-    await restored.episodes(updateDrama);
+    await restored.catalog.episodes(updateDrama);
     expect(provider.calls, 2);
     await expectLater(
-      restored.episodes(updateDrama, refresh: true),
+      restored.catalog.episodes(updateDrama, refresh: true),
       throwsA(isA<ProviderException>()),
     );
-    await restored.markEpisodesSeen(
+    await restored.records.markEpisodesSeen(
       updateDrama,
-      restored.episodeCache[updateDrama.key]!,
+      restored.catalog.episodeCache[updateDrama.key]!,
     );
-    expect(restored.newEpisodeCount(updateDrama), 0);
+    expect(restored.records.newEpisodeCount(updateDrama), 0);
     store.dispose();
     restored.dispose();
   });
@@ -97,21 +97,21 @@ void main() {
     () async {
       final provider = Chapters();
       final store = AppStore(storage: MemoryStorage(), provider: provider);
-      await store.episodes(updateDrama);
+      await store.catalog.episodes(updateDrama);
       provider.gate = Completer<void>();
-      final a = store.episodes(updateDrama, refresh: true);
-      final b = store.episodes(updateDrama, refresh: true);
+      final a = store.catalog.episodes(updateDrama, refresh: true);
+      final b = store.catalog.episodes(updateDrama, refresh: true);
       provider.gate!.complete();
       await Future.wait([a, b]);
       expect(provider.calls, 2);
       provider.fail = true;
-      store.episodeUpdatedAt.clear();
-      expect((await store.episodes(updateDrama)).length, 2);
+      store.catalog.episodeUpdatedAt.clear();
+      expect((await store.catalog.episodes(updateDrama)).length, 2);
       await expectLater(
-        store.episodes(updateDrama, refresh: true),
+        store.catalog.episodes(updateDrama, refresh: true),
         throwsA(isA<ProviderException>()),
       );
-      expect(store.episodeCache[updateDrama.key]!.length, 2);
+      expect(store.catalog.episodeCache[updateDrama.key]!.length, 2);
       store.dispose();
     },
   );
@@ -121,16 +121,16 @@ void main() {
     () async {
       final provider = Chapters();
       final store = AppStore(storage: MemoryStorage(), provider: provider);
-      await store.toggleFavorite(updateDrama);
-      await store.checkFavoriteUpdates();
+      await store.records.toggleFavorite(updateDrama);
+      await store.records.checkFavoriteUpdates();
       provider.fail = true;
       await expectLater(
-        store.checkFavoriteUpdates(),
+        store.records.checkFavoriteUpdates(),
         throwsA(isA<ProviderException>()),
       );
-      expect(store.checkingUpdates, isFalse);
-      expect(store.favorites.length, 1);
-      expect(store.episodeCache[updateDrama.key]!.length, 2);
+      expect(store.records.checkingUpdates, isFalse);
+      expect(store.records.favorites.length, 1);
+      expect(store.catalog.episodeCache[updateDrama.key]!.length, 2);
       store.dispose();
     },
   );

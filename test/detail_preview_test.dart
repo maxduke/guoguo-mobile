@@ -61,8 +61,8 @@ void main() {
           description:
               '多年以后，故乡的一封来信，让她重新踏上归途。在山海之间，一段关于重逢与成长的故事慢慢展开。\n\n本页面使用合成内容展示布局，不是站源实测。',
         );
-        store.episodeCache[drama.key] = episodes();
-        store.history[drama.key] = WatchRecord(
+        store.catalog.episodeCache[drama.key] = episodes();
+        store.records.history[drama.key] = WatchRecord(
           drama: drama,
           episodeId: 'e3',
           episodeIndex: 3,

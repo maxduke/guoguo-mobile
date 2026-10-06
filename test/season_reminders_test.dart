@@ -46,8 +46,8 @@ AppStore makeStore([LocalStorage? storage, DateTime Function()? now]) =>
     );
 
 Future<void> baseline(AppStore store) async {
-  await store.toggleSeasonReminder(firstSeason);
-  await store.observeSeasons(
+  await store.records.toggleSeasonReminder(firstSeason);
+  await store.records.observeSeasons(
     firstSeason,
     const CatalogSearchResult([secondSeason]),
   );
@@ -64,13 +64,13 @@ void main() {
           source: DramaSource.hongguo,
           title: '作品 $i 第一季',
         );
-        store.seasonReminders[anchor.key] = SeasonReminder(
+        store.records.seasonReminders[anchor.key] = SeasonReminder(
           anchor: anchor,
           updatedAt: DateTime.utc(2026),
         );
       }
       await expectLater(
-        store.importBackup(
+        store.records.importBackup(
           RecordBackup(
             [firstSeason],
             [],
@@ -84,8 +84,8 @@ void main() {
         ),
         throwsFormatException,
       );
-      expect(store.seasonReminders.length, 1000);
-      expect(store.favorites, isEmpty);
+      expect(store.records.seasonReminders.length, 1000);
+      expect(store.records.favorites, isEmpty);
     },
   );
 
@@ -137,19 +137,22 @@ void main() {
     'reminder is independent of favorites and initial complete check establishes baseline',
     () async {
       final store = makeStore();
-      await store.toggleFavorite(firstSeason);
-      expect(store.seasonReminders, isEmpty);
+      await store.records.toggleFavorite(firstSeason);
+      expect(store.records.seasonReminders, isEmpty);
       await baseline(store);
-      expect(store.seasonReminders[firstSeason.key]!.initialized, isTrue);
-      expect(store.seasonReminders[firstSeason.key]!.unreadCount, 0);
-      await store.toggleFavorite(firstSeason);
-      expect(store.seasonReminders, isNotEmpty);
-      await store.observeSeasons(
+      expect(
+        store.records.seasonReminders[firstSeason.key]!.initialized,
+        isTrue,
+      );
+      expect(store.records.seasonReminders[firstSeason.key]!.unreadCount, 0);
+      await store.records.toggleFavorite(firstSeason);
+      expect(store.records.seasonReminders, isNotEmpty);
+      await store.records.observeSeasons(
         firstSeason,
         const CatalogSearchResult([thirdSeason, secondSeason]),
       );
-      expect(store.seasonReminders[firstSeason.key]!.unreadCount, 1);
-      expect(store.favorites, isEmpty);
+      expect(store.records.seasonReminders[firstSeason.key]!.unreadCount, 1);
+      expect(store.records.favorites, isEmpty);
     },
   );
 
@@ -157,22 +160,29 @@ void main() {
     'partial, warning and paged results cannot establish a misleading baseline',
     () async {
       final store = makeStore();
-      await store.toggleSeasonReminder(firstSeason);
+      await store.records.toggleSeasonReminder(firstSeason);
       for (final result in [
         const CatalogSearchResult([secondSeason], limited: true),
         const CatalogSearchResult([secondSeason], hasMore: true),
         const CatalogSearchResult([secondSeason], warning: '部分失败'),
       ]) {
-        await store.observeSeasons(firstSeason, result);
-        expect(store.seasonReminders[firstSeason.key]!.initialized, isFalse);
-        expect(store.seasonReminders[firstSeason.key]!.unreadCount, 0);
+        await store.records.observeSeasons(firstSeason, result);
+        expect(
+          store.records.seasonReminders[firstSeason.key]!.initialized,
+          isFalse,
+        );
+        expect(store.records.seasonReminders[firstSeason.key]!.unreadCount, 0);
       }
-      await store.observeSeasons(
+      await store.records.observeSeasons(
         firstSeason,
         const CatalogSearchResult([secondSeason]),
       );
       expect(
-        store.seasonReminders[firstSeason.key]!.seasons[secondSeason.key]!.read,
+        store
+            .records
+            .seasonReminders[firstSeason.key]!
+            .seasons[secondSeason.key]!
+            .read,
         isTrue,
       );
     },
@@ -184,23 +194,26 @@ void main() {
       final storage = MemoryStorage();
       final store = makeStore(storage);
       await baseline(store);
-      await store.observeSeasons(
+      await store.records.observeSeasons(
         firstSeason,
         const CatalogSearchResult([thirdSeason], limited: true),
       );
-      expect(store.seasonReminders[firstSeason.key]!.unreadCount, 1);
-      await store.observeSeasons(firstSeason, const CatalogSearchResult([]));
-      expect(store.seasonReminders[firstSeason.key]!.unreadCount, 1);
-      await store.markSeasonRead(thirdSeason.key);
+      expect(store.records.seasonReminders[firstSeason.key]!.unreadCount, 1);
+      await store.records.observeSeasons(
+        firstSeason,
+        const CatalogSearchResult([]),
+      );
+      expect(store.records.seasonReminders[firstSeason.key]!.unreadCount, 1);
+      await store.records.markSeasonRead(thirdSeason.key);
       final restored = makeStore(storage);
       await restored.load();
-      await restored.observeSeasons(
+      await restored.records.observeSeasons(
         firstSeason,
         const CatalogSearchResult([thirdSeason]),
       );
-      expect(restored.seasonReminders[firstSeason.key]!.unreadCount, 0);
+      expect(restored.records.seasonReminders[firstSeason.key]!.unreadCount, 0);
       expect(
-        restored.seasonReminders[firstSeason.key]!.seasons.keys,
+        restored.records.seasonReminders[firstSeason.key]!.seasons.keys,
         containsAll([secondSeason.key, thirdSeason.key]),
       );
     },
@@ -211,21 +224,24 @@ void main() {
     () async {
       final store = makeStore();
       await baseline(store);
-      final old = store.seasonReminders[firstSeason.key]!;
-      await store.toggleSeasonReminder(firstSeason);
-      await store.observeSeasons(
+      final old = store.records.seasonReminders[firstSeason.key]!;
+      await store.records.toggleSeasonReminder(firstSeason);
+      await store.records.observeSeasons(
         firstSeason,
         const CatalogSearchResult([thirdSeason]),
         expected: old,
       );
-      expect(store.seasonReminders, isEmpty);
-      await store.toggleSeasonReminder(firstSeason);
-      await store.observeSeasons(
+      expect(store.records.seasonReminders, isEmpty);
+      await store.records.toggleSeasonReminder(firstSeason);
+      await store.records.observeSeasons(
         firstSeason,
         const CatalogSearchResult([thirdSeason]),
         expected: old,
       );
-      expect(store.seasonReminders[firstSeason.key]!.initialized, isFalse);
+      expect(
+        store.records.seasonReminders[firstSeason.key]!.initialized,
+        isFalse,
+      );
     },
   );
 
@@ -233,12 +249,12 @@ void main() {
     'checking an older season cannot generate notices at or below its anchor',
     () async {
       final store = makeStore();
-      await store.toggleSeasonReminder(thirdSeason);
-      await store.observeSeasons(
+      await store.records.toggleSeasonReminder(thirdSeason);
+      await store.records.observeSeasons(
         thirdSeason,
         const CatalogSearchResult([firstSeason, secondSeason]),
       );
-      expect(store.seasonReminders[thirdSeason.key]!.seasons, isEmpty);
+      expect(store.records.seasonReminders[thirdSeason.key]!.seasons, isEmpty);
     },
   );
 
@@ -247,39 +263,40 @@ void main() {
     final source = makeStore(null, () => date);
     await baseline(source);
     date = date.add(const Duration(minutes: 1));
-    await source.observeSeasons(
+    await source.records.observeSeasons(
       firstSeason,
       const CatalogSearchResult([thirdSeason]),
     );
-    final unread = source.inspectBackup(source.exportBackup());
-    expect(jsonDecode(source.exportBackup())['version'], 2);
+    final unread = source.records.inspectBackup(source.records.exportBackup());
+    expect(jsonDecode(source.records.exportBackup())['version'], 2);
     date = date.add(const Duration(minutes: 1));
-    await source.markSeasonRead(thirdSeason.key);
-    final read = source.inspectBackup(source.exportBackup());
+    await source.records.markSeasonRead(thirdSeason.key);
+    final read = source.records.inspectBackup(source.records.exportBackup());
     final restored = makeStore();
-    await restored.importBackup(unread);
-    await restored.importBackup(read);
-    await restored.importBackup(unread);
-    expect(restored.seasonReminders[firstSeason.key]!.unreadCount, 0);
-    final withoutReminders = restored.inspectBackup(
+    await restored.records.importBackup(unread);
+    await restored.records.importBackup(read);
+    await restored.records.importBackup(unread);
+    expect(restored.records.seasonReminders[firstSeason.key]!.unreadCount, 0);
+    final withoutReminders = restored.records.inspectBackup(
       jsonEncode(RecordBackup([firstSeason], []).toJson()),
     );
-    await restored.importBackup(withoutReminders);
-    expect(restored.favorites, contains(firstSeason.key));
-    expect(restored.seasonReminders[firstSeason.key]!.unreadCount, 0);
+    await restored.records.importBackup(withoutReminders);
+    expect(restored.records.favorites, contains(firstSeason.key));
+    expect(restored.records.seasonReminders[firstSeason.key]!.unreadCount, 0);
   });
 
   test(
     'empty reminders retain the current schema and old versions are rejected',
     () async {
       final store = makeStore();
-      final exported = jsonDecode(store.exportBackup()) as Map<String, dynamic>;
+      final exported =
+          jsonDecode(store.records.exportBackup()) as Map<String, dynamic>;
       expect(exported['version'], 2);
       expect(exported['seasonReminders'], isEmpty);
       expect(store.snapshot()['records'], exported);
       for (final version in [1, 99]) {
         expect(
-          () => store.inspectBackup(
+          () => store.records.inspectBackup(
             jsonEncode({...exported, 'version': version}),
           ),
           throwsFormatException,
@@ -287,7 +304,7 @@ void main() {
       }
       exported.remove('seasonReminders');
       expect(
-        () => store.inspectBackup(jsonEncode(exported)),
+        () => store.records.inspectBackup(jsonEncode(exported)),
         throwsFormatException,
       );
     },
@@ -298,12 +315,17 @@ void main() {
     () async {
       final store = makeStore();
       await baseline(store);
-      final raw = jsonDecode(store.exportBackup()) as Map<String, dynamic>;
+      final raw =
+          jsonDecode(store.records.exportBackup()) as Map<String, dynamic>;
       raw['seasonReminders'][0]['seasons'][secondSeason.key]['drama']['title'] =
           '另一部第二季';
-      expect(() => store.inspectBackup(jsonEncode(raw)), throwsFormatException);
+      expect(
+        () => store.records.inspectBackup(jsonEncode(raw)),
+        throwsFormatException,
+      );
       expect(
         store
+            .records
             .seasonReminders[firstSeason.key]!
             .seasons[secondSeason.key]!
             .drama
@@ -320,30 +342,33 @@ void main() {
       final store = makeStore(storage);
       storage.fail = true;
       await expectLater(
-        store.toggleSeasonReminder(firstSeason),
+        store.records.toggleSeasonReminder(firstSeason),
         throwsA(isA<FileSystemExceptionForTest>()),
       );
-      expect(store.seasonReminders, isEmpty);
+      expect(store.records.seasonReminders, isEmpty);
       storage.fail = false;
       await baseline(store);
-      await store.observeSeasons(
+      await store.records.observeSeasons(
         firstSeason,
         const CatalogSearchResult([thirdSeason]),
       );
-      final old = store.seasonReminders[firstSeason.key];
+      final old = store.records.seasonReminders[firstSeason.key];
       storage.fail = true;
       await expectLater(
-        store.markSeasonRead(thirdSeason.key),
+        store.records.markSeasonRead(thirdSeason.key),
         throwsA(isA<FileSystemExceptionForTest>()),
       );
-      expect(store.seasonReminders[firstSeason.key], same(old));
+      expect(store.records.seasonReminders[firstSeason.key], same(old));
       await expectLater(
-        store.observeSeasons(firstSeason, const CatalogSearchResult([])),
+        store.records.observeSeasons(
+          firstSeason,
+          const CatalogSearchResult([]),
+        ),
         throwsA(isA<FileSystemExceptionForTest>()),
       );
-      expect(store.seasonReminders[firstSeason.key], same(old));
+      expect(store.records.seasonReminders[firstSeason.key], same(old));
       await expectLater(
-        store.importBackup(
+        store.records.importBackup(
           RecordBackup(
             [],
             [],
@@ -357,7 +382,7 @@ void main() {
         ),
         throwsA(isA<FileSystemExceptionForTest>()),
       );
-      expect(store.seasonReminders.keys, [firstSeason.key]);
+      expect(store.records.seasonReminders.keys, [firstSeason.key]);
     },
   );
 }

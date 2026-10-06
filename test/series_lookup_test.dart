@@ -49,17 +49,17 @@ void main() {
       final pending = Completer<Map<String, dynamic>>();
       final provider = SeriesProvider()..search = (_) => pending.future;
       final store = searchStore(provider);
-      await store.toggleSeasonReminder(firstSeason);
-      await store.observeSeasons(
+      await store.records.toggleSeasonReminder(firstSeason);
+      await store.records.observeSeasons(
         firstSeason,
         const CatalogSearchResult([secondSeason]),
       );
-      await store.observeSeasons(
+      await store.records.observeSeasons(
         firstSeason,
         const CatalogSearchResult([thirdSeason]),
       );
-      final checking = store.checkFavoriteUpdates();
-      await store.markSeasonRead(thirdSeason.key);
+      final checking = store.records.checkFavoriteUpdates();
+      await store.records.markSeasonRead(thirdSeason.key);
       const fourth = Drama(
         id: 'four',
         source: DramaSource.hongguo,
@@ -69,7 +69,7 @@ void main() {
         'items': [thirdSeason.toJson(), fourth.toJson()],
       });
       await checking;
-      final reminder = store.seasonReminders[firstSeason.key]!;
+      final reminder = store.records.seasonReminders[firstSeason.key]!;
       expect(reminder.seasons[thirdSeason.key]!.read, isTrue);
       expect(reminder.seasons[fourth.key]!.read, isFalse);
       expect(reminder.unreadCount, 1);
@@ -91,14 +91,17 @@ void main() {
           ],
         };
       final store = searchStore(provider);
-      await store.toggleSeasonReminder(firstSeason);
-      final result = await store.lookupSeries(firstSeason).result;
+      await store.records.toggleSeasonReminder(firstSeason);
+      final result = await store.catalog.lookupSeries(firstSeason).result;
       expect(result.items.length, 200);
       expect(result.limited, isTrue);
-      await store.observeSeasons(firstSeason, result);
-      expect(store.seasonReminders[firstSeason.key]!.initialized, isFalse);
+      await store.records.observeSeasons(firstSeason, result);
+      expect(
+        store.records.seasonReminders[firstSeason.key]!.initialized,
+        isFalse,
+      );
       provider.search = (_) async => {'items': []};
-      final cachedResult = await store
+      final cachedResult = await store.catalog
           .lookupSeries(firstSeason, refresh: true)
           .result;
       expect(cachedResult.items.length, 200);
@@ -122,7 +125,7 @@ void main() {
           'hasMore': args['page'] == 1,
         };
       final store = searchStore(provider);
-      final result = await store.lookupSeries(firstSeason).result;
+      final result = await store.catalog.lookupSeries(firstSeason).result;
       expect(result.items.map((d) => d.key), [
         secondSeason.key,
         thirdSeason.key,
@@ -130,9 +133,12 @@ void main() {
       expect(result.hasMore, isFalse);
       expect(provider.searches.map((r) => r['query']), ['山海', '山海']);
       expect(provider.searches.map((r) => r['page']), [1, 2]);
-      expect(store.recentSearches, isEmpty);
+      expect(store.catalog.recentSearches, isEmpty);
       expect(
-        store.searchCache.read('hongguo|山海|1', DateTime.now())!.result.hasMore,
+        store.catalog.searchCache
+            .read('hongguo|山海|1', DateTime.now())!
+            .result
+            .hasMore,
         isTrue,
       );
     },
@@ -143,14 +149,17 @@ void main() {
     () async {
       final provider = SeriesProvider();
       final store = searchStore(provider)..offline = true;
-      store.catalogs[DramaSource.hongguo] = [secondSeason];
-      await store.toggleSeasonReminder(firstSeason);
-      final result = await store.lookupSeries(firstSeason).result;
-      await store.observeSeasons(firstSeason, result);
+      store.catalog.catalogs[DramaSource.hongguo] = [secondSeason];
+      await store.records.toggleSeasonReminder(firstSeason);
+      final result = await store.catalog.lookupSeries(firstSeason).result;
+      await store.records.observeSeasons(firstSeason, result);
       expect(result.items.single.key, secondSeason.key);
       expect(result.limited, isTrue);
       expect(provider.searches, isEmpty);
-      expect(store.seasonReminders[firstSeason.key]!.initialized, isFalse);
+      expect(
+        store.records.seasonReminders[firstSeason.key]!.initialized,
+        isFalse,
+      );
     },
   );
 
@@ -160,7 +169,7 @@ void main() {
       final pending = Completer<Map<String, dynamic>>();
       final provider = SeriesProvider()..search = (_) => pending.future;
       final store = searchStore(provider);
-      final lookup = store.lookupSeries(firstSeason);
+      final lookup = store.catalog.lookupSeries(firstSeason);
       final check = expectLater(
         lookup.result,
         throwsA(isA<SeriesLookupCancelled>()),
@@ -175,9 +184,9 @@ void main() {
         'items': [thirdSeason.toJson()],
       });
       await Future<void>.delayed(Duration.zero);
-      expect(store.relatedTo(firstSeason), isEmpty);
-      expect(store.searchCache.dramas, isEmpty);
-      expect(store.recentSearches, isEmpty);
+      expect(store.catalog.relatedTo(firstSeason), isEmpty);
+      expect(store.catalog.searchCache.dramas, isEmpty);
+      expect(store.catalog.recentSearches, isEmpty);
     },
   );
 
@@ -192,8 +201,8 @@ void main() {
           return next.future;
         };
       final store = searchStore(provider);
-      final one = store.lookupSeries(firstSeason);
-      final two = store.lookupSeries(firstSeason);
+      final one = store.catalog.lookupSeries(firstSeason);
+      final two = store.catalog.lookupSeries(firstSeason);
       expect(
         provider.searches[0]['requestId'],
         isNot(provider.searches[1]['requestId']),
@@ -212,7 +221,9 @@ void main() {
         'items': [secondSeason.toJson()],
       });
       await Future<void>.delayed(Duration.zero);
-      expect(store.relatedTo(firstSeason).map((d) => d.key), [thirdSeason.key]);
+      expect(store.catalog.relatedTo(firstSeason).map((d) => d.key), [
+        thirdSeason.key,
+      ]);
     },
   );
 
@@ -225,12 +236,15 @@ void main() {
           'hasMore': true,
         };
       final store = searchStore(provider);
-      await store.toggleSeasonReminder(firstSeason);
-      final result = await store.lookupSeries(firstSeason).result;
+      await store.records.toggleSeasonReminder(firstSeason);
+      final result = await store.catalog.lookupSeries(firstSeason).result;
       expect(provider.searches.length, 3);
       expect(result.hasMore, isTrue);
-      await store.observeSeasons(firstSeason, result);
-      expect(store.seasonReminders[firstSeason.key]!.initialized, isFalse);
+      await store.records.observeSeasons(firstSeason, result);
+      expect(
+        store.records.seasonReminders[firstSeason.key]!.initialized,
+        isFalse,
+      );
     },
   );
 
@@ -240,7 +254,7 @@ void main() {
       final pending = Completer<Map<String, dynamic>>();
       final provider = SeriesProvider()..search = (_) => pending.future;
       final store = searchStore(provider);
-      final lookup = store.lookupSeries(firstSeason);
+      final lookup = store.catalog.lookupSeries(firstSeason);
       final result = expectLater(
         lookup.result,
         throwsA(isA<ProviderException>()),
@@ -255,7 +269,7 @@ void main() {
         'items': [thirdSeason.toJson()],
       });
       await tester.pump();
-      expect(store.searchCache.dramas, isEmpty);
+      expect(store.catalog.searchCache.dramas, isEmpty);
     },
   );
 
@@ -272,7 +286,7 @@ void main() {
         return peek.future;
       };
       final store = searchStore(provider);
-      final lookup = store.lookupSeries(
+      final lookup = store.catalog.lookupSeries(
         firstSeason,
         onPartial: (_) => partials++,
       );
@@ -295,7 +309,7 @@ void main() {
       });
       await tester.pump();
       expect(partials, 0);
-      expect(store.relatedTo(firstSeason), isEmpty);
+      expect(store.catalog.relatedTo(firstSeason), isEmpty);
     },
   );
 
@@ -307,15 +321,15 @@ void main() {
           'items': [thirdSeason.toJson(), firstSeason.toJson()],
         };
       final store = searchStore(provider);
-      await store.toggleSeasonReminder(secondSeason);
-      await store.toggleSeasonReminder(firstSeason);
-      await store.checkFavoriteUpdates();
+      await store.records.toggleSeasonReminder(secondSeason);
+      await store.records.toggleSeasonReminder(firstSeason);
+      await store.records.checkFavoriteUpdates();
       expect(provider.searches.length, 1);
       expect(
-        store.seasonReminders[firstSeason.key]!.seasons.keys,
+        store.records.seasonReminders[firstSeason.key]!.seasons.keys,
         contains(secondSeason.key),
       );
-      expect(store.seasonReminders[secondSeason.key]!.seasons.keys, [
+      expect(store.records.seasonReminders[secondSeason.key]!.seasons.keys, [
         thirdSeason.key,
       ]);
     },
@@ -327,20 +341,23 @@ void main() {
       final pending = Completer<Map<String, dynamic>>();
       final provider = SeriesProvider()..search = (_) => pending.future;
       final store = searchStore(provider);
-      await store.toggleSeasonReminder(firstSeason);
-      await store.toggleSeasonReminder(
+      await store.records.toggleSeasonReminder(firstSeason);
+      await store.records.toggleSeasonReminder(
         const Drama(id: 'else', source: DramaSource.hongguo, title: '另一部第一季'),
       );
-      final checking = store.checkFavoriteUpdates();
-      store.cancelUpdateChecks();
+      final checking = store.records.checkFavoriteUpdates();
+      store.records.cancelUpdateChecks();
       expect(await checking, isFalse);
       pending.complete({
         'items': [thirdSeason.toJson()],
       });
       await Future<void>.delayed(Duration.zero);
       expect(provider.searches.length, 1);
-      expect(store.seasonReminders.values.every((r) => !r.initialized), isTrue);
-      expect(store.checkingUpdates, isFalse);
+      expect(
+        store.records.seasonReminders.values.every((r) => !r.initialized),
+        isTrue,
+      );
+      expect(store.records.checkingUpdates, isFalse);
     },
   );
 }

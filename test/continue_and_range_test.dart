@@ -33,8 +33,8 @@ List<Episode> chapters() =>
 AppStore fixture() {
   final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
     ..offline = true;
-  store.episodeCache[drama.key] = chapters();
-  store.history[drama.key] = WatchRecord(
+  store.catalog.episodeCache[drama.key] = chapters();
+  store.records.history[drama.key] = WatchRecord(
     drama: drama,
     episodeId: 'e4',
     episodeIndex: 4,
@@ -50,7 +50,7 @@ void main() {
     'continue card shows watched time when progressive total is unknown',
     (tester) async {
       final store = fixture();
-      store.history[drama.key] = WatchRecord(
+      store.records.history[drama.key] = WatchRecord(
         drama: drama,
         episodeId: 'e4',
         episodeIndex: 4,

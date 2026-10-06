@@ -35,7 +35,7 @@ Future<void> continueDrama(
   List<int>? indices;
   var localOnly = false;
   try {
-    episodes = await store.episodes(record.drama);
+    episodes = await store.catalog.episodes(record.drama);
   } catch (_) {
     final saved =
         downloads.entries
@@ -84,20 +84,22 @@ class _DetailPageState extends State<DetailPage> {
   List<Episode> _loaded = [];
   final _seriesKey = GlobalKey<RelatedSeriesSectionState>();
   bool _enqueueing = false, _refreshing = false, _expanded = false;
-  Drama get drama => widget.store.currentDrama(widget.drama);
+  Drama get drama => widget.store.catalog.currentDrama(widget.drama);
   @override
   void initState() {
     super.initState();
     _episodes = _fetch();
-    unawaited(widget.store.refreshDetail(widget.drama));
+    unawaited(widget.store.catalog.refreshDetail(widget.drama));
     unawaited(
-      widget.store.markSeasonRead(widget.drama.key).catchError((Object _) {}),
+      widget.store.records
+          .markSeasonRead(widget.drama.key)
+          .catchError((Object _) {}),
     );
   }
 
   Future<void> _play(int index) async {
     _seriesKey.currentState?.cancelLookup();
-    widget.store.cancelUpdateChecks();
+    widget.store.records.cancelUpdateChecks();
     await Navigator.push(
       context,
       MaterialPageRoute<void>(
@@ -115,10 +117,12 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   Future<List<Episode>> _fetch({bool refresh = false}) async {
-    final rows = await widget.store.episodes(drama, refresh: refresh);
+    final rows = await widget.store.catalog.episodes(drama, refresh: refresh);
     if (mounted) {
       unawaited(
-        widget.store.markEpisodesSeen(drama, rows).catchError((Object _) {}),
+        widget.store.records
+            .markEpisodesSeen(drama, rows)
+            .catchError((Object _) {}),
       );
     }
     return rows;
@@ -128,7 +132,7 @@ class _DetailPageState extends State<DetailPage> {
     if (_refreshing || _enqueueing) return;
     setState(() => _refreshing = true);
     await perform(context, () async {
-      unawaited(widget.store.refreshDetail(drama, force: true));
+      unawaited(widget.store.catalog.refreshDetail(drama, force: true));
       final rows = await _fetch(refresh: true);
       if (mounted) setState(() => _episodes = Future.value(rows));
     });
@@ -170,7 +174,12 @@ class _DetailPageState extends State<DetailPage> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([widget.store, widget.store.libraryChanges]),
+      listenable: Listenable.merge([
+        widget.store,
+        widget.store.catalog,
+        widget.store.records,
+        widget.store.records.progress,
+      ]),
       builder: (context, _) => Scaffold(
         appBar: AppBar(title: Text(drama.source.label)),
         body: SafeArea(
@@ -219,7 +228,7 @@ class _DetailPageState extends State<DetailPage> {
 
   int _resumeIndex(List<Episode> rows) {
     if (rows.isEmpty) return 0;
-    final record = widget.store.history[drama.key];
+    final record = widget.store.records.history[drama.key];
     final index = record == null
         ? -1
         : rows.indexWhere((e) => e.id == record.episodeId);
@@ -241,7 +250,7 @@ class _DetailPageState extends State<DetailPage> {
               builder: (context, snapshot) {
                 final rows = snapshot.data ?? const <Episode>[];
                 final resumeIndex = _resumeIndex(rows);
-                final record = widget.store.history[drama.key];
+                final record = widget.store.records.history[drama.key];
                 return Row(
                   children: [
                     IconButton.filledTonal(
@@ -303,7 +312,7 @@ class _DetailPageState extends State<DetailPage> {
   Widget _summary(bool wide) => ListenableBuilder(
     listenable: widget.store,
     builder: (context, _) {
-      final favorite = widget.store.favorites.containsKey(drama.key);
+      final favorite = widget.store.records.favorites.containsKey(drama.key);
       final heading = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -335,8 +344,10 @@ class _DetailPageState extends State<DetailPage> {
             Text('上线 ${drama.date}', style: const TextStyle(fontSize: 12)),
           const SizedBox(height: 12),
           OutlinedButton.icon(
-            onPressed: () =>
-                perform(context, () => widget.store.toggleFavorite(drama)),
+            onPressed: () => perform(
+              context,
+              () => widget.store.records.toggleFavorite(drama),
+            ),
             icon: Icon(favorite ? Icons.bookmark : Icons.bookmark_add_outlined),
             label: Text(favorite ? '已收藏' : '收藏这部剧'),
           ),
@@ -387,9 +398,9 @@ class _DetailPageState extends State<DetailPage> {
                 for (final tag in drama.tags.take(8)) Chip(label: Text(tag)),
               ],
             ),
-          if (widget.store.detailErrors[drama.key] != null)
+          if (widget.store.catalog.detailErrors[drama.key] != null)
             Text(
-              widget.store.detailErrors[drama.key]!,
+              widget.store.catalog.detailErrors[drama.key]!,
               style: const TextStyle(fontSize: 12),
             ),
           const SizedBox(height: 24),
@@ -430,13 +441,13 @@ class _DetailPageState extends State<DetailPage> {
           }
           _loaded = snapshot.data!;
           if (_loaded.isEmpty) return const Center(child: Text('暂无可播放分集'));
-          final record = widget.store.history[drama.key];
+          final record = widget.store.records.history[drama.key];
           final resumeIndex = _resumeIndex(_loaded);
           return Column(
             mainAxisSize: shrinkWrap ? MainAxisSize.min : MainAxisSize.max,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (widget.store.episodeErrors[drama.key] != null)
+              if (widget.store.catalog.episodeErrors[drama.key] != null)
                 const Text('暂未更新成功，正在显示缓存分集', style: TextStyle(fontSize: 12)),
               Wrap(
                 spacing: 12,

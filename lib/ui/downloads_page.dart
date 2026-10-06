@@ -189,7 +189,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: Listenable.merge([widget.downloads, widget.store]),
+    listenable: Listenable.merge([widget.downloads, widget.store.preferences]),
     builder: (context, _) {
       final sourceEntries = widget.downloads.entries
           .where((e) => _source == null || e.drama.source == _source)
@@ -335,7 +335,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
                   ] else ...[
                     const SizedBox(height: 8),
                     Text(
-                      widget.store.cellularDownloads
+                      widget.store.preferences.cellularDownloads
                           ? '允许移动数据下载'
                           : '仅 Wi-Fi 下载 · 无 Wi-Fi 时任务等待网络',
                       style: Theme.of(context).textTheme.bodySmall,

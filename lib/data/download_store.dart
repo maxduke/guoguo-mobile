@@ -222,7 +222,9 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     );
     await downloader.trackTasks();
     await downloader.requireWiFi(
-      app.cellularDownloads ? RequireWiFi.forNoTasks : RequireWiFi.forAllTasks,
+      app.preferences.cellularDownloads
+          ? RequireWiFi.forNoTasks
+          : RequireWiFi.forAllTasks,
     );
     await downloader.start();
     await cleanupOrphans();
@@ -263,7 +265,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       enabled ? RequireWiFi.forNoTasks : RequireWiFi.forAllTasks,
     );
     if (!ok) throw const ProviderException('网络规则未能更新，请重试');
-    await app.setNetwork(downloads: enabled);
+    await app.preferences.setNetwork(downloads: enabled);
   }
 
   @override
@@ -510,7 +512,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
             baseDirectory: BaseDirectory.applicationDocuments,
             group: group,
             headers: Map<String, String>.from(plan['headers'] as Map),
-            requiresWiFi: !app.cellularDownloads,
+            requiresWiFi: !app.preferences.cellularDownloads,
             allowPause: true,
             retries: 3,
             updates: Updates.statusAndProgress,

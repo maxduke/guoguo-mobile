@@ -59,7 +59,7 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
       if (incoming.any((d) => d.source != DramaSource.hongguo)) {
         throw const FormatException('推荐站源不匹配');
       }
-      await widget.store.saveRecommendations(incoming);
+      await widget.store.catalog.saveRecommendations(incoming);
       if (!mounted || request != generation) return;
       setState(() {
         rows = {
@@ -171,18 +171,23 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
                     ),
                     itemCount: rows.length,
                     itemBuilder: (context, index) => ListenableBuilder(
-                      listenable: widget.store,
+                      listenable: Listenable.merge([
+                        widget.store.catalog,
+                        widget.store.records,
+                      ]),
                       builder: (context, _) {
-                        final drama = widget.store.currentDrama(rows[index]);
+                        final drama = widget.store.catalog.currentDrama(
+                          rows[index],
+                        );
                         return DramaCard(
                           drama: drama,
                           onTap: () => widget.onOpen(drama),
-                          favorite: widget.store.favorites.containsKey(
+                          favorite: widget.store.records.favorites.containsKey(
                             drama.key,
                           ),
                           onFavorite: () => perform(
                             context,
-                            () => widget.store.toggleFavorite(drama),
+                            () => widget.store.records.toggleFavorite(drama),
                           ),
                         );
                       },

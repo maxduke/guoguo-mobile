@@ -12,7 +12,7 @@ class RankingsPage extends StatefulWidget {
 }
 
 class _RankingsPageState extends State<RankingsPage> {
-  late final DramaSource source = widget.store.source;
+  late final DramaSource source = widget.store.catalog.source;
   List<Map<String, dynamic>> boards = [], rows = [];
   String? selected, error;
   String kind = "ranking", description = "";
@@ -89,14 +89,14 @@ class _RankingsPageState extends State<RankingsPage> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: widget.store,
+    listenable: Listenable.merge([widget.store.catalog, widget.store.records]),
     builder: (context, _) {
       final visible = rows.where((row) {
-        final drama = widget.store.currentDrama(
+        final drama = widget.store.catalog.currentDrama(
           Drama.fromJson(Map<String, dynamic>.from(row['drama'] as Map)),
         );
         return source != DramaSource.huangdou ||
-            !widget.store.hideVip ||
+            !widget.store.catalog.hideVip ||
             drama.vip != true;
       }).toList();
       return Scaffold(
@@ -122,10 +122,12 @@ class _RankingsPageState extends State<RankingsPage> {
             ),
             if (source == DramaSource.huangdou)
               FilterChip(
-                label: Text(widget.store.hideVip ? '隐藏 VIP' : '显示 VIP'),
-                selected: widget.store.hideVip,
-                onSelected: (value) =>
-                    perform(context, () => widget.store.setHideVip(value)),
+                label: Text(widget.store.catalog.hideVip ? '隐藏 VIP' : '显示 VIP'),
+                selected: widget.store.catalog.hideVip,
+                onSelected: (value) => perform(
+                  context,
+                  () => widget.store.catalog.setHideVip(value),
+                ),
               ),
             if (description.isNotEmpty)
               Padding(
@@ -176,7 +178,7 @@ class _RankingsPageState extends State<RankingsPage> {
                             );
                           }
                           final row = visible[index];
-                          final drama = widget.store.currentDrama(
+                          final drama = widget.store.catalog.currentDrama(
                             Drama.fromJson(
                               Map<String, dynamic>.from(row['drama'] as Map),
                             ),
