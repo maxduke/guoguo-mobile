@@ -334,7 +334,7 @@ func (d *Downloader) fetchCloudFrontDramas(ctx context.Context) ([]Drama, error)
 					batch = append(batch, item)
 					added++
 				}
-				reportLibraryProgress(ctx, "cloudfront", batch, nil, false)
+
 				if added == 0 || len(lr.List) < d.cfg.PageSize {
 					break
 				}

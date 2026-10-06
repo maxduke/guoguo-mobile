@@ -91,7 +91,7 @@ func (d *Downloader) fetchHongguoRoute(ctx context.Context, route, category stri
 				pages = 500
 			}
 		}
-		reportLibraryProgress(ctx, sourceHongguo, items, nil, false)
+
 		added := 0
 		for _, drama := range items {
 			if !seen[drama.ID] {

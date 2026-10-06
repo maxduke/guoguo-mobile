@@ -6,7 +6,6 @@ import (
 	"html"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strconv"
 	"strings"
@@ -229,82 +228,6 @@ func TestRankingConcurrentRequestsShareFetch(t *testing.T) {
 	group.Wait()
 	if calls.Load() != 1 {
 		t.Fatalf("got %d upstream requests, want one", calls.Load())
-	}
-}
-
-func TestRankingHandlerRegistersPlayableMetadataOnce(t *testing.T) {
-	board, _ := findRankingBoard("hongguo-hot")
-	var calls atomic.Int32
-	release := make(chan struct{})
-	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
-		if request.URL.Path == "/rank/hot-drama" {
-			calls.Add(1)
-			return rankingHTTPResponse(request, 200, rankingFixture(board, 1, rankingRows(1))), nil
-		}
-		select {
-		case <-release:
-		case <-request.Context().Done():
-			return nil, request.Context().Err()
-		}
-		switch request.URL.Path {
-		case "/detail":
-			if request.URL.Query().Get("series_id") != "7680883072278989849" {
-				t.Error("ranking automatically enrolled an existing cache entry")
-			}
-			return rankingHTTPResponse(request, 200, sortDetailFixture("7680883072278989849", "1773662280")), nil
-		case "/novel/player/video_detail/v1/":
-			return rankingHTTPResponse(request, 200, `{"data":{"video_data":{"series_id_str":"7680883072278989849","hot_score":90000001,"series_play_cnt":10019}}}`), nil
-		default:
-			t.Errorf("unexpected ranking metadata request: %s", request.URL.Path)
-			return rankingHTTPResponse(request, 404, ""), nil
-		}
-	})
-	a := &UIApp{downloader: d, cfg: d.cfg, dramas: []Drama{{ID: "hongguo:7681903520873729048", Source: sourceHongguo, Title: "旧标题", OnlineDate: "2026-09-01"}, {ID: "huangdou:existing", Source: sourceHuangdou, Title: "保留其他站源"}}}
-	t.Cleanup(a.stopSortMetadata)
-	for _, test := range []struct {
-		method, path string
-		status       int
-	}{
-		{"GET", "/api/ui/rankings", 200}, {"POST", "/api/ui/rankings", 405},
-		{"GET", "/api/ui/rankings?board=missing", 400}, {"GET", "/api/ui/rankings?board=hongguo-hot&page=0", 400},
-		{"GET", "/api/ui/rankings?board=hongguo-hot&page=1.5", 400}, {"GET", "/api/ui/rankings?board=huangguo-hot&page=2", 400},
-	} {
-		writer := httptest.NewRecorder()
-		a.handleRankings(writer, httptest.NewRequest(test.method, test.path, nil))
-		if writer.Code != test.status {
-			t.Fatalf("%s returned %d, want %d", test.path, writer.Code, test.status)
-		}
-	}
-	if calls.Load() != 0 {
-		t.Fatal("listing available boards and rejecting invalid inputs must not fetch upstream")
-	}
-	var firstRevision uint64
-	for index := 0; index < 2; index++ {
-		writer := httptest.NewRecorder()
-		a.handleRankings(writer, httptest.NewRequest("GET", "/api/ui/rankings?board=hongguo-hot", nil))
-		if writer.Code != 200 {
-			t.Fatal(writer.Body.String())
-		}
-		if index == 0 {
-			firstRevision = a.libraryRevision
-		}
-	}
-	if len(a.dramas) != 3 || a.libraryRevision != firstRevision || !a.librarySaved || calls.Load() != 1 {
-		t.Fatal("rankings must merge into the existing library once, including previously unseen dramas")
-	}
-	for _, drama := range a.dramas {
-		if drama.ID == "hongguo:7681903520873729048" && (drama.OnlineDate != "2026-09-01" || drama.Heat != "1.2亿热度") {
-			t.Fatal("ranking enrichment lost prior metadata")
-		}
-	}
-	close(release)
-	waitSortMetadataQueue(t, a)
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	for _, drama := range a.dramas {
-		if drama.ID == "hongguo:7680883072278989849" && (drama.OnlineDate != "2026-03-16" || drama.Heat != "90000001" || drama.Views != "10019次播放" || drama.SortMetadata.Version != sortMetadataVersion) {
-			t.Fatal("new ranking entry was not completed asynchronously")
-		}
 	}
 }
 

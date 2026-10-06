@@ -3,8 +3,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -57,22 +55,30 @@ func verifyResumedTimeline(t *testing.T, ctx context.Context, ffmpeg, input stri
 	}
 }
 
-func TestPlaybackAndDownloadResumeInterruptedMedia(t *testing.T) {
-	fixture, fixtureSession := nativePlaybackFixture(t, "60", "160x90")
-	video, err := os.ReadFile(fixtureSession.tasks[0].OutPath)
+func TestMobileProxyResumesInterruptedMedia(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("local FFmpeg is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	fixture := filepath.Join(t.TempDir(), "fixture.mp4")
+	command := exec.CommandContext(ctx, ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=30:duration=60", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=60", "-c:v", "libx264", "-preset", "ultrafast", "-threads", "1", "-c:a", "aac", "-movflags", "+faststart", "-y", fixture)
+	if diagnostic, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("generate fixture: %v %s", err, diagnostic)
+	}
+	video, err := os.ReadFile(fixture)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ffmpeg := fixture.downloader.cfg.FFmpeg
-	for _, mode := range []string{"MSE", "native HLS", "prefetch", "download", "failed download"} {
+	for _, mode := range []string{"stream", "prefetch", "failed stream"} {
 		t.Run(mode, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer cancel()
-			var interrupted atomic.Bool
+			var interrupted, interruptEnabled atomic.Bool
+			interruptEnabled.Store(mode != "prefetch")
 			var resumes atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				if request.URL.Path != "/fixture.mp4" {
-					t.Error("fixture requested an unrelated resource")
+					t.Error("unrelated resource")
 					http.NotFound(writer, request)
 					return
 				}
@@ -80,88 +86,48 @@ func TestPlaybackAndDownloadResumeInterruptedMedia(t *testing.T) {
 				if request.Header.Get("If-Range") == `"generated-media-v1"` {
 					resumes.Add(1)
 				}
-				if request.Method == http.MethodGet && (interrupted.CompareAndSwap(false, true) || mode == "failed download") {
+				if request.Method == http.MethodGet && interruptEnabled.Load() && (interrupted.CompareAndSwap(false, true) || mode == "failed stream") {
 					writer = &mediaDisconnectWriter{ResponseWriter: writer, remaining: min(64*1024, len(video)/2)}
 				}
 				http.ServeContent(writer, request, "fixture.mp4", time.Time{}, bytes.NewReader(video))
 			}))
-			t.Cleanup(server.Close)
-			app, session := prefetchFixtureApp(t)
-			d := app.downloader
-			d.cfg.FFmpeg, d.cfg.Retries, d.cfg.SkipBytes = ffmpeg, 3, 1
-			d.client = server.Client()
-			app.cfg = d.cfg
-			for index := range session.tasks {
-				session.tasks[index] = Task{DramaID: "hongguo:7000000000000000001", DramaTitle: "合成断流样本", Index: index + 1, Total: 3,
-					OutPath: filepath.Join(t.TempDir(), "episode.mp4"),
-					Chapter: Chapter{ID: fmt.Sprintf("hongguo:7000000000000000001:%d", index+1), Source: sourceHongguo, VideoURL: server.URL + "/fixture.mp4", CurrentEpisode: rawEpisode(index + 1)}}
+			defer server.Close()
+			d := rankingTestDownloader(t, nil)
+			d.cfg.Retries, d.client = 3, server.Client()
+			proxy, err := d.newHLSProxy(ctx, providerMedia{URL: server.URL + "/fixture.mp4"}, nil)
+			if err != nil {
+				t.Fatal(err)
 			}
-			var input string
-			switch mode {
-			case "native HLS":
-				opened := nativeOpenFixture(t, app, 1, 0, 1)
-				var address string
-				if err := json.Unmarshal(opened["url"], &address); err != nil {
-					t.Fatal(err)
+			defer proxy.Close()
+			if mode == "prefetch" {
+				stats := proxy.prefetch(ctx, 0, 128*1024)
+				if stats.cached == 0 {
+					t.Fatal("prefetch did not cache media")
 				}
-				mux := http.NewServeMux()
-				app.registerPlaybackRoutes(mux)
-				local := httptest.NewServer(mux)
-				t.Cleanup(local.Close)
-				input = local.URL + address
-			case "download", "failed download":
-				var completed atomic.Bool
-				err := d.DownloadEpisodeWithProgress(ctx, session.tasks[0], func(progress DownloadProgress) {
-					if progress.Phase == "completed" && progress.Percent == 100 {
-						completed.Store(true)
-					}
-				})
-				if mode == "failed download" {
-					_, fileErr := os.Stat(session.tasks[0].OutPath)
-					if err == nil || completed.Load() || !os.IsNotExist(fileErr) {
-						t.Fatal("incomplete media was marked as a completed download", err, fileErr)
-					}
-					return
+				interruptEnabled.Store(true)
+			}
+			response, err := http.Get(proxy.root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			data, err := io.ReadAll(response.Body)
+			if mode == "failed stream" {
+				if err == nil || len(data) == len(video) {
+					t.Fatal("incomplete media was accepted")
 				}
-				if err != nil || !completed.Load() {
-					t.Fatal("interrupted download did not complete", err)
-				}
-				input = session.tasks[0].OutPath
-			default:
-				episode := 1
-				if mode == "prefetch" {
-					episode = 2
-					result := prefetchRequest(app, `{"session":"fixture","episode":2,"run":4,"version":1}`)
-					if result.Code != http.StatusAccepted {
-						t.Fatal("prefetch was not accepted", result.Body.String())
-					}
-					select {
-					case <-session.prefetch.done:
-					case <-ctx.Done():
-						t.Fatal("prefetch did not complete")
-					}
-					if session.prefetch.view().State != "ready" {
-						t.Fatal("recovered media was marked as a failed prefetch", session.prefetch.view())
-					}
-				}
-				writer := httptest.NewRecorder()
-				request := httptest.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost/api/ui/playback/stream?session=fixture&episode=%d", episode), nil).WithContext(ctx)
-				app.handlePlaybackStream(writer, request)
-				state, _ := app.playbackStatus("fixture", false)
-				if writer.Code != http.StatusOK || state.State != "ended" || state.Error != "" || state.Duration != 60 {
-					t.Fatalf("recovered playback failed: HTTP=%d state=%+v", writer.Code, state)
-				}
-				if mode == "prefetch" && writer.Header().Get("X-Playback-Prefetched") != "1" {
-					t.Fatal("recovered prefetch was discarded")
-				}
-				input = filepath.Join(t.TempDir(), "resumed.mp4")
-				if err := os.WriteFile(input, writer.Body.Bytes(), 0600); err != nil {
-					t.Fatal(err)
-				}
+				return
+			}
+			if err != nil || !bytes.Equal(data, video) {
+				t.Fatalf("byte continuation changed media: %v, bytes=%d", err, len(data))
+			}
+			input := filepath.Join(t.TempDir(), "resumed.mp4")
+			if err := os.WriteFile(input, data, 0600); err != nil {
+				t.Fatal(err)
 			}
 			verifyResumedTimeline(t, ctx, ffmpeg, input)
 			if !interrupted.Load() || resumes.Load() == 0 {
-				t.Fatal("integration did not exercise automatic byte continuation")
+				t.Fatal("automatic byte continuation was not exercised")
 			}
 		})
 	}

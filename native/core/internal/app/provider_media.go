@@ -50,6 +50,13 @@ func (d *Downloader) providerBaseURL(source string) string {
 	return strings.TrimRight(firstNonEmpty(configured, fallback), "/")
 }
 
+func sourceFromDramaID(id string) string {
+	if source, _, ok := splitProviderDramaID(id); ok {
+		return source
+	}
+	return ""
+}
+
 func providerSourceForURL(raw string) string {
 	parsed, err := url.Parse(raw)
 	if err != nil {

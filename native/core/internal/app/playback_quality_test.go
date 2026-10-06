@@ -54,22 +54,3 @@ func TestPlaybackQualitySelectsHLSVariantAndKeepsSeparateAudio(t *testing.T) {
 		t.Fatal("HLS selection lost audio or kept an unselected variant")
 	}
 }
-
-func TestPlaybackRunRejectsStaleRequestsAndDifferentQualityPrefetch(t *testing.T) {
-	app, session := prefetchFixtureApp(t)
-	session.streamVersion = 5
-	old := newPlaybackPrefetch(2, session.run)
-	old.quality = 720
-	session.prefetch = old
-	if _, status, err := app.beginPlayback(context.Background(), "fixture", 2, 0, 720, 4, false); err == nil || status != http.StatusConflict || session.prefetch != old {
-		t.Fatal("stale request replaced the current playback")
-	}
-	run, _, err := app.beginPlayback(context.Background(), "fixture", 2, 0, 1080, 6, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer run.stop()
-	if run.cache != nil || old.ctx.Err() == nil || session.quality != 1080 {
-		t.Fatal("reused a prefetch with a different quality")
-	}
-}

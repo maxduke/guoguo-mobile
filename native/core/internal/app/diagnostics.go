@@ -124,11 +124,3 @@ func (downloader *Downloader) recordDiagnostic(event diagnosticEvent) {
 		})
 	}
 }
-
-func (downloader *Downloader) recordTaskFailure(event string, task Task, start float64, err error) {
-	if err == nil {
-		return
-	}
-	downloader.recordDiagnostic(diagnosticEvent{Event: event, Source: firstNonEmpty(task.Chapter.Source, sourceFromDramaID(task.DramaID)),
-		DramaID: task.DramaID, DramaTitle: task.DramaTitle, Episode: task.Index, StartSeconds: start, Message: err.Error()})
-}

@@ -5,10 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
-	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -63,7 +60,7 @@ func (d *Downloader) fetchAllDramas(ctx context.Context, sourceFilter string) ([
 			fmt.Printf("%s\n", msg)
 			failures[res.name] = res.err
 		}
-		reportLibraryProgress(ctx, res.name, res.items, res.err, true)
+
 		for _, item := range res.items {
 			if item.ID == "" || seen[item.ID] {
 				continue
@@ -124,68 +121,4 @@ func uniqueChapters(chapters []Chapter) []Chapter {
 		out = append(out, ch)
 	}
 	return out
-}
-
-func (d *Downloader) BuildDramaTasks(ctx context.Context, drama Drama) ([]Task, error) {
-	return d.buildDramaTasksInDirectory(ctx, drama, "")
-}
-
-func (d *Downloader) buildDramaTasksInDirectory(ctx context.Context, drama Drama, existingDirectory string) ([]Task, error) {
-	var title string
-	var chapters []Chapter
-	var err error
-	if isHuangguoProviderSource(drama.Source) {
-		sourceID := strings.TrimSpace(drama.SourceID)
-		if sourceID == "" {
-			if _, parsedID, ok := splitProviderDramaID(drama.ID); ok {
-				sourceID = parsedID
-			} else {
-				sourceID = strings.TrimSpace(drama.ID)
-			}
-		}
-		title, chapters, err = d.GetHuangguoChapters(ctx, drama.Source, sourceID)
-	} else {
-		title, chapters, err = d.GetDramaChapters(ctx, drama.ID)
-	}
-	if err != nil {
-		return nil, err
-	}
-	if len(chapters) == 0 {
-		return nil, nil
-	}
-	drama = d.hongguoCachedDrama(drama)
-	safeDrama := safeFilename(title)
-	dramaDir, err := safeJoin(d.cfg.OutputDir, safeDrama)
-	if err != nil {
-		return nil, err
-	}
-	if existingDirectory != "" {
-		dramaDir = existingDirectory
-	}
-	markerPath := filepath.Join(dramaDir, ".drama-id")
-	if b, readErr := os.ReadFile(markerPath); readErr == nil && strings.TrimSpace(string(b)) != "" && strings.TrimSpace(string(b)) != drama.ID {
-		dramaDir, err = safeJoin(d.cfg.OutputDir, safeFilename(fmt.Sprintf("%s_%s", title, hashShort(drama.ID))))
-		if err != nil {
-			return nil, err
-		}
-		markerPath = filepath.Join(dramaDir, ".drama-id")
-	}
-	if err := os.MkdirAll(dramaDir, 0o755); err != nil {
-		return nil, err
-	}
-	if drama.ID != "" {
-		_ = os.WriteFile(markerPath, []byte(drama.ID), 0o644)
-	}
-	var tasks []Task
-	for i, ch := range chapters {
-		ep := ch.EpisodeString(i + 1)
-		epNum := padEpisode(ep)
-		fileName := safeFilename(epNum + ".mp4")
-		outPath, err := safeJoin(dramaDir, fileName)
-		if err != nil {
-			return nil, err
-		}
-		tasks = append(tasks, Task{DramaID: drama.ID, DramaTitle: title, Chapter: ch, Index: i + 1, Total: len(chapters), OutPath: outPath, ReleaseStatus: dramaReleaseStatus(drama)})
-	}
-	return tasks, nil
 }

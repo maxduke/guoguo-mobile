@@ -131,7 +131,7 @@ func (downloader *Downloader) fetchHongguoAppCatalog(ctx context.Context) ([]Dra
 				if err == nil {
 					break
 				}
-				reportLibraryProgress(ctx, sourceHongguo, items, nil, false)
+
 				var backoff *requestBackoff
 				if attempt > 0 || !retryable || errors.As(err, &backoff) || ctx.Err() != nil {
 					break
@@ -168,7 +168,7 @@ func (downloader *Downloader) fetchHongguoAppCatalog(ctx context.Context) ([]Dra
 			client.mu.Lock()
 			client.state.Feeds[genre.key] = checkpoint
 			client.mu.Unlock()
-			reportLibraryProgress(ctx, sourceHongguo, items, nil, false)
+
 		}
 		if !active {
 			break

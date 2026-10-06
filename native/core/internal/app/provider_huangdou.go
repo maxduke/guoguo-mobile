@@ -88,7 +88,7 @@ func (d *Downloader) fetchHuangdouDramas(ctx context.Context) ([]Drama, error) {
 			batch = append(batch, dr)
 			added++
 		}
-		reportLibraryProgress(ctx, sourceHuangdou, batch, nil, false)
+
 		if added == 0 || len(items) < pageSize {
 			break
 		}

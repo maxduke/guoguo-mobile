@@ -8,16 +8,16 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func TestLegacyPlaybackAndDownloadSourceKeyLocalFFmpeg(t *testing.T) {
+func TestLegacySourceKeyThroughMobileProxyLocalFFmpeg(t *testing.T) {
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	if err != nil {
 		t.Skip("local FFmpeg is unavailable")
@@ -36,6 +36,7 @@ func TestLegacyPlaybackAndDownloadSourceKeyLocalFFmpeg(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	plain := append([]byte(nil), segment...)
 	segment = pkcs7Pad(segment, aes.BlockSize)
 	cipher.NewCBCEncrypter(block, make([]byte, aes.BlockSize)).CryptBlocks(segment, segment)
 	playlist := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-KEY:METHOD=AES-128,URI=\"/api/app/vid/sec\",IV=0x00000000000000000000000000000000\n#EXTINF:3.0,\n/fixture.ts\n#EXT-X-ENDLIST\n"
@@ -57,38 +58,73 @@ func TestLegacyPlaybackAndDownloadSourceKeyLocalFFmpeg(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(body)), ContentLength: int64(len(body)), Header: http.Header{"Content-Type": {"application/octet-stream"}}, Request: request}, nil
 	})
-	d.cfg.FFmpeg, d.cfg.Retries = ffmpeg, 1
+	d.cfg.Retries = 1
 	d.cfg.Token = "own-fixture-token"
 	d.cfg.InterfaceKey, d.cfg.ParamKey, d.cfg.ParamIV = fixtureLegacyProtocol.InterfaceKey, fixtureLegacyProtocol.ParamKey, fixtureLegacyProtocol.ParamIV
-	task := Task{DramaID: "legacy-drama", Chapter: Chapter{ID: "episode-1", VideoURL: "generated-video"}, OutPath: filepath.Join(t.TempDir(), "download.mp4")}
-	app := &UIApp{downloader: d}
-	writer := httptest.NewRecorder()
-	streamCtx, streamCancel := context.WithCancel(ctx)
-	defer streamCancel()
-	var duration float64
-	err = app.streamPlayback(streamCtx, streamCancel, writer, task, "", 0, 1, func(value float64) { duration = value })
-	if err != nil || duration <= 0 || writer.Code != http.StatusOK || writer.Header().Get("X-Playback-Source") != "online" || !bytes.Contains(writer.Body.Bytes(), []byte("moof")) {
-		t.Fatalf("source key playback failed: %v, HTTP=%d, duration=%f", err, writer.Code, duration)
-	}
-	if keyRequests.Load() == 0 || segmentRequests.Load() == 0 {
-		t.Fatal("playback did not fetch the source key and generated segment")
-	}
-	keyRequests.Store(0)
-	segmentRequests.Store(0)
-	var completed atomic.Bool
-	err = d.DownloadEpisodeWithProgress(ctx, task, func(progress DownloadProgress) {
-		if progress.Phase == "completed" && progress.Percent == 100 {
-			completed.Store(true)
-		}
-	})
+	task := Task{DramaID: "legacy-drama", Chapter: Chapter{ID: "episode-1", VideoURL: "generated-video"}}
+	media, key, err := d.resolvePlaybackMedia(ctx, task)
 	if err != nil {
-		t.Fatal("source key download failed", err)
+		t.Fatal(err)
 	}
-	output, err := os.ReadFile(task.OutPath)
-	if err != nil || len(output) < 100*1024 || !bytes.Contains(output, []byte("ftyp")) || !bytes.Contains(output, []byte("moov")) || !completed.Load() {
-		t.Fatalf("download did not finish as an MP4: %v, bytes=%d", err, len(output))
+	proxy, err := d.newHLSProxy(ctx, media, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+	read := func(address string) []byte {
+		response, err := http.Get(address)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		data, err := io.ReadAll(response.Body)
+		if err != nil || response.StatusCode != http.StatusOK {
+			t.Fatalf("proxy read: %v HTTP %d", err, response.StatusCode)
+		}
+		return data
+	}
+	rewritten := string(read(proxy.root))
+	match := hlsURIAttribute.FindStringSubmatch(rewritten)
+	if len(match) != 2 {
+		t.Fatal("proxy omitted source key")
+	}
+	fetchedKey := read(match[1])
+	if !bytes.Equal(fetchedKey, sourceKey) {
+		t.Fatal("proxy changed source key")
+	}
+	var address string
+	for _, line := range strings.Split(rewritten, "\n") {
+		if line != "" && !strings.HasPrefix(line, "#") {
+			address = line
+			break
+		}
+	}
+	encrypted := read(address)
+	if !bytes.Equal(encrypted, segment) {
+		t.Fatal("proxy changed encrypted media")
+	}
+	decoder, err := aes.NewCipher(fetchedKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cipher.NewCBCDecrypter(decoder, make([]byte, aes.BlockSize)).CryptBlocks(encrypted, encrypted)
+	if !bytes.Equal(encrypted[:len(plain)], plain) {
+		t.Fatal("source key did not decrypt media")
+	}
+	input := filepath.Join(t.TempDir(), "source.ts")
+	if err := os.WriteFile(input, encrypted[:len(plain)], 0600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "download.mp4")
+	command = exec.CommandContext(ctx, ffmpeg, "-hide_banner", "-loglevel", "error", "-i", input, "-c", "copy", "-y", output)
+	if diagnostic, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("read mobile HLS proxy: %v %s", err, diagnostic)
+	}
+	data, err := os.ReadFile(output)
+	if err != nil || len(data) < 100*1024 || !bytes.Contains(data, []byte("ftyp")) || !bytes.Contains(data, []byte("moov")) {
+		t.Fatalf("invalid remuxed MP4: %v, bytes=%d", err, len(data))
 	}
 	if keyRequests.Load() == 0 || segmentRequests.Load() == 0 || d.cfg.AESKeyHex != "" {
-		t.Fatal("download did not use the source-managed key")
+		t.Fatal("mobile proxy did not use the source-managed key")
 	}
 }
