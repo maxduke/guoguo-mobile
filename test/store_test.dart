@@ -33,12 +33,15 @@ void main() {
     () async {
       final storage = MemoryStorage();
       final store = AppStore(storage: storage, provider: FakeProvider());
-      await store.toggleFavorite(red);
-      await store.toggleFavorite(yellow);
-      expect(store.favorites.length, 2);
+      await store.records.toggleFavorite(red);
+      await store.records.toggleFavorite(yellow);
+      expect(store.records.favorites.length, 2);
       final restored = AppStore(storage: storage, provider: FakeProvider());
       await restored.load();
-      expect(restored.favorites.keys, containsAll([red.key, yellow.key]));
+      expect(
+        restored.records.favorites.keys,
+        containsAll([red.key, yellow.key]),
+      );
     },
   );
   test(
@@ -46,9 +49,9 @@ void main() {
     () async {
       final provider = FakeProvider();
       final store = AppStore(storage: MemoryStorage(), provider: provider);
-      final loadRed = store.refresh(DramaSource.hongguo);
-      await store.selectSource(DramaSource.huangguo);
-      final loadYellow = store.refresh(DramaSource.huangguo);
+      final loadRed = store.catalog.refresh(DramaSource.hongguo);
+      await store.catalog.selectSource(DramaSource.huangguo);
+      final loadYellow = store.catalog.refresh(DramaSource.huangguo);
       provider.requests['huangguo']!.complete({
         'items': [yellow.toJson()],
       });
@@ -57,8 +60,8 @@ void main() {
         'items': [red.toJson()],
       });
       await loadRed;
-      expect(store.library.single.source, DramaSource.huangguo);
-      expect(store.catalogs[DramaSource.hongguo]!.single.key, red.key);
+      expect(store.catalog.library.single.source, DramaSource.huangguo);
+      expect(store.catalog.catalogs[DramaSource.hongguo]!.single.key, red.key);
     },
   );
   test(
@@ -68,16 +71,16 @@ void main() {
         storage: MemoryStorage(),
         provider: FakeProvider(),
       );
-      await store.saveWatch(watch(80000, DateTime.utc(2026, 9, 1)));
-      await store.importBackup(
+      await store.records.saveWatch(watch(80000, DateTime.utc(2026, 9, 1)));
+      await store.records.importBackup(
         RecordBackup([red], [watch(5000, DateTime.utc(2026, 9, 2))]),
       );
-      expect(store.history[red.key]!.positionMs, 5000);
-      await store.importBackup(
+      expect(store.records.history[red.key]!.positionMs, 5000);
+      await store.records.importBackup(
         RecordBackup([red], [watch(99000, DateTime.utc(2026, 8, 1))]),
       );
-      expect(store.history[red.key]!.positionMs, 5000);
-      final json = jsonDecode(store.exportBackup()) as Map;
+      expect(store.records.history[red.key]!.positionMs, 5000);
+      final json = jsonDecode(store.records.exportBackup()) as Map;
       expect(
         json.keys,
         unorderedEquals([
@@ -92,7 +95,7 @@ void main() {
   );
   test('invalid backup fails atomically and preserves existing data', () async {
     final store = AppStore(storage: MemoryStorage(), provider: FakeProvider());
-    await store.toggleFavorite(red);
+    await store.records.toggleFavorite(red);
     final raw = jsonEncode({
       'format': 'guoguo.records',
       'version': 2,
@@ -103,28 +106,28 @@ void main() {
       ],
       'history': [],
     });
-    expect(() => store.inspectBackup(raw), throwsFormatException);
-    expect(store.favorites.keys, [red.key]);
+    expect(() => store.records.inspectBackup(raw), throwsFormatException);
+    expect(store.records.favorites.keys, [red.key]);
   });
   test('failed refresh preserves cached entries and exposes error', () async {
     final provider = FakeProvider();
     final store = AppStore(storage: MemoryStorage(), provider: provider);
-    store.catalogs[DramaSource.hongguo] = [red];
-    final future = store.refresh();
+    store.catalog.catalogs[DramaSource.hongguo] = [red];
+    final future = store.catalog.refresh();
     provider.requests['hongguo']!.completeError(const ProviderException('离线'));
     await future;
-    expect(store.library.single.key, red.key);
-    expect(store.sourceErrors[DramaSource.hongguo], '离线');
+    expect(store.catalog.library.single.key, red.key);
+    expect(store.catalog.sourceErrors[DramaSource.hongguo], '离线');
   });
   test('default network policy is Wi-Fi only and survives restart', () async {
     final storage = MemoryStorage();
     final store = AppStore(storage: storage, provider: FakeProvider());
-    expect(store.cellularDownloads, false);
-    expect(store.cellularPrefetch, false);
-    await store.setNetwork(downloads: true);
+    expect(store.preferences.cellularDownloads, false);
+    expect(store.preferences.cellularPrefetch, false);
+    await store.preferences.setNetwork(downloads: true);
     final restored = AppStore(storage: storage, provider: FakeProvider());
     await restored.load();
-    expect(restored.cellularDownloads, true);
-    expect(restored.cellularPrefetch, false);
+    expect(restored.preferences.cellularDownloads, true);
+    expect(restored.preferences.cellularPrefetch, false);
   });
 }

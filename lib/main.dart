@@ -155,17 +155,18 @@ class GuoguoApp extends StatelessWidget {
   final bool autoLoad;
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: store,
-    builder: (context, _) => MaterialApp(
+    listenable: store.preferences.theme,
+    child: HomePage(store: store, downloads: downloads, autoLoad: autoLoad),
+    builder: (context, child) => MaterialApp(
       title: '果果',
       debugShowCheckedModeBanner: false,
       theme: guoguoTheme(Brightness.light),
       darkTheme: guoguoTheme(Brightness.dark),
-      themeMode: store.themeMode,
+      themeMode: store.preferences.themeMode,
       locale: const Locale('zh', 'CN'),
       supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      home: HomePage(store: store, downloads: downloads, autoLoad: autoLoad),
+      home: child,
     ),
   );
 }

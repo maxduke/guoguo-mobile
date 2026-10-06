@@ -93,8 +93,8 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
         ..offline = true;
-      store.episodeCache[drama.key] = episodes();
-      store.history[drama.key] = WatchRecord(
+      store.catalog.episodeCache[drama.key] = episodes();
+      store.records.history[drama.key] = WatchRecord(
         drama: drama,
         episodeId: 'e35',
         episodeIndex: 35,
@@ -144,7 +144,7 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
         ..offline = true;
-      store.episodeCache[drama.key] = episodes();
+      store.catalog.episodeCache[drama.key] = episodes();
       final downloads = FakeDownloads(store);
       await tester.pumpWidget(
         MaterialApp(
@@ -156,7 +156,7 @@ void main() {
       expect(find.text('开始观看'), findsOneWidget);
       expect(find.byTooltip('选择下载分集'), findsOneWidget);
       expect(tester.takeException(), isNull);
-      await store.saveWatch(
+      await store.records.saveWatch(
         WatchRecord(
           drama: drama,
           episodeId: 'e35',

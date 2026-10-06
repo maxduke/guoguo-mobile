@@ -1,7 +1,7 @@
-import 'episode_grid.dart';
+import 'player_sheets.dart';
+import 'player_transport.dart';
 import 'throttled_builder.dart';
 import 'detail_page.dart';
-import '../domain/catalog_query.dart';
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -125,7 +125,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     _index = widget.initialIndex;
-    _speed = widget.store.playbackSpeed;
+    _speed = widget.store.preferences.playbackSpeed;
     _pages = PageController(initialPage: _index);
     _session = PlaybackSessionController(
       provider: widget.store.provider,
@@ -135,7 +135,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           widget.downloads.localFile(widget.drama, widget.episodes[index]),
       canResolve: () => !widget.localOnly && !widget.store.offline,
       progressive: (index) =>
-          widget.store.progressivePreparation &&
+          widget.store.preferences.progressivePreparation &&
           index == _index &&
           _foreground &&
           !_pipActive &&
@@ -196,7 +196,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         loadSource: _airPlaySource,
         retainSources: (indices) => _airPlayMedia?.retain(indices),
         episodeCount: widget.episodes.length,
-        autoAdvance: () => widget.store.autoAdvance,
+        autoAdvance: () => widget.store.preferences.autoAdvance,
       )..addListener(_airPlayChanged);
     }
     _player.addEventsListener(_event);
@@ -205,10 +205,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       (_) => _checkHealth(),
     );
     WidgetsBinding.instance.addObserver(this);
-    widget.store.addListener(_preferencesChanged);
+    widget.store.preferences.addListener(_preferencesChanged);
     _network = Connectivity().onConnectivityChanged.listen((states) {
       if (!states.contains(ConnectivityResult.wifi) &&
-          !widget.store.cellularPrefetch) {
+          !widget.store.preferences.cellularPrefetch) {
         _preloadTimer?.cancel();
         _session.retain({_index});
       } else {
@@ -298,7 +298,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   void _savePosition(Duration position, Duration duration) {
     _lastSaved = DateTime.now();
     unawaited(
-      widget.store
+      widget.store.records
           .saveWatch(
             WatchRecord(
               drama: widget.drama,
@@ -323,7 +323,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _save();
     _detachTimeline();
     if ((_active ?? _session.peek(_index))?.preparer.streaming == true ||
-        (_loading && widget.store.progressivePreparation)) {
+        (_loading && widget.store.preferences.progressivePreparation)) {
       _session.evict(_index);
     }
     _lifecycle.selectionChanged();
@@ -360,7 +360,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _lifecycle.beginActivation(play);
     final generation = _session.invalidate();
     final index = _index;
-    final record = widget.store.history[widget.drama.key];
+    final record = widget.store.records.history[widget.drama.key];
     var start =
         position ??
         (resume && record?.episodeId == widget.episodes[index].id
@@ -617,7 +617,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         }
         _save();
         if (!_foreground && !_pipActive) break;
-        if (widget.store.autoAdvance && _index + 1 < widget.episodes.length) {
+        if (widget.store.preferences.autoAdvance &&
+            _index + 1 < widget.episodes.length) {
           _goTo(_index + 1);
         } else {
           _playIntent = false;
@@ -698,7 +699,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   void _setPipActive(bool active) => _lifecycle.setPipActive(active);
 
   void _preferencesChanged() {
-    if (!widget.store.prefetch) {
+    if (!widget.store.preferences.prefetch) {
       _preloadTimer?.cancel();
       _session.retain({_index});
     }
@@ -735,7 +736,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         !_prefetchReady ||
         _preloadTimer?.isActive == true ||
         DateTime.now().isBefore(_prefetchRetryAt) ||
-        !widget.store.prefetch ||
+        !widget.store.preferences.prefetch ||
         (!_foreground && !_pipActive) ||
         _active == null ||
         _loading ||
@@ -758,10 +759,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             generation != _generation ||
             _error != null ||
             (!_foreground && !_pipActive) ||
-            !widget.store.prefetch ||
+            !widget.store.preferences.prefetch ||
             states.contains(ConnectivityResult.none) ||
             (!states.contains(ConnectivityResult.wifi) &&
-                !widget.store.cellularPrefetch)) {
+                !widget.store.preferences.cellularPrefetch)) {
           return;
         }
         await _session.prefetch(index + 1);
@@ -1184,72 +1185,26 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<void> _showEpisodes() => _sheet(
-    SizedBox(
-      height: math.min(600, MediaQuery.sizeOf(context).height * .85),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            Text(
-              '选集 · 共 ${widget.episodes.length} 集',
-              style: const TextStyle(color: Colors.white, fontSize: 18),
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: EpisodeGrid(
-                episodes: widget.episodes,
-                initialIndex: _index,
-                onJump: (index) {
-                  Navigator.pop(context);
-                  _goTo(index);
-                },
-                builder: (context, index) => FilledButton.tonal(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _goTo(index);
-                  },
-                  style: FilledButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    backgroundColor: index == _index
-                        ? const Color(0xFF345D55)
-                        : null,
-                  ),
-                  child: Text(
-                    '${widget.episodes[index].number}${widget.episodes[index].vip ? '\nVIP' : ''}',
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+    PlayerEpisodeSheet(
+      episodes: widget.episodes,
+      index: _index,
+      onSelect: (index) {
+        Navigator.pop(context);
+        _goTo(index);
+      },
     ),
   );
+
   Future<void> _showRelated() async {
-    final rows = relatedSeries(widget.drama, [
-      ...widget.store.catalogs.values.expand((rows) => rows),
-      ...widget.store.searchCache.dramas,
-      ...widget.store.favorites.values,
-      ...widget.store.history.values.map((record) => record.drama),
-    ]);
+    final rows = widget.store.catalog.relatedTo(widget.drama);
     Drama? selected;
     await _sheet(
-      SizedBox(
-        height: math.min(500, MediaQuery.sizeOf(context).height * .75),
-        child: rows.isEmpty
-            ? const Center(child: Text('暂未找到同系列作品'))
-            : ListView.builder(
-                itemCount: rows.length,
-                itemBuilder: (context, index) => ListTile(
-                  title: Text(rows[index].title),
-                  subtitle: Text(rows[index].source.label),
-                  onTap: () {
-                    selected = rows[index];
-                    Navigator.pop(context);
-                  },
-                ),
-              ),
+      PlayerRelatedSheet(
+        rows: rows,
+        onSelect: (drama) {
+          selected = drama;
+          Navigator.pop(context);
+        },
       ),
     );
     if (selected != null && mounted) {
@@ -1261,64 +1216,44 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<void> _showMore() async {
-    var relatedRequested = false;
-    var castRequested = false;
+    PlayerMenuAction? requested;
     final item = _active;
     await _sheet(
-      ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * .75,
-        ),
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.video_library_outlined),
-              title: const Text('相关剧集'),
-              subtitle: const Text('按标题匹配同系列作品'),
-              onTap: () {
-                relatedRequested = true;
-                Navigator.pop(context);
-              },
-            ),
-            StatefulBuilder(
-              builder: (context, update) => SwitchListTile(
-                title: const Text('自动播放下一集'),
-                subtitle: const Text('关闭后，播完停在当前集'),
-                value: widget.store.autoAdvance,
-                onChanged: (value) async {
-                  await perform(
-                    context,
-                    () => widget.store.setPlayback(advance: value),
-                  );
-                  if (context.mounted) update(() {});
-                },
-              ),
-            ),
-            const ListTile(
-              leading: Icon(Icons.touch_app_outlined),
-              title: Text('播放手势'),
-              subtitle: Text(
-                '单击显示或隐藏控件；上下滑动切换分集；左右滑动调节进度。长按 2 倍速，按住后左右滑动可快进快退，松手跳转。',
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.fit_screen),
-              title: Text(_fill ? '显示完整画面' : '等比例铺满（裁切边缘）'),
-              onTap: () {
-                Navigator.pop(context);
+      ListenableBuilder(
+        listenable: widget.store.preferences,
+        builder: (context, _) => PlayerMoreSheet(
+          autoAdvance: widget.store.preferences.autoAdvance,
+          fill: _fill,
+          pipEnabled: item != null && !_localBlocked,
+          castEnabled: item != null && !_pipActive,
+          qualities: item?.media?.qualities ?? const [],
+          quality: item?.media?.quality,
+          onAutoAdvance: (value) => perform(
+            context,
+            () => widget.store.preferences.setPlayback(advance: value),
+          ),
+          onQuality: (quality) {
+            Navigator.pop(context);
+            _retry(quality: quality);
+          },
+          onAction: (action) {
+            final wasPlaying =
+                _player.videoPlayerController?.value.isPlaying == true;
+            final orientation = MediaQuery.orientationOf(context);
+            Navigator.pop(context);
+            switch (action) {
+              case PlayerMenuAction.related:
+              case PlayerMenuAction.cast:
+                requested = action;
+                break;
+              case PlayerMenuAction.fit:
                 setState(() => _fill = !_fill);
                 unawaited(_applyVideoFit());
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.screen_rotation_outlined),
-              title: const Text('切换横竖屏'),
-              onTap: () {
-                Navigator.pop(context);
+                break;
+              case PlayerMenuAction.orientation:
                 unawaited(
                   SystemChrome.setPreferredOrientations(
-                    MediaQuery.orientationOf(context) == Orientation.portrait
+                    orientation == Orientation.portrait
                         ? [
                             DeviceOrientation.landscapeLeft,
                             DeviceOrientation.landscapeRight,
@@ -1326,80 +1261,39 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                         : [DeviceOrientation.portraitUp],
                   ),
                 );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.picture_in_picture_alt),
-              title: const Text('画中画'),
-              enabled: item != null && !_localBlocked,
-              onTap: () {
-                final wasPlaying =
-                    _player.videoPlayerController?.value.isPlaying == true;
-                Navigator.pop(context);
+                break;
+              case PlayerMenuAction.pip:
                 if (item != null) {
-                  perform(context, () => _enterPictureInPicture(wasPlaying));
+                  perform(
+                    this.context,
+                    () => _enterPictureInPicture(wasPlaying),
+                  );
                 }
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.cast),
-              title: const Text('投屏到电视'),
-              enabled: item != null && !_pipActive,
-              onTap: () {
-                castRequested = true;
-                Navigator.pop(context);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.download_outlined),
-              title: const Text('下载当前集'),
-              onTap: () {
-                Navigator.pop(context);
+                break;
+              case PlayerMenuAction.download:
                 perform(
-                  context,
+                  this.context,
                   () => widget.downloads.enqueue(
                     widget.drama,
                     widget.episodes[_index],
                     widget.episodeIndices?[_index] ?? _index,
                   ),
                 );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.lock_outline),
-              title: const Text('锁定手势'),
-              onTap: () {
-                Navigator.pop(context);
+                break;
+              case PlayerMenuAction.lock:
                 setState(() {
                   _locked = true;
                   _controls = false;
                 });
-              },
-            ),
-            if ((item?.media?.qualities.length ?? 0) > 1)
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Wrap(
-                  spacing: 8,
-                  children: [
-                    for (final quality in item!.media!.qualities)
-                      ChoiceChip(
-                        label: Text('${quality}P'),
-                        selected: quality == item.media!.quality,
-                        onSelected: (_) {
-                          Navigator.pop(context);
-                          _retry(quality: quality);
-                        },
-                      ),
-                  ],
-                ),
-              ),
-          ],
+                break;
+            }
+          },
         ),
       ),
     );
-    if (relatedRequested && mounted) await _showRelated();
-    if (castRequested && mounted) await _cast();
+    if (!mounted) return;
+    if (requested == PlayerMenuAction.related) await _showRelated();
+    if (requested == PlayerMenuAction.cast) await _cast();
   }
 
   Widget _page(BuildContext context, int index) {
@@ -1499,7 +1393,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           if (_localBlocked) return;
           setState(() => _speed = speed);
           unawaited(
-            perform(context, () => widget.store.setPlayback(speed: speed)),
+            perform(
+              context,
+              () => widget.store.preferences.setPlayback(speed: speed),
+            ),
           );
           if (_active != null) unawaited(_player.setSpeed(speed));
           _armHide();
@@ -1791,7 +1688,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _preloadTimer?.cancel();
     _settleTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    widget.store.removeListener(_preferencesChanged);
+    widget.store.preferences.removeListener(_preferencesChanged);
     _network?.cancel();
     _player.removeEventsListener(_event);
     if (_nativeEvents case final events?) unawaited(events.cancel());
@@ -1815,118 +1712,4 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
     super.dispose();
   }
-}
-
-/// Only the controls rebuild for position updates, never the video/page tree.
-class PlayerTransport extends StatefulWidget {
-  const PlayerTransport({
-    super.key,
-    required this.duration,
-    required this.position,
-    required this.playing,
-    required this.enabled,
-    required this.speed,
-    this.preparing = false,
-    required this.onPlay,
-    required this.onEpisodes,
-    required this.onSpeed,
-    required this.onScrub,
-    required this.onSeek,
-  });
-  final double duration, position, speed;
-  final bool playing, enabled, preparing;
-  final VoidCallback onPlay, onEpisodes;
-  final ValueChanged<double> onSpeed, onSeek;
-  final ValueChanged<bool> onScrub;
-  @override
-  State<PlayerTransport> createState() => _PlayerTransportState();
-}
-
-class _PlayerTransportState extends State<PlayerTransport> {
-  double? _preview;
-  String _time(double ms) {
-    final seconds = ms ~/ 1000;
-    return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
-  }
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 8),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Slider(
-          value: (_preview ?? widget.position).clamp(0, widget.duration),
-          max: widget.duration > 0 ? widget.duration : 1,
-          activeColor: const Color(0xFF9DCDB0),
-          onChangeStart: widget.enabled && widget.duration > 0
-              ? (value) {
-                  widget.onScrub(true);
-                  setState(() => _preview = value);
-                }
-              : null,
-          onChanged: widget.enabled && widget.duration > 0
-              ? (value) => setState(() => _preview = value)
-              : null,
-          onChangeEnd: widget.enabled && widget.duration > 0
-              ? (value) {
-                  widget.onSeek(value);
-                  widget.onScrub(false);
-                  setState(() => _preview = null);
-                }
-              : null,
-        ),
-        Row(
-          children: [
-            IconButton(
-              tooltip: widget.playing ? '暂停' : '播放',
-              onPressed: widget.enabled ? widget.onPlay : null,
-              icon: Icon(
-                widget.playing ? Icons.pause : Icons.play_arrow,
-                color: Colors.white,
-              ),
-            ),
-            Expanded(
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '${_time(_preview ?? widget.position)} / ${widget.preparing ? '已准备 ' : ''}${_time(widget.duration)}',
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-              ),
-            ),
-            PopupMenuButton<double>(
-              tooltip: '播放倍速',
-              initialValue: widget.speed,
-              onOpened: () => widget.onScrub(true),
-              onCanceled: () => widget.onScrub(false),
-              onSelected: (speed) {
-                widget.onSpeed(speed);
-                widget.onScrub(false);
-              },
-              itemBuilder: (_) => [
-                for (final speed in [.75, 1.0, 1.25, 1.5, 2.0])
-                  PopupMenuItem(value: speed, child: Text('$speed 倍速')),
-              ],
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Text(
-                  '${widget.speed}x',
-                  style: const TextStyle(color: Colors.white),
-                ),
-              ),
-            ),
-            TextButton(
-              onPressed: widget.onEpisodes,
-              child: const Text(
-                '选集',
-                style: TextStyle(color: Color(0xFF9DCDB0)),
-              ),
-            ),
-          ],
-        ),
-      ],
-    ),
-  );
 }

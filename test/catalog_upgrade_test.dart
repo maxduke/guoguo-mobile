@@ -74,8 +74,8 @@ void main() {
       final provider = UpgradeProvider()..gate = Completer();
       final storage = MemoryStorage();
       final store = AppStore(storage: storage, provider: provider);
-      store.favorites[drama.key] = drama;
-      store.history[drama.key] = WatchRecord(
+      store.records.favorites[drama.key] = drama;
+      store.records.history[drama.key] = WatchRecord(
         drama: drama,
         episodeId: 'e3',
         episodeIndex: 2,
@@ -83,8 +83,8 @@ void main() {
         durationMs: 60000,
         updatedAt: DateTime.utc(2026),
       );
-      final first = store.refreshDetail(drama),
-          second = store.refreshDetail(drama);
+      final first = store.catalog.refreshDetail(drama),
+          second = store.catalog.refreshDetail(drama);
       provider.gate!.complete({
         'item': {
           ...drama.toJson(),
@@ -98,16 +98,16 @@ void main() {
       });
       await Future.wait([first, second]);
       expect(provider.calls, ['detail']);
-      expect(store.currentDrama(drama).description, drama.description);
-      expect(store.history[drama.key]!.positionMs, 12345);
-      expect(store.history[drama.key]!.drama.cover, 'new');
-      await store.refreshDetail(drama);
+      expect(store.catalog.currentDrama(drama).description, drama.description);
+      expect(store.records.history[drama.key]!.positionMs, 12345);
+      expect(store.records.history[drama.key]!.drama.cover, 'new');
+      await store.catalog.refreshDetail(drama);
       expect(provider.calls.length, 1);
       final restored = AppStore(storage: storage, provider: provider);
       await restored.load();
-      expect(restored.favorites[drama.key]!.vip, true);
-      expect(restored.favorites[drama.key]!.tags, ['动作']);
-      expect(restored.currentDrama(drama).heat, '3万');
+      expect(restored.records.favorites[drama.key]!.vip, true);
+      expect(restored.records.favorites[drama.key]!.tags, ['动作']);
+      expect(restored.catalog.currentDrama(drama).heat, '3万');
       restored.dispose();
       store.dispose();
     },
@@ -126,14 +126,14 @@ void main() {
       };
     final storage = MemoryStorage();
     final store = AppStore(storage: storage, provider: provider);
-    store.catalogs[old.source] = [old];
-    store.favorites[old.key] = old;
-    await store.refreshDetail(old);
-    expect(store.currentDrama(old).tags, isEmpty);
-    expect(store.favorites[old.key]!.tags, isEmpty);
+    store.catalog.catalogs[old.source] = [old];
+    store.records.favorites[old.key] = old;
+    await store.catalog.refreshDetail(old);
+    expect(store.catalog.currentDrama(old).tags, isEmpty);
+    expect(store.records.favorites[old.key]!.tags, isEmpty);
     final restored = AppStore(storage: storage, provider: provider);
     await restored.load();
-    expect(restored.currentDrama(old).tags, isEmpty);
+    expect(restored.catalog.currentDrama(old).tags, isEmpty);
     restored.dispose();
     store.dispose();
   });
@@ -144,17 +144,17 @@ void main() {
         'item': {...drama.toJson(), 'id': 'other'},
       };
     final store = AppStore(storage: MemoryStorage(), provider: provider);
-    store.favorites[drama.key] = drama;
-    expect((await store.refreshDetail(drama)).id, drama.id);
-    expect(store.favorites[drama.key], same(drama));
-    expect(store.detailErrors[drama.key], isNotNull);
+    store.records.favorites[drama.key] = drama;
+    expect((await store.catalog.refreshDetail(drama)).id, drama.id);
+    expect(store.records.favorites[drama.key], same(drama));
+    expect(store.catalog.detailErrors[drama.key], isNotNull);
     store.dispose();
   });
 
   testWidgets('clearing query suppresses stale suggestions', (tester) async {
     final provider = UpgradeProvider()..gate = Completer();
     final store = AppStore(storage: MemoryStorage(), provider: provider);
-    store.catalogs[DramaSource.hongguo] = [drama];
+    store.catalog.catalogs[DramaSource.hongguo] = [drama];
     final downloads = DownloadStore(store);
     await tester.pumpWidget(
       MaterialApp(
@@ -185,7 +185,7 @@ void main() {
   ) async {
     final provider = UpgradeProvider()..gate = Completer();
     final store = AppStore(storage: MemoryStorage(), provider: provider);
-    store.catalogs[DramaSource.hongguo] = [drama];
+    store.catalog.catalogs[DramaSource.hongguo] = [drama];
     final downloads = DownloadStore(store);
     await tester.pumpWidget(
       MaterialApp(

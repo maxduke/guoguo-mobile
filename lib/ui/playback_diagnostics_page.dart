@@ -10,7 +10,7 @@ class PlaybackDiagnosticsPage extends StatelessWidget {
   final AppStore store;
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: store,
+    listenable: Listenable.merge([store, store.preferences]),
     builder: (context, _) => Scaffold(
       appBar: AppBar(
         title: const Text('播放诊断'),
@@ -55,9 +55,11 @@ class PlaybackDiagnosticsPage extends StatelessWidget {
             subtitle: const Text(
               '仅用于从头播放的加密 MP4（主要为红果），已能直接播放的视频不受影响。进度条范围随已准备内容增长。续播、手动进入画中画和投屏时使用完整准备；自动画中画继续当前播放。',
             ),
-            value: store.progressivePreparation,
-            onChanged: (value) =>
-                perform(context, () => store.setPlayback(progressive: value)),
+            value: store.preferences.progressivePreparation,
+            onChanged: (value) => perform(
+              context,
+              () => store.preferences.setPlayback(progressive: value),
+            ),
           ),
           const SizedBox(height: 16),
           const Text('仅保留最近 30 条本地记录，不含剧名、播放地址或密钥。开播时间以播放进度首次前进为准，并非精确首帧时间。'),

@@ -77,21 +77,21 @@ void main() {
     () async {
       final storage = MemoryStorage();
       final store = AppStore(storage: storage, provider: RefreshProvider());
-      await store.toggleFavorite(drama);
+      await store.records.toggleFavorite(drama);
       final state = store.snapshot();
       final records = state['records'] as Map;
       records['favorites'] = [
         {...drama.toJson(), 'source': 'unknown'},
       ];
       expect(
-        () => store.inspectBackup(jsonEncode(records)),
+        () => store.records.inspectBackup(jsonEncode(records)),
         throwsFormatException,
       );
-      expect(store.favorites.keys, [drama.key]);
+      expect(store.records.favorites.keys, [drama.key]);
       await storage.write(state);
       final restored = AppStore(storage: storage, provider: RefreshProvider());
       await expectLater(restored.load(), throwsFormatException);
-      expect(restored.favorites, isEmpty);
+      expect(restored.records.favorites, isEmpty);
     },
   );
   test(
@@ -136,8 +136,8 @@ void main() {
     () async {
       final provider = RefreshProvider(), storage = MemoryStorage();
       final store = AppStore(storage: storage, provider: provider);
-      final first = store.searchCatalog(DramaSource.hongguo, '修仙');
-      final second = store.searchCatalog(DramaSource.hongguo, ' 修仙 ');
+      final first = store.catalog.searchCatalog(DramaSource.hongguo, '修仙');
+      final second = store.catalog.searchCatalog(DramaSource.hongguo, ' 修仙 ');
       expect(provider.searches, 1);
       provider.result.complete({
         'items': [drama.toJson()],
@@ -149,7 +149,10 @@ void main() {
         ..offline = true;
       await restored.load();
       restored.offline = true;
-      final cached = await restored.searchCatalog(DramaSource.hongguo, '修仙');
+      final cached = await restored.catalog.searchCatalog(
+        DramaSource.hongguo,
+        '修仙',
+      );
       expect(cached.hasMore, isTrue);
       expect(cached.total, 30);
       expect(provider.searches, 1);
@@ -162,7 +165,7 @@ void main() {
       final provider = RefreshProvider()..progressResult = Completer();
       final store = AppStore(storage: MemoryStorage(), provider: provider);
       final partials = <CatalogSearchResult>[];
-      final pending = store.searchCatalog(
+      final pending = store.catalog.searchCatalog(
         DramaSource.hongguo,
         '修仙',
         requestId: 'ui-1',
@@ -208,8 +211,8 @@ void main() {
         source: DramaSource.xingguo,
         title: '现有标题',
       );
-      working.catalogs[DramaSource.xingguo] = [original];
-      final result = await working.importLibraryRows([
+      working.catalog.catalogs[DramaSource.xingguo] = [original];
+      final result = await working.catalog.importLibraryRows([
         const Drama(
           id: 'xingguo:5@长',
           source: DramaSource.xingguo,
@@ -220,21 +223,27 @@ void main() {
       ]);
       expect(result['imported'], 0);
       expect(result['merged'], 1);
-      expect(working.catalogs[DramaSource.xingguo]!.single.id, original.id);
       expect(
-        working.catalogs[DramaSource.xingguo]!.single.title,
+        working.catalog.catalogs[DramaSource.xingguo]!.single.id,
+        original.id,
+      );
+      expect(
+        working.catalog.catalogs[DramaSource.xingguo]!.single.title,
         original.title,
       );
-      expect(working.catalogs[DramaSource.xingguo]!.single.description, '完整简介');
-      await working.selectSource(DramaSource.xingguo);
-      expect(working.library.single.id, original.id);
+      expect(
+        working.catalog.catalogs[DramaSource.xingguo]!.single.description,
+        '完整简介',
+      );
+      await working.catalog.selectSource(DramaSource.xingguo);
+      expect(working.catalog.library.single.id, original.id);
       storage.fail = true;
       await expectLater(
-        working.importLibraryRows([drama]),
+        working.catalog.importLibraryRows([drama]),
         throwsA(isA<FileSystemException>()),
       );
-      expect(working.catalogs[DramaSource.hongguo], isNull);
-      expect(store.catalogs, isEmpty);
+      expect(working.catalog.catalogs[DramaSource.hongguo], isNull);
+      expect(store.catalog.catalogs, isEmpty);
     },
   );
   test('library exchange rejects a malformed batch before merging', () async {
@@ -251,26 +260,26 @@ void main() {
       LibraryExchange(store).inspect(file),
       throwsA(isA<FormatException>()),
     );
-    expect(store.catalogs, isEmpty);
+    expect(store.catalog.catalogs, isEmpty);
   });
   test('failed library import preserves concurrent refresh results', () async {
     final storage = PendingFailingStorage();
     final store = AppStore(storage: storage, provider: RefreshProvider());
-    final operation = store.importLibraryRows([drama]);
+    final operation = store.catalog.importLibraryRows([drama]);
     final failure = expectLater(operation, throwsA(isA<FileSystemException>()));
     const refreshed = Drama(
       id: 'hongguo:7300000000000000002',
       source: DramaSource.hongguo,
       title: '刷新结果',
     );
-    store.catalogs[DramaSource.hongguo] = [drama, refreshed];
-    store.catalogs[DramaSource.huangdou] = const [
+    store.catalog.catalogs[DramaSource.hongguo] = [drama, refreshed];
+    store.catalog.catalogs[DramaSource.huangdou] = const [
       Drama(id: 'huangdou:1', source: DramaSource.huangdou, title: '其他源'),
     ];
     storage.pending.completeError(const FileSystemException('disk full'));
     await failure;
-    expect(store.catalogs[DramaSource.hongguo], [refreshed]);
-    expect(store.catalogs[DramaSource.huangdou]!.single.title, '其他源');
+    expect(store.catalog.catalogs[DramaSource.hongguo], [refreshed]);
+    expect(store.catalog.catalogs[DramaSource.huangdou]!.single.title, '其他源');
   });
   test(
     'file storage snapshots input and preserves queued write order',
@@ -305,8 +314,8 @@ void main() {
     );
     int global = 0, library = 0;
     store.addListener(() => global++);
-    store.libraryChanges.addListener(() => library++);
-    await store.saveWatch(
+    store.records.progress.addListener(() => library++);
+    await store.records.saveWatch(
       WatchRecord(
         drama: drama,
         episodeId: '1',
@@ -318,7 +327,7 @@ void main() {
     );
     expect(global, 0);
     expect(library, 1);
-    expect(store.history[drama.key]!.positionMs, 10);
+    expect(store.records.history[drama.key]!.positionMs, 10);
   });
   test(
     'same-series suggestions stay on source and use natural season order',

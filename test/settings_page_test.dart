@@ -43,7 +43,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await store.setTheme(ThemeMode.dark);
+      await store.preferences.setTheme(ThemeMode.dark);
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(find.text('果果 · 2.3.4 (99)'), 300);
       expect(find.text('果果 · 2.3.4 (99)'), findsOneWidget);

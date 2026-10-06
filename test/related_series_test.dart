@@ -55,7 +55,10 @@ void main() {
       storage.saved.complete();
       await tester.pumpAndSettle();
       expect(provider.searches, isEmpty);
-      expect(store.seasonReminders[firstSeason.key]!.initialized, isFalse);
+      expect(
+        store.records.seasonReminders[firstSeason.key]!.initialized,
+        isFalse,
+      );
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump();
     },
@@ -73,20 +76,23 @@ void main() {
         'items': [secondSeason.toJson()],
       };
       final store = AppStore(storage: MemoryStorage(), provider: provider);
-      await store.toggleSeasonReminder(firstSeason);
+      await store.records.toggleSeasonReminder(firstSeason);
       await mountSection(tester, store);
       await tester.tap(find.text('联网补全'));
       await tester.pump(const Duration(milliseconds: 700));
       await tester.pump();
       expect(find.text(secondSeason.title), findsOneWidget);
-      expect(store.seasonReminders[firstSeason.key]!.initialized, isFalse);
+      expect(
+        store.records.seasonReminders[firstSeason.key]!.initialized,
+        isFalse,
+      );
       await tester.tap(find.text('取消补全'));
       await tester.pump();
       pending.complete({
         'items': [thirdSeason.toJson()],
       });
       await tester.pump();
-      expect(store.searchCache.dramas, isEmpty);
+      expect(store.catalog.searchCache.dramas, isEmpty);
       expect(find.text(thirdSeason.title), findsNothing);
     },
   );
@@ -108,7 +114,7 @@ void main() {
         'items': [thirdSeason.toJson()],
       });
       await tester.pump();
-      expect(store.relatedTo(firstSeason), isEmpty);
+      expect(store.catalog.relatedTo(firstSeason), isEmpty);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump();
       expect(tester.takeException(), isNull);
@@ -120,7 +126,7 @@ void main() {
     (tester) async {
       final provider = SeriesProvider();
       final store = AppStore(storage: MemoryStorage(), provider: provider);
-      store.catalogs[DramaSource.hongguo] = [secondSeason];
+      store.catalog.catalogs[DramaSource.hongguo] = [secondSeason];
       await mountSection(tester, store);
       expect(find.text(secondSeason.title), findsOneWidget);
       expect(find.text('联网补全'), findsOneWidget);
@@ -139,8 +145,11 @@ void main() {
       await mountSection(tester, store);
       await tester.tap(find.text('提醒新季'));
       await tester.pumpAndSettle();
-      expect(store.favorites, isEmpty);
-      expect(store.seasonReminders[firstSeason.key]!.initialized, isTrue);
+      expect(store.records.favorites, isEmpty);
+      expect(
+        store.records.seasonReminders[firstSeason.key]!.initialized,
+        isTrue,
+      );
       expect(find.text('新季'), findsNothing);
       rows = [secondSeason, thirdSeason];
       await tester.tap(find.text('联网补全'));
@@ -149,7 +158,7 @@ void main() {
       expect(find.text('新季'), findsOneWidget);
       await tester.tap(find.text('关闭新季提醒'));
       await tester.pumpAndSettle();
-      expect(store.seasonReminders, isEmpty);
+      expect(store.records.seasonReminders, isEmpty);
     },
   );
 
@@ -159,7 +168,7 @@ void main() {
       final pending = Completer<Map<String, dynamic>>();
       final provider = SeriesProvider()..search = (_) => pending.future;
       final store = AppStore(storage: MemoryStorage(), provider: provider);
-      await store.toggleSeasonReminder(firstSeason);
+      await store.records.toggleSeasonReminder(firstSeason);
       await mountSection(tester, store);
       await tester.tap(find.text('联网补全'));
       await tester.pump();
@@ -171,8 +180,11 @@ void main() {
         'items': [thirdSeason.toJson()],
       });
       await tester.pump();
-      expect(store.seasonReminders[firstSeason.key]!.initialized, isFalse);
-      expect(store.relatedTo(firstSeason), isEmpty);
+      expect(
+        store.records.seasonReminders[firstSeason.key]!.initialized,
+        isFalse,
+      );
+      expect(store.catalog.relatedTo(firstSeason), isEmpty);
       expect(tester.takeException(), isNull);
     },
   );
@@ -188,7 +200,7 @@ void main() {
         storage: MemoryStorage(),
         provider: SeriesProvider(),
       )..offline = true;
-      store.catalogs[DramaSource.hongguo] = [secondSeason];
+      store.catalog.catalogs[DramaSource.hongguo] = [secondSeason];
       await tester.pumpWidget(
         MaterialApp(
           home: MediaQuery(
@@ -207,7 +219,10 @@ void main() {
       );
       await tester.tap(find.text('提醒新季'));
       await tester.pumpAndSettle();
-      expect(store.seasonReminders[firstSeason.key]!.initialized, isFalse);
+      expect(
+        store.records.seasonReminders[firstSeason.key]!.initialized,
+        isFalse,
+      );
       expect(find.text(secondSeason.title), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
@@ -221,17 +236,20 @@ void main() {
         provider: SeriesProvider(),
       )..offline = true;
       await baseline(store);
-      await store.observeSeasons(
+      await store.records.observeSeasons(
         firstSeason,
         const CatalogSearchResult([thirdSeason]),
       );
-      await store.toggleSeasonReminder(secondSeason);
-      await store.observeSeasons(secondSeason, const CatalogSearchResult([]));
-      await store.observeSeasons(
+      await store.records.toggleSeasonReminder(secondSeason);
+      await store.records.observeSeasons(
+        secondSeason,
+        const CatalogSearchResult([]),
+      );
+      await store.records.observeSeasons(
         secondSeason,
         const CatalogSearchResult([thirdSeason]),
       );
-      store.episodeCache[thirdSeason.key] = [
+      store.catalog.episodeCache[thirdSeason.key] = [
         Episode.fromJson({'id': 'episode'}, 0),
       ];
       await tester.pumpWidget(
@@ -245,14 +263,22 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(
-        store.seasonReminders[firstSeason.key]!.seasons[thirdSeason.key]!.read,
+        store
+            .records
+            .seasonReminders[firstSeason.key]!
+            .seasons[thirdSeason.key]!
+            .read,
         isTrue,
       );
       expect(
-        store.seasonReminders[secondSeason.key]!.seasons[thirdSeason.key]!.read,
+        store
+            .records
+            .seasonReminders[secondSeason.key]!
+            .seasons[thirdSeason.key]!
+            .read,
         isTrue,
       );
-      expect(store.favorites, isEmpty);
+      expect(store.records.favorites, isEmpty);
       expect(tester.takeException(), isNull);
     },
   );
@@ -281,7 +307,7 @@ void main() {
       await tester.ensureVisible(find.text('检查更新'));
       await tester.tap(find.text('检查更新'));
       await tester.pumpAndSettle();
-      expect(store.seasonReminders[firstSeason.key]!.unreadCount, 1);
+      expect(store.records.seasonReminders[firstSeason.key]!.unreadCount, 1);
       expect(find.text('发现 1 部新季'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },

@@ -103,6 +103,7 @@ go run ./cmd/probe -source huangguo
 
 - [首版规格](docs/v1-spec.md)
 - [实现状态与已知限制](docs/implementation-status.md)
+- [状态职责与页面更新边界](docs/app-state.md)
 - [移动端技术调研](docs/mobile-feasibility.md)
 - [领域术语](CONTEXT.md)
 - [参考代码来源](native/core/UPSTREAM.md)

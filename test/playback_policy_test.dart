@@ -108,21 +108,25 @@ void main() {
     () async {
       final storage = MemoryStorage();
       final store = AppStore(storage: storage, provider: NoNetwork());
-      expect(store.progressivePreparation, isFalse);
-      await store.setPlayback(advance: false, speed: 1.5, progressive: true);
+      expect(store.preferences.progressivePreparation, isFalse);
+      await store.preferences.setPlayback(
+        advance: false,
+        speed: 1.5,
+        progressive: true,
+      );
       final restored = AppStore(storage: storage, provider: NoNetwork());
       await restored.load();
-      expect(restored.autoAdvance, false);
-      expect(restored.playbackSpeed, 1.5);
-      expect(restored.progressivePreparation, isTrue);
+      expect(restored.preferences.autoAdvance, false);
+      expect(restored.preferences.playbackSpeed, 1.5);
+      expect(restored.preferences.progressivePreparation, isTrue);
       storage.value!.remove('autoAdvance');
       storage.value!.remove('playbackSpeed');
       storage.value!.remove('progressivePreparation');
       final legacy = AppStore(storage: storage, provider: NoNetwork());
       await legacy.load();
-      expect(legacy.autoAdvance, true);
-      expect(legacy.playbackSpeed, 1);
-      expect(legacy.progressivePreparation, isFalse);
+      expect(legacy.preferences.autoAdvance, true);
+      expect(legacy.preferences.playbackSpeed, 1);
+      expect(legacy.preferences.progressivePreparation, isFalse);
       store.dispose();
       restored.dispose();
       legacy.dispose();

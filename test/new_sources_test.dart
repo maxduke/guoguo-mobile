@@ -57,14 +57,14 @@ void main() {
         final provider = SourceProvider();
         final storage = MemoryStorage();
         final store = AppStore(storage: storage, provider: provider);
-        await store.selectSource(source);
-        final catalog = store.refresh();
+        await store.catalog.selectSource(source);
+        final catalog = store.catalog.refresh();
         expect(provider.calls.last, containsPair('source', source.name));
         expect(provider.calls.last, containsPair('method', 'catalog'));
         provider.pending.last.complete(page('catalog', source: source));
         await catalog;
-        expect(store.library.single.source, source);
-        final search = store.searchCatalog(source, '故事', page: 2);
+        expect(store.catalog.library.single.source, source);
+        final search = store.catalog.searchCatalog(source, '故事', page: 2);
         expect(provider.calls.last, containsPair('method', 'search'));
         expect(provider.calls.last, containsPair('source', source.name));
         expect(provider.calls.last, containsPair('page', 2));
@@ -72,13 +72,13 @@ void main() {
           page('search', source: source, more: false),
         );
         expect((await search).items.single.id, '${source.name}:search');
-        expect(store.library.single.id, '${source.name}:catalog');
+        expect(store.catalog.library.single.id, '${source.name}:catalog');
         final restored = AppStore(storage: storage, provider: provider);
         await restored.load();
         restored.offline = true;
-        expect(restored.source, source);
-        expect(restored.library.single.id, '${source.name}:catalog');
-        expect(restored.source.rankings, isTrue);
+        expect(restored.catalog.source, source);
+        expect(restored.catalog.library.single.id, '${source.name}:catalog');
+        expect(restored.catalog.source.rankings, isTrue);
         store.dispose();
         restored.dispose();
       },
@@ -94,7 +94,7 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       final provider = SourceProvider();
       final store = AppStore(storage: MemoryStorage(), provider: provider);
-      await store.selectSource(DramaSource.huangju);
+      await store.catalog.selectSource(DramaSource.huangju);
       final downloads = DownloadStore(store);
       await tester.pumpWidget(
         GuoguoApp(store: store, downloads: downloads, autoLoad: false),
@@ -144,7 +144,7 @@ void main() {
     (tester) async {
       final provider = SourceProvider();
       final store = AppStore(storage: MemoryStorage(), provider: provider);
-      await store.selectSource(DramaSource.huangju);
+      await store.catalog.selectSource(DramaSource.huangju);
       final downloads = DownloadStore(store);
       addTearDown(() {
         downloads.dispose();
@@ -180,13 +180,13 @@ void main() {
           ),
         ),
       );
-      expect(store.source, DramaSource.wuguo);
+      expect(store.catalog.source, DramaSource.wuguo);
       expect(provider.calls.last['method'], 'catalog');
       provider.pending.last.complete(page('伍果目录', source: DramaSource.wuguo));
       await tester.pumpAndSettle();
       previous.complete(page('旧源结果'));
       await tester.pumpAndSettle();
-      expect(store.library.single.title, '伍果目录');
+      expect(store.catalog.library.single.title, '伍果目录');
       expect(find.text('伍果目录'), findsWidgets);
       expect(find.text('旧源结果'), findsNothing);
       expect(
@@ -204,40 +204,47 @@ void main() {
       final provider = SourceProvider();
       final storage = MemoryStorage();
       final store = AppStore(storage: storage, provider: provider);
-      await store.selectSource(DramaSource.huangju);
-      final all = store.refresh();
-      final romance = store.selectCategory('romance');
+      await store.catalog.selectSource(DramaSource.huangju);
+      final all = store.catalog.refresh();
+      final romance = store.catalog.selectCategory('romance');
       provider.pending[1].complete(page('romance-one'));
       await romance;
       provider.pending[0].complete(page('all-one'));
       await all;
-      expect(store.library.single.title, 'romance-one');
-      final search = store.searchCatalog(DramaSource.huangju, 'test', page: 2);
+      expect(store.catalog.library.single.title, 'romance-one');
+      final search = store.catalog.searchCatalog(
+        DramaSource.huangju,
+        'test',
+        page: 2,
+      );
       expect(provider.calls.last['page'], 2);
       provider.pending[2].complete(page('search-only'));
       expect((await search).hasMore, isTrue);
-      expect(store.library.single.title, 'romance-one');
-      final failed = store.loadMore();
+      expect(store.catalog.library.single.title, 'romance-one');
+      final failed = store.catalog.loadMore();
       expect(provider.calls.last['page'], 2);
       provider.pending[3].completeError(const ProviderException('offline'));
       await failed;
-      expect(store.libraryError, contains('offline'));
-      expect(store.library.single.title, 'romance-one');
-      final retry = store.loadMore();
+      expect(store.catalog.libraryError, contains('offline'));
+      expect(store.catalog.library.single.title, 'romance-one');
+      final retry = store.catalog.loadMore();
       expect(provider.calls.last['page'], 2);
       provider.pending[4].complete(page('romance-two', more: false));
       await retry;
-      expect(store.library.length, 2);
-      expect(store.libraryHasMore, isFalse);
-      await store.selectCategory('');
-      expect(store.library.single.title, 'all-one');
+      expect(store.catalog.library.length, 2);
+      expect(store.catalog.libraryHasMore, isFalse);
+      await store.catalog.selectCategory('');
+      expect(store.catalog.library.single.title, 'all-one');
       final restored = AppStore(storage: storage, provider: provider);
       await restored.load();
-      expect(restored.sourceCategories[DramaSource.huangju]!.last.name, '爱情');
-      expect(restored.library.single.title, 'all-one');
-      await restored.selectCategory('romance');
-      expect(restored.library.length, 2);
-      expect(restored.libraryHasMore, isFalse);
+      expect(
+        restored.catalog.sourceCategories[DramaSource.huangju]!.last.name,
+        '爱情',
+      );
+      expect(restored.catalog.library.single.title, 'all-one');
+      await restored.catalog.selectCategory('romance');
+      expect(restored.catalog.library.length, 2);
+      expect(restored.catalog.libraryHasMore, isFalse);
     },
   );
 
@@ -246,19 +253,19 @@ void main() {
     () async {
       final provider = SourceProvider();
       final store = AppStore(storage: MemoryStorage(), provider: provider);
-      await store.selectSource(DramaSource.huangju);
-      var request = store.refresh();
+      await store.catalog.selectSource(DramaSource.huangju);
+      var request = store.catalog.refresh();
       provider.pending.last.complete(page('old'));
       await request;
-      request = store.refresh();
+      request = store.catalog.refresh();
       provider.pending.last.completeError(const ProviderException('failed'));
       await request;
-      expect(store.library.single.title, 'old');
-      request = store.refresh();
+      expect(store.catalog.library.single.title, 'old');
+      request = store.catalog.refresh();
       provider.pending.last.complete(page('new'));
       await request;
-      expect(store.library.single.title, 'new');
-      expect(store.libraryError, isNull);
+      expect(store.catalog.library.single.title, 'new');
+      expect(store.catalog.libraryError, isNull);
     },
   );
 

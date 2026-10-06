@@ -57,12 +57,12 @@ class LibraryExchange {
   }
 
   Future<Map<String, int>> merge(LibraryImportPreview preview) =>
-      store.importLibraryRows(preview.items);
+      store.catalog.importLibraryRows(preview.items);
 
   Future<File> export(Directory directory, {bool compressed = true}) async {
     await directory.create(recursive: true);
     final rows = {
-      for (final drama in store.catalogs.values.expand((rows) => rows))
+      for (final drama in store.catalog.catalogs.values.expand((rows) => rows))
         drama.key: drama,
     }.values.toList();
     if (rows.length > 200000) throw const FormatException('剧库条目超过 20 万条');

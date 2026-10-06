@@ -59,8 +59,8 @@ void main() {
         tester.view.physicalSize = size;
         tester.view.devicePixelRatio = 1;
         final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
-          ..themeMode = mode;
-        store.catalogs[DramaSource.hongguo] = List.generate(
+          ..preferences.themeMode = mode;
+        store.catalog.catalogs[DramaSource.hongguo] = List.generate(
           8,
           (i) => Drama(
             id: '$i',

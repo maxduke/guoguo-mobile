@@ -1,3 +1,4 @@
+import 'package:guoguo_mobile/ui/player_transport.dart';
 import 'dart:async';
 
 import 'package:better_player_plus/better_player_plus.dart';
@@ -166,8 +167,8 @@ void main() {
     final receiver = FakeCastReceiver(), relay = FakeCastRelay();
     final store =
         AppStore(storage: MemoryStorage(), provider: provider ?? NoNetwork())
-          ..prefetch = false
-          ..autoAdvance = autoAdvance;
+          ..preferences.prefetch = false
+          ..preferences.autoAdvance = autoAdvance;
     final downloads = LocalDownloads(store)..available = downloaded;
     addTearDown(() {
       native.uninstall();
@@ -392,8 +393,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(native.sources.last['uri'], 'file:///tmp/cast-two.mp4');
       expect(native.seeks.last, 42000);
-      expect(store.history['hongguo:fixture']!.episodeId, 'two');
-      expect(store.history['hongguo:fixture']!.episodeIndex, 9);
+      expect(store.records.history['hongguo:fixture']!.episodeId, 'two');
+      expect(store.records.history['hongguo:fixture']!.episodeIndex, 9);
       expect(relay.closes, 2);
       await unmount(tester);
     },
@@ -553,7 +554,7 @@ void main() {
           .controller;
       expect(native.seeks.last, 57000);
       expect(player.isPlaying(), false);
-      final record = store.history['hongguo:fixture']!;
+      final record = store.records.history['hongguo:fixture']!;
       expect(record.positionMs, 57000);
       expect(record.episodeId, 'one');
       expect(record.episodeIndex, 5);
@@ -568,7 +569,7 @@ void main() {
       );
       expect(find.byTooltip('播放').hitTestable(), findsOneWidget);
       await unmount(tester);
-      expect(store.history['hongguo:fixture']!.positionMs, 57000);
+      expect(store.records.history['hongguo:fixture']!.positionMs, 57000);
     },
   );
   testWidgets(

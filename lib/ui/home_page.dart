@@ -45,7 +45,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final id = _activeSearchId;
     if (id != null) {
       unawaited(
-        store.cancelSearch(_activeSearchSource!, _activeSearchQuery!, id),
+        store.catalog.cancelSearch(
+          _activeSearchSource!,
+          _activeSearchQuery!,
+          id,
+        ),
       );
     }
     _activeSearchId = null;
@@ -61,17 +65,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _search.addListener(_queryChanged);
     if (widget.autoLoad) {
-      if (store.library.isEmpty) {
-        unawaited(store.refresh());
+      if (store.catalog.library.isEmpty) {
+        unawaited(store.catalog.refresh());
       } else {
-        unawaited(store.loadCategories());
+        unawaited(store.catalog.loadCategories());
       }
     }
   }
 
   @override
   void dispose() {
-    store.cancelUpdateChecks();
+    store.records.cancelUpdateChecks();
     WidgetsBinding.instance.removeObserver(this);
     _cancelSearch();
     _suggestionTimer?.cancel();
@@ -81,13 +85,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   void _open(Drama drama) {
-    store.cancelUpdateChecks();
+    store.records.cancelUpdateChecks();
     openDrama(context, store, widget.downloads, drama);
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) store.cancelUpdateChecks();
+    if (state != AppLifecycleState.resumed) store.records.cancelUpdateChecks();
   }
 
   void _queryChanged() {
@@ -106,14 +110,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       if (_query.isNotEmpty) _category = '全部';
     });
     if (_query.isEmpty ||
-        store.source != DramaSource.hongguo ||
+        store.catalog.source != DramaSource.hongguo ||
         store.offline ||
         !_search.value.composing.isCollapsed) {
       return;
     }
     _suggestionTimer = Timer(const Duration(milliseconds: 300), () async {
       try {
-        final items = await store.suggestions(_query);
+        final items = await store.catalog.suggestions(_query);
         if (mounted && generation == _searchGeneration) {
           setState(() => _suggestions = items);
         }
@@ -135,7 +139,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
     _suggestionTimer?.cancel();
     final generation = ++_searchGeneration;
-    final source = store.source;
+    final source = store.catalog.source;
     _cancelSearch();
     final id = 'home-$generation-${DateTime.now().microsecondsSinceEpoch}';
     _activeSearchId = id;
@@ -151,7 +155,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     });
     if (!source.onlineSearch || store.offline) return;
     try {
-      final result = await store.searchCatalog(
+      final result = await store.catalog.searchCatalog(
         source,
         text,
         page: page,
@@ -159,7 +163,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         onPartial: (partial) {
           if (!mounted ||
               generation != _searchGeneration ||
-              source != store.source) {
+              source != store.catalog.source) {
             return;
           }
           setState(() {
@@ -170,7 +174,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       );
       if (mounted &&
           generation == _searchGeneration &&
-          source == store.source) {
+          source == store.catalog.source) {
         setState(() {
           _remoteResults = {
             for (final row in [
@@ -202,118 +206,135 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-    listenable: store,
-    builder: (context, _) {
-      final wide = MediaQuery.sizeOf(context).width >= 900;
-      return Scaffold(
-        appBar: AppBar(
-          toolbarHeight: 72,
-          titleSpacing: wide ? 32 : 22,
-          title: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primary,
-                  borderRadius: BorderRadius.circular(11),
-                ),
-                child: Icon(
-                  Icons.play_arrow_rounded,
-                  color: Theme.of(context).colorScheme.onPrimary,
-                  size: 28,
-                ),
+  Widget build(BuildContext context) {
+    final wide = MediaQuery.sizeOf(context).width >= 900;
+    return Scaffold(
+      appBar: AppBar(
+        toolbarHeight: 72,
+        titleSpacing: wide ? 32 : 22,
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary,
+                borderRadius: BorderRadius.circular(11),
               ),
-              const SizedBox(width: 10),
-              const Text(
-                '果果',
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 23,
-                  letterSpacing: 2,
-                ),
+              child: Icon(
+                Icons.play_arrow_rounded,
+                color: Theme.of(context).colorScheme.onPrimary,
+                size: 28,
               ),
-              const SizedBox(width: 12),
-              Text(
-                '好故事，接着看',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            IconButton(
-              tooltip: '设置',
-              icon: const Icon(Icons.tune_rounded),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                  builder: (_) =>
-                      SettingsPage(store: store, downloads: widget.downloads),
-                ),
+            ),
+            const SizedBox(width: 10),
+            const Text(
+              '果果',
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 23,
+                letterSpacing: 2,
               ),
             ),
             const SizedBox(width: 12),
+            Text(
+              '好故事，接着看',
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
           ],
         ),
-        body: Column(
-          children: [
-            if (store.offline)
-              const _Notice('当前离线 · 可以浏览缓存与观看已下载分集', Icons.wifi_off_rounded),
-            if (store.persistenceError != null)
-              _Notice(store.persistenceError!, Icons.warning_amber_rounded),
-            if (store.cachePersistenceError != null)
-              _Notice(
-                store.cachePersistenceError!,
-                Icons.warning_amber_rounded,
+        actions: [
+          IconButton(
+            tooltip: '设置',
+            icon: const Icon(Icons.tune_rounded),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) =>
+                    SettingsPage(store: store, downloads: widget.downloads),
               ),
-            Expanded(
-              child: IndexedStack(
-                index: _tab,
-                children: [
-                  _library(wide),
-                  _personal(wide),
-                  DownloadsPage(
-                    store: store,
-                    downloads: widget.downloads,
-                    onOpen: _open,
+            ),
+          ),
+          const SizedBox(width: 12),
+        ],
+      ),
+      body: Column(
+        children: [
+          ListenableBuilder(
+            listenable: store,
+            builder: (context, _) => Column(
+              children: [
+                if (store.offline)
+                  const _Notice(
+                    '当前离线 · 可以浏览缓存与观看已下载分集',
+                    Icons.wifi_off_rounded,
                   ),
-                ],
-              ),
+                if (store.persistenceError != null)
+                  _Notice(store.persistenceError!, Icons.warning_amber_rounded),
+                if (store.cachePersistenceError != null)
+                  _Notice(
+                    store.cachePersistenceError!,
+                    Icons.warning_amber_rounded,
+                  ),
+              ],
             ),
-          ],
-        ),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: _tab,
-          onDestinationSelected: (v) {
-            if (v != _tab) store.cancelUpdateChecks();
-            setState(() => _tab = v);
-          },
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.grid_view_outlined),
-              selectedIcon: Icon(Icons.grid_view_rounded),
-              label: '剧库',
+          ),
+          Expanded(
+            child: IndexedStack(
+              index: _tab,
+              children: [
+                ListenableBuilder(
+                  listenable: Listenable.merge([store.catalog, store]),
+                  builder: (context, _) => _library(wide),
+                ),
+                ListenableBuilder(
+                  listenable: Listenable.merge([
+                    store.records,
+                    store.records.progress,
+                    store,
+                  ]),
+                  builder: (context, _) => _personal(wide),
+                ),
+                DownloadsPage(
+                  store: store,
+                  downloads: widget.downloads,
+                  onOpen: _open,
+                ),
+              ],
             ),
-            NavigationDestination(
-              icon: Icon(Icons.bookmarks_outlined),
-              selectedIcon: Icon(Icons.bookmarks_rounded),
-              label: '追剧',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.downloading_outlined),
-              selectedIcon: Icon(Icons.downloading_rounded),
-              label: '下载',
-            ),
-          ],
-        ),
-      );
-    },
-  );
+          ),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tab,
+        onDestinationSelected: (v) {
+          if (v != _tab) store.records.cancelUpdateChecks();
+          setState(() => _tab = v);
+        },
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.grid_view_outlined),
+            selectedIcon: Icon(Icons.grid_view_rounded),
+            label: '剧库',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.bookmarks_outlined),
+            selectedIcon: Icon(Icons.bookmarks_rounded),
+            label: '追剧',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.downloading_outlined),
+            selectedIcon: Icon(Icons.downloading_rounded),
+            label: '下载',
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _sortMenu() => PopupMenuButton<CatalogSort>(
     initialValue: _sort,
@@ -338,34 +359,37 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Widget _library(bool wide) {
     final rows = queryCatalog(
-      _remoteResults ?? store.library,
+      _remoteResults ?? store.catalog.library,
       query: _remoteResults == null ? _query : '',
-      category: store.source.remoteCategories ? '全部' : _category,
-      hideVip: store.source == DramaSource.huangdou && store.hideVip,
+      category: store.catalog.source.remoteCategories ? '全部' : _category,
+      hideVip:
+          store.catalog.source == DramaSource.huangdou && store.catalog.hideVip,
       sort: _sort,
     );
     final categories = {
       '全部',
-      ...store.library.map((d) => d.category).where((s) => s.isNotEmpty),
+      ...store.catalog.library
+          .map((d) => d.category)
+          .where((s) => s.isNotEmpty),
     }.toList();
-    final loading = store.libraryLoading;
+    final loading = store.catalog.libraryLoading;
     final horizontal = wide ? 40.0 : 22.0;
     return RefreshIndicator(
-      onRefresh: () => store.refresh(),
+      onRefresh: () => store.catalog.refresh(),
       child: NotificationListener<ScrollNotification>(
         onNotification: (notification) {
           if (notification.depth == 0 &&
               notification is ScrollUpdateNotification &&
               notification.metrics.extentAfter < 700 &&
               _query.isEmpty &&
-              store.libraryError == null) {
-            unawaited(store.loadMore());
+              store.catalog.libraryError == null) {
+            unawaited(store.catalog.loadMore());
           }
           return false;
         },
         child: CustomScrollView(
           key: PageStorageKey(
-            'library-${store.source.name}-${store.selectedCategory}',
+            'library-${store.catalog.source.name}-${store.catalog.selectedCategory}',
           ),
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
@@ -380,7 +404,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         style: Theme.of(context).textTheme.headlineLarge,
                       ),
                       const Spacer(),
-                      if (wide && store.source == DramaSource.hongguo)
+                      if (wide && store.catalog.source == DramaSource.hongguo)
                         TextButton.icon(
                           onPressed: _discover,
                           icon: const Icon(
@@ -389,7 +413,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           ),
                           label: const Text('发现推荐'),
                         ),
-                      if (store.source.rankings)
+                      if (store.catalog.source.rankings)
                         TextButton.icon(
                           onPressed: () => Navigator.push(
                             context,
@@ -405,7 +429,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   ),
                   const SizedBox(height: 18),
                   SourceSelector(
-                    value: store.source,
+                    value: store.catalog.source,
                     onChanged: (source) {
                       if (source == null) return;
                       unawaited(
@@ -423,11 +447,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             _searchHasMore = false;
                             _searchPage = 0;
                           });
-                          await store.selectSource(source);
-                          if (store.library.isEmpty) {
-                            await store.refresh(source);
+                          await store.catalog.selectSource(source);
+                          if (store.catalog.library.isEmpty) {
+                            await store.catalog.refresh(source);
                           } else {
-                            await store.loadCategories(source);
+                            await store.catalog.loadCategories(source);
                           }
                         }),
                       );
@@ -439,7 +463,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     onSubmitted: _submit,
                     textInputAction: TextInputAction.search,
                     decoration: InputDecoration(
-                      hintText: '搜索${store.source.label}短剧，找到下一部心动',
+                      hintText: '搜索${store.catalog.source.label}短剧，找到下一部心动',
                       prefixIcon: const Icon(Icons.search_rounded),
                       suffixIcon: _searching
                           ? const Padding(
@@ -471,7 +495,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                     }),
                                   ),
                                 IconButton(
-                                  tooltip: store.source.onlineSearch
+                                  tooltip: store.catalog.source.onlineSearch
                                       ? '联网搜索'
                                       : '筛选缓存',
                                   icon: const Icon(Icons.arrow_forward_rounded),
@@ -482,13 +506,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     ),
                   ),
                   if (_query.isNotEmpty &&
-                      (!store.source.onlineSearch || store.offline))
+                      (!store.catalog.source.onlineSearch || store.offline))
                     Padding(
                       padding: const EdgeInsets.only(top: 10),
                       child: Text(
                         store.offline
                             ? '离线搜索 · 仅显示已缓存的短剧'
-                            : '${store.source.label}暂不支持联网搜索，当前筛选已加载内容',
+                            : '${store.catalog.source.label}暂不支持联网搜索，当前筛选已加载内容',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ),
@@ -513,15 +537,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       ),
                     ),
                   if (_query.isEmpty &&
-                      store.source.onlineSearch &&
-                      store.recentSearches.isNotEmpty)
+                      store.catalog.source.onlineSearch &&
+                      store.catalog.recentSearches.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 12),
                       child: Wrap(
                         spacing: 8,
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          for (final query in store.recentSearches.take(5))
+                          for (final query in store.catalog.recentSearches.take(
+                            5,
+                          ))
                             ActionChip(
                               label: Text(query),
                               onPressed: () => _submit(query),
@@ -529,7 +555,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           IconButton(
                             tooltip: '清除搜索记录',
                             onPressed: () =>
-                                perform(context, store.clearSearches),
+                                perform(context, store.catalog.clearSearches),
                             icon: const Icon(Icons.delete_outline, size: 18),
                           ),
                         ],
@@ -548,7 +574,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   if (_query.isEmpty) ...[const SizedBox(height: 16)],
                   if (!wide &&
                       _query.isEmpty &&
-                      store.source == DramaSource.hongguo) ...[
+                      store.catalog.source == DramaSource.hongguo) ...[
                     Card(
                       margin: const EdgeInsets.only(bottom: 18),
                       clipBehavior: Clip.antiAlias,
@@ -598,10 +624,24 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       ),
                     ),
                   ],
-                  if (_query.isEmpty && store.recent.isNotEmpty) ...[
-                    _continueCard(store.recent.first),
-                    const SizedBox(height: 22),
-                  ],
+                  if (_query.isEmpty)
+                    ListenableBuilder(
+                      listenable: Listenable.merge([
+                        store.records,
+                        store.records.progress,
+                      ]),
+                      builder: (context, _) {
+                        final recent = store.records.recent;
+                        return recent.isEmpty
+                            ? const SizedBox.shrink()
+                            : Column(
+                                children: [
+                                  _continueCard(recent.first),
+                                  const SizedBox(height: 22),
+                                ],
+                              );
+                      },
+                    ),
                   Row(
                     children: [
                       Text(
@@ -622,7 +662,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       else
                         IconButton(
                           tooltip: '更新当前站源',
-                          onPressed: () => store.refresh(),
+                          onPressed: () => store.catalog.refresh(),
                           icon: const Icon(Icons.refresh_rounded),
                         ),
                       Text(
@@ -639,12 +679,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       if (!wide || categories.length <= 1) _sortMenu(),
-                      if (store.source == DramaSource.huangdou)
+                      if (store.catalog.source == DramaSource.huangdou)
                         FilterChip(
-                          label: Text(store.hideVip ? '隐藏 VIP' : '显示 VIP'),
-                          selected: store.hideVip,
-                          onSelected: (value) =>
-                              perform(context, () => store.setHideVip(value)),
+                          label: Text(
+                            store.catalog.hideVip ? '隐藏 VIP' : '显示 VIP',
+                          ),
+                          selected: store.catalog.hideVip,
+                          onSelected: (value) => perform(
+                            context,
+                            () => store.catalog.setHideVip(value),
+                          ),
                         ),
                       if (_category != '全部' && _query.isNotEmpty)
                         TextButton(
@@ -653,40 +697,48 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         ),
                     ],
                   ),
-                  if (store.source == DramaSource.huangdou &&
-                      store.library.any((d) => d.vip == null))
+                  if (store.catalog.source == DramaSource.huangdou &&
+                      store.catalog.library.any((d) => d.vip == null))
                     Text(
                       '部分剧集会员状态待识别，打开详情后更新',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
-                  if (store.source.remoteCategories && _query.isEmpty)
+                  if (store.catalog.source.remoteCategories && _query.isEmpty)
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: Row(
                         children: [
                           for (final category
-                              in store.sourceCategories[store.source] ??
+                              in store.catalog.sourceCategories[store
+                                      .catalog
+                                      .source] ??
                                   [const SourceCategory('', '全部')])
                             Padding(
                               padding: const EdgeInsets.only(right: 8),
                               child: ChoiceChip(
                                 label: Text(category.name),
-                                selected: store.selectedCategory == category.id,
+                                selected:
+                                    store.catalog.selectedCategory ==
+                                    category.id,
                                 onSelected: (_) => perform(
                                   context,
-                                  () => store.selectCategory(category.id),
+                                  () =>
+                                      store.catalog.selectCategory(category.id),
                                 ),
                               ),
                             ),
-                          if (store.categoryErrors.containsKey(store.source))
+                          if (store.catalog.categoryErrors.containsKey(
+                            store.catalog.source,
+                          ))
                             TextButton(
-                              onPressed: () => store.loadCategories(),
+                              onPressed: () => store.catalog.loadCategories(),
                               child: const Text('重试加载分类'),
                             ),
                         ],
                       ),
                     ),
-                  if (!store.source.remoteCategories && categories.length > 1)
+                  if (!store.catalog.source.remoteCategories &&
+                      categories.length > 1)
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: Row(
@@ -705,11 +757,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         ],
                       ),
                     ),
-                  if (store.libraryError != null)
+                  if (store.catalog.libraryError != null)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       child: _Notice(
-                        store.libraryError!,
+                        store.catalog.libraryError!,
                         Icons.cloud_off_outlined,
                       ),
                     ),
@@ -732,11 +784,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       ? '首次加载需要一点时间，内容会保存在设备上'
                       : _query.isNotEmpty
                       ? '换个关键词，或点击搜索联网查找'
-                      : '轻点更新，加载${store.source.label}剧库',
+                      : '轻点更新，加载${store.catalog.source.label}剧库',
                   action: loading
                       ? null
                       : FilledButton.icon(
-                          onPressed: () => store.refresh(),
+                          onPressed: () => store.catalog.refresh(),
                           icon: const Icon(Icons.refresh),
                           label: const Text('更新剧库'),
                         ),
@@ -758,13 +810,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         crossAxisSpacing: 14,
                         childAspectRatio: .61,
                       ),
-                      itemBuilder: (context, index) => DramaCard(
-                        drama: rows[index],
-                        onTap: () => _open(rows[index]),
-                        favorite: store.favorites.containsKey(rows[index].key),
-                        onFavorite: () => perform(
-                          context,
-                          () => store.toggleFavorite(rows[index]),
+                      itemBuilder: (context, index) => ListenableBuilder(
+                        listenable: store.records,
+                        builder: (context, _) => DramaCard(
+                          drama: rows[index],
+                          onTap: () => _open(rows[index]),
+                          favorite: store.records.favorites.containsKey(
+                            rows[index].key,
+                          ),
+                          onFavorite: () => perform(
+                            context,
+                            () => store.records.toggleFavorite(rows[index]),
+                          ),
                         ),
                       ),
                     );
@@ -772,7 +829,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 ),
               ),
             if (_query.isNotEmpty &&
-                store.source.onlineSearch &&
+                store.catalog.source.onlineSearch &&
                 (_searchHasMore || _searchError != null))
               SliverToBoxAdapter(
                 child: Center(
@@ -793,7 +850,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   ),
                 ),
               ),
-            if (store.library.isNotEmpty && _query.isEmpty)
+            if (store.catalog.library.isNotEmpty && _query.isEmpty)
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 24),
@@ -801,16 +858,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     child: Column(
                       children: [
                         Text(
-                          '已加载 ${store.library.length} 部 · ${store.libraryHasMore ? "继续下滑加载" : "当前来源已返回完毕"}',
+                          '已加载 ${store.catalog.library.length} 部 · ${store.catalog.libraryHasMore ? "继续下滑加载" : "当前来源已返回完毕"}',
                         ),
                         const SizedBox(height: 8),
                         const Text(
                           '已加载数量不代表全站总量',
                           style: TextStyle(fontSize: 12),
                         ),
-                        if (store.libraryHasMore)
+                        if (store.catalog.libraryHasMore)
                           OutlinedButton.icon(
-                            onPressed: loading ? null : store.loadMore,
+                            onPressed: loading ? null : store.catalog.loadMore,
                             icon: loading
                                 ? const SizedBox(
                                     width: 16,
@@ -835,7 +892,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _continue(WatchRecord record) async {
     if (_resuming) return;
-    store.cancelUpdateChecks();
+    store.records.cancelUpdateChecks();
     setState(() => _resuming = true);
     await perform(
       context,
@@ -902,12 +959,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   );
 
   Widget _personal(bool wide) {
-    final records = store.recent
+    final records = store.records.recent
         .where(
           (v) => _personalSource == null || v.drama.source == _personalSource,
         )
         .toList();
-    final favorites = store.favorites.values
+    final favorites = store.records.favorites.values
         .where((v) => _personalSource == null || v.source == _personalSource)
         .toList();
     return ListView(
@@ -922,8 +979,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ),
         ),
         const SizedBox(height: 24),
-        if (store.recent.isNotEmpty) ...[
-          _continueCard(store.recent.first),
+        if (store.records.recent.isNotEmpty) ...[
+          _continueCard(store.records.recent.first),
           const SizedBox(height: 24),
         ],
         SourceFilter(
@@ -952,11 +1009,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             alignment: Alignment.centerRight,
             child: TextButton.icon(
               onPressed:
-                  store.checkingUpdates ||
-                      (favorites.isEmpty && store.seasonReminders.isEmpty)
+                  store.records.checkingUpdates ||
+                      (favorites.isEmpty &&
+                          store.records.seasonReminders.isEmpty)
                   ? null
                   : () => perform(context, () async {
-                      final completed = await store.checkFavoriteUpdates();
+                      final completed = await store.records
+                          .checkFavoriteUpdates();
                       if (mounted && completed) {
                         ScaffoldMessenger.of(
                           context,
@@ -964,18 +1023,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       }
                     }),
               icon: const Icon(Icons.refresh_rounded),
-              label: Text(store.checkingUpdates ? '正在检查更新…' : '检查更新'),
+              label: Text(store.records.checkingUpdates ? '正在检查更新…' : '检查更新'),
             ),
           ),
         const SizedBox(height: 18),
         if (_favoritesOnly &&
-            store.seasonReminders.values.any(
+            store.records.seasonReminders.values.any(
               (r) =>
                   _personalSource == null || r.anchor.source == _personalSource,
             )) ...[
           Text('新季提醒', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 8),
-          for (final reminder in store.seasonReminders.values.where(
+          for (final reminder in store.records.seasonReminders.values.where(
             (r) =>
                 _personalSource == null || r.anchor.source == _personalSource,
           ))
@@ -1001,7 +1060,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       icon: const Icon(Icons.notifications_off_outlined),
                       onPressed: () => perform(
                         context,
-                        () => store.toggleSeasonReminder(reminder.anchor),
+                        () =>
+                            store.records.toggleSeasonReminder(reminder.anchor),
                       ),
                     ),
                   ),
@@ -1040,7 +1100,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ...(_favoritesOnly ? favorites : records.map((v) => v.drama)).map((
             drama,
           ) {
-            final record = store.history[drama.key];
+            final record = store.records.history[drama.key];
             return Card(
               margin: const EdgeInsets.only(bottom: 12),
               child: ListTile(
@@ -1056,7 +1116,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   overflow: TextOverflow.ellipsis,
                 ),
                 subtitle: Text(
-                  '${drama.source.label}${record == null ? '' : ' · 第 ${record.episodeIndex + 1} 集'}${store.newEpisodeCount(drama) > 0 ? ' · 新增 ${store.newEpisodeCount(drama)} 集' : ''}',
+                  '${drama.source.label}${record == null ? '' : ' · 第 ${record.episodeIndex + 1} 集'}${store.records.newEpisodeCount(drama) > 0 ? ' · 新增 ${store.records.newEpisodeCount(drama)} 集' : ''}',
                 ),
                 onTap: () => _open(drama),
                 trailing: IconButton(
@@ -1067,8 +1127,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   onPressed: () => perform(
                     context,
                     () => _favoritesOnly
-                        ? store.toggleFavorite(drama)
-                        : store.removeHistory(drama.key),
+                        ? store.records.toggleFavorite(drama)
+                        : store.records.removeHistory(drama.key),
                   ),
                 ),
               ),

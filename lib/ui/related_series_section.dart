@@ -77,13 +77,13 @@ class RelatedSeriesSectionState extends State<RelatedSeriesSection>
     if (!_foreground) return;
     cancelLookup();
     final generation = ++_generation;
-    final expected = widget.store.seasonReminders[widget.drama.key];
+    final expected = widget.store.records.seasonReminders[widget.drama.key];
     setState(() {
       _loading = true;
       _notice = null;
     });
     try {
-      final lookup = widget.store.lookupSeries(
+      final lookup = widget.store.catalog.lookupSeries(
         widget.drama,
         refresh: true,
         onPartial: (result) {
@@ -97,7 +97,7 @@ class RelatedSeriesSectionState extends State<RelatedSeriesSection>
       if (!mounted || generation != _generation) return;
       _partial = result.items;
       if (expected != null) {
-        await widget.store.observeSeasons(
+        await widget.store.records.observeSeasons(
           widget.drama,
           result,
           expected: expected,
@@ -129,12 +129,14 @@ class RelatedSeriesSectionState extends State<RelatedSeriesSection>
   }
 
   Future<void> _toggleReminder() async {
-    final enabled = widget.store.seasonReminders.containsKey(widget.drama.key);
+    final enabled = widget.store.records.seasonReminders.containsKey(
+      widget.drama.key,
+    );
     cancelLookup();
     final generation = _generation;
     setState(() => _changing = true);
     try {
-      await widget.store.toggleSeasonReminder(widget.drama);
+      await widget.store.records.toggleSeasonReminder(widget.drama);
       if (mounted &&
           _foreground &&
           generation == _generation &&
@@ -149,13 +151,18 @@ class RelatedSeriesSectionState extends State<RelatedSeriesSection>
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: widget.store,
+    listenable: Listenable.merge([
+      widget.store,
+      widget.store.catalog,
+      widget.store.records,
+      widget.store.records.progress,
+    ]),
     builder: (context, _) {
       final rows = relatedSeries(widget.drama, [
-        ...widget.store.relatedTo(widget.drama),
+        ...widget.store.catalog.relatedTo(widget.drama),
         ..._partial,
       ]);
-      final reminder = widget.store.seasonReminders[widget.drama.key];
+      final reminder = widget.store.records.seasonReminders[widget.drama.key];
       final title = SeriesTitle.parse(widget.drama.title);
       final online =
           widget.drama.source == DramaSource.hongguo &&

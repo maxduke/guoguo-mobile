@@ -1,3 +1,4 @@
+import 'package:guoguo_mobile/ui/player_transport.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -298,8 +299,8 @@ void main() {
         ..install();
       addTearDown(platform.uninstall);
       final store = AppStore(storage: MemoryStorage(), provider: _Routes())
-        ..progressivePreparation = true
-        ..prefetch = false;
+        ..preferences.progressivePreparation = true
+        ..preferences.prefetch = false;
       final downloads = _OnlineDownloads(store);
       final job = _ProgressivePreparer();
       addTearDown(() {
@@ -353,9 +354,9 @@ void main() {
         ..install();
       addTearDown(platform.uninstall);
       final store = AppStore(storage: MemoryStorage(), provider: _Routes())
-        ..progressivePreparation = true
-        ..prefetch = false
-        ..autoAdvance = false;
+        ..preferences.progressivePreparation = true
+        ..preferences.prefetch = false
+        ..preferences.autoAdvance = false;
       final downloads = _OnlineDownloads(store);
       final first = _ProgressivePreparer();
       final second = _ProgressivePreparer();
@@ -452,8 +453,8 @@ void main() {
       addTearDown(platform.uninstall);
       final provider = _Routes();
       final store = AppStore(storage: MemoryStorage(), provider: provider)
-        ..progressivePreparation = true
-        ..prefetch = false;
+        ..preferences.progressivePreparation = true
+        ..preferences.prefetch = false;
       final downloads = _OnlineDownloads(store);
       final gate = Completer<void>();
       final first = _ProgressivePreparer()..cancelGate = gate;
@@ -533,7 +534,7 @@ void main() {
       addTearDown(platform.uninstall);
       final provider = _Routes();
       final store = AppStore(storage: MemoryStorage(), provider: provider)
-        ..prefetch = false;
+        ..preferences.prefetch = false;
       final downloads = _OnlineDownloads(store);
       addTearDown(() {
         downloads.dispose();
@@ -692,9 +693,9 @@ void main() {
         addTearDown(platform.uninstall);
         final provider = _Routes();
         final store = AppStore(storage: MemoryStorage(), provider: provider)
-          ..progressivePreparation = true
-          ..prefetch = false
-          ..playbackSpeed = 1.5;
+          ..preferences.progressivePreparation = true
+          ..preferences.prefetch = false
+          ..preferences.playbackSpeed = 1.5;
         final downloads = _OnlineDownloads(store);
         final jobs = <_ProgressivePreparer>[];
         addTearDown(() {
@@ -805,8 +806,8 @@ void main() {
           ..install();
         addTearDown(platform.uninstall);
         final store = AppStore(storage: MemoryStorage(), provider: _Routes())
-          ..progressivePreparation = true
-          ..prefetch = false;
+          ..preferences.progressivePreparation = true
+          ..preferences.prefetch = false;
         final downloads = _OnlineDownloads(store);
         final jobs = <_ProgressivePreparer>[];
         addTearDown(() {
@@ -906,8 +907,8 @@ void main() {
           ..install();
         addTearDown(platform.uninstall);
         final store = AppStore(storage: MemoryStorage(), provider: _Routes())
-          ..progressivePreparation = true
-          ..prefetch = false;
+          ..preferences.progressivePreparation = true
+          ..preferences.prefetch = false;
         final downloads = _OnlineDownloads(store);
         final jobs = <_ProgressivePreparer>[];
         addTearDown(() {
@@ -972,7 +973,7 @@ void main() {
         ..install();
       addTearDown(platform.uninstall);
       final store = AppStore(storage: MemoryStorage(), provider: _Routes())
-        ..progressivePreparation = true;
+        ..preferences.progressivePreparation = true;
       final downloads = _OnlineDownloads(store);
       final first = _ProgressivePreparer()..produced = true;
       final second = _ProgressivePreparer()..readyGate = Completer<void>();
@@ -1038,8 +1039,8 @@ void main() {
       final platform = _NativePlayer()..install();
       addTearDown(platform.uninstall);
       final store = AppStore(storage: MemoryStorage(), provider: _Routes())
-        ..progressivePreparation = true
-        ..prefetch = false;
+        ..preferences.progressivePreparation = true
+        ..preferences.prefetch = false;
       final downloads = _OnlineDownloads(store);
       final first = _ProgressivePreparer()..produced = true;
       final second = _ProgressivePreparer()..readyGate = Completer<void>();
@@ -1094,8 +1095,8 @@ void main() {
       final platform = _NativePlayer()..install();
       addTearDown(platform.uninstall);
       final store = AppStore(storage: MemoryStorage(), provider: _Routes())
-        ..progressivePreparation = true
-        ..prefetch = false;
+        ..preferences.progressivePreparation = true
+        ..preferences.prefetch = false;
       final downloads = _OnlineDownloads(store);
       addTearDown(() {
         downloads.dispose();
@@ -1147,8 +1148,8 @@ void main() {
         ..install();
       addTearDown(platform.uninstall);
       final store = AppStore(storage: MemoryStorage(), provider: _Routes())
-        ..progressivePreparation = true
-        ..prefetch = false;
+        ..preferences.progressivePreparation = true
+        ..preferences.prefetch = false;
       final downloads = _OnlineDownloads(store);
       final timeline = ValueNotifier(
         const ProgressiveTimeline(
@@ -1236,8 +1237,8 @@ void main() {
       platform.emit('completed');
       await tester.pumpAndSettle();
       expect(platform.sources, hasLength(1));
-      expect(store.history.values.single.durationMs, 8000);
-      expect(store.history.values.single.positionMs, 8000);
+      expect(store.records.history.values.single.durationMs, 8000);
+      expect(store.records.history.values.single.positionMs, 8000);
       await tester.pumpWidget(const SizedBox());
     },
   );
@@ -1253,8 +1254,8 @@ void main() {
       addTearDown(platform.uninstall);
       final storage = MemoryStorage();
       final store = AppStore(storage: storage, provider: _Routes())
-        ..progressivePreparation = true
-        ..prefetch = false;
+        ..preferences.progressivePreparation = true
+        ..preferences.prefetch = false;
       final downloads = _OnlineDownloads(store);
       final timeline = ValueNotifier(
         const ProgressiveTimeline(
@@ -1304,7 +1305,7 @@ void main() {
       await tester.drag(find.byType(EpisodePager), const Offset(0, -500));
       await tester.pumpAndSettle();
       expect(first.disposed, isTrue);
-      final record = store.history.values.single;
+      final record = store.records.history.values.single;
       expect(record.positionMs, 3000);
       expect(record.durationMs, 0);
       expect(WatchRecord.fromJson(record.toJson()).positionMs, 3000);
@@ -1338,15 +1339,15 @@ void main() {
         final platform = _NativePlayer()..install();
         addTearDown(platform.uninstall);
         final store = AppStore(storage: MemoryStorage(), provider: _Routes())
-          ..prefetch = false;
+          ..preferences.prefetch = false;
         const drama = Drama(
           id: 'fixture',
           source: DramaSource.hongguo,
           title: '续播',
         );
         if (resume) {
-          store.progressivePreparation = true;
-          await store.saveWatch(
+          store.preferences.progressivePreparation = true;
+          await store.records.saveWatch(
             WatchRecord(
               drama: drama,
               episodeId: '1',
@@ -1392,8 +1393,8 @@ void main() {
       addTearDown(platform.uninstall);
       final provider = _Routes();
       final store = AppStore(storage: MemoryStorage(), provider: provider)
-        ..playbackSpeed = 1.5
-        ..autoAdvance = false;
+        ..preferences.playbackSpeed = 1.5
+        ..preferences.autoAdvance = false;
       final downloads = _OnlineDownloads(store);
       addTearDown(() {
         downloads.dispose();
@@ -1470,8 +1471,8 @@ void main() {
       addTearDown(platform.uninstall);
       final provider = _Routes();
       final store = AppStore(storage: MemoryStorage(), provider: provider)
-        ..playbackSpeed = 1.5
-        ..autoAdvance = false;
+        ..preferences.playbackSpeed = 1.5
+        ..preferences.autoAdvance = false;
       final downloads = _OnlineDownloads(store);
       addTearDown(() {
         downloads.dispose();
@@ -1832,13 +1833,13 @@ void main() {
       // A transient resume does not end PiP until native reports pipStop.
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-      store.prefetch = false;
+      store.preferences.prefetch = false;
       platform.emit('completed');
       await tester.pumpAndSettle();
       expect(platform.sources.last, contains('pip_episode_3.mp4'));
       expect(platform.ids, [7, 7, 7]);
       expect(platform.plays, hasLength(3));
-      store.prefetch = true;
+      store.preferences.prefetch = true;
       platform.emit('play');
       await tester.pump(); // Arm the delayed prefetch before closing PiP.
       final pausesBeforeClose = platform.pauses.length;

@@ -31,21 +31,21 @@ AppStore makeStore(LocalStorage storage) =>
 
 Future<Map<String, dynamic>> savedState() async {
   final store = makeStore(MemoryStorage());
-  await store.saveWatch(watch(1));
-  await store.toggleFavorite(anchor);
-  await store.setTheme(ThemeMode.dark);
-  await store.setPlayback(progressive: true, speed: 1.5);
-  store.selectedCategories[DramaSource.huangguo] = 'ai';
-  store.catalogs[DramaSource.hongguo] = [anchor, season];
-  store.catalogPages[DramaSource.hongguo] = 3;
-  store.hasMore[DramaSource.hongguo] = true;
-  store.episodeCache[anchor.key] = [
+  await store.records.saveWatch(watch(1));
+  await store.records.toggleFavorite(anchor);
+  await store.preferences.setTheme(ThemeMode.dark);
+  await store.preferences.setPlayback(progressive: true, speed: 1.5);
+  store.catalog.selectedCategories[DramaSource.huangguo] = 'ai';
+  store.catalog.catalogs[DramaSource.hongguo] = [anchor, season];
+  store.catalog.catalogPages[DramaSource.hongguo] = 3;
+  store.catalog.hasMore[DramaSource.hongguo] = true;
+  store.catalog.episodeCache[anchor.key] = [
     const Episode(id: 'e1', title: '一', number: 1, raw: {'id': 'e1'}),
     const Episode(id: 'e2', title: '二', number: 2, raw: {'id': 'e2'}),
   ];
-  store.episodeUpdatedAt[anchor.key] = DateTime.utc(2026);
-  store.episodeSeenIds[anchor.key] = {'e1'};
-  store.seasonReminders[anchor.key] = SeasonReminder(
+  store.catalog.episodeUpdatedAt[anchor.key] = DateTime.utc(2026);
+  store.records.episodeSeenIds[anchor.key] = {'e1'};
+  store.records.seasonReminders[anchor.key] = SeasonReminder(
     anchor: anchor,
     initialized: true,
     updatedAt: DateTime.utc(2026),
@@ -73,15 +73,15 @@ void main() {
       expect(await file('state.json').readAsBytes(), oldBytes);
       final restored = makeStore(AppFileStorage(directory));
       await restored.load();
-      expect(restored.history[anchor.key]!.positionMs, 1);
-      expect(restored.catalogPages[DramaSource.hongguo], 3);
-      expect(restored.newEpisodeCount(anchor), 1);
-      expect(restored.themeMode, ThemeMode.dark);
-      expect(restored.progressivePreparation, true);
-      expect(restored.playbackSpeed, 1.5);
-      expect(restored.selectedCategories[DramaSource.huangguo], 'ai');
-      expect(restored.favorites.keys, [anchor.key]);
-      expect(restored.seasonReminders[anchor.key]!.unreadCount, 1);
+      expect(restored.records.history[anchor.key]!.positionMs, 1);
+      expect(restored.catalog.catalogPages[DramaSource.hongguo], 3);
+      expect(restored.records.newEpisodeCount(anchor), 1);
+      expect(restored.preferences.themeMode, ThemeMode.dark);
+      expect(restored.preferences.progressivePreparation, true);
+      expect(restored.preferences.playbackSpeed, 1.5);
+      expect(restored.catalog.selectedCategories[DramaSource.huangguo], 'ai');
+      expect(restored.records.favorites.keys, [anchor.key]);
+      expect(restored.records.seasonReminders[anchor.key]!.unreadCount, 1);
       final durable =
           jsonDecode(await file('records.json').readAsString()) as Map;
       expect(durable.keys, isNot(contains('catalogs')));
@@ -97,22 +97,25 @@ void main() {
     await AppFileStorage(directory).writeRecords(await savedState());
     final restored = makeStore(AppFileStorage(directory));
     await restored.load();
-    expect(restored.history[anchor.key]!.positionMs, 1);
-    expect(restored.catalogs, isEmpty);
+    expect(restored.records.history[anchor.key]!.positionMs, 1);
+    expect(restored.catalog.catalogs, isEmpty);
     expect(restored.cachePersistenceError, isNull);
   });
 
   test('saving a watch record leaves cache file bytes unchanged', () async {
     final store = makeStore(AppFileStorage(directory));
     await store.load();
-    await store.saveRecommendations([anchor]);
+    await store.catalog.saveRecommendations([anchor]);
     final before = await file('catalog-cache.json').readAsBytes();
-    await store.saveWatch(watch(15000));
+    await store.records.saveWatch(watch(15000));
     expect(await file('catalog-cache.json').readAsBytes(), before);
     final restored = makeStore(AppFileStorage(directory));
     await restored.load();
-    expect(restored.catalogs[DramaSource.hongguo]!.single.key, anchor.key);
-    expect(restored.history[anchor.key]!.positionMs, 15000);
+    expect(
+      restored.catalog.catalogs[DramaSource.hongguo]!.single.key,
+      anchor.key,
+    );
+    expect(restored.records.history[anchor.key]!.positionMs, 15000);
   });
 
   test(
@@ -122,15 +125,15 @@ void main() {
       await file('catalog-cache.json').writeAsString('{broken');
       final store = makeStore(AppFileStorage(directory));
       await store.load();
-      expect(store.history[anchor.key]!.positionMs, 1);
-      expect(store.themeMode, ThemeMode.dark);
-      expect(store.episodeSeenIds[anchor.key], {'e1'});
-      expect(store.seasonReminders.keys, [anchor.key]);
-      expect(store.catalogs, isEmpty);
+      expect(store.records.history[anchor.key]!.positionMs, 1);
+      expect(store.preferences.themeMode, ThemeMode.dark);
+      expect(store.records.episodeSeenIds[anchor.key], {'e1'});
+      expect(store.records.seasonReminders.keys, [anchor.key]);
+      expect(store.catalog.catalogs, isEmpty);
       expect(store.cachePersistenceError, isNotNull);
-      await store.saveWatch(watch(2));
+      await store.records.saveWatch(watch(2));
       expect(await file('catalog-cache.json').readAsString(), '{broken');
-      await store.saveRecommendations([anchor]);
+      await store.catalog.saveRecommendations([anchor]);
       expect(store.cachePersistenceError, isNull);
     },
   );
@@ -156,8 +159,8 @@ void main() {
         await file('catalog-cache.json').writeAsString(jsonEncode(bad));
         final store = makeStore(AppFileStorage(directory));
         await store.load();
-        expect(store.history[anchor.key]!.positionMs, 1);
-        expect(store.catalogs, isEmpty);
+        expect(store.records.history[anchor.key]!.positionMs, 1);
+        expect(store.catalog.catalogs, isEmpty);
         expect(store.cachePersistenceError, isNotNull);
       }
     },
@@ -168,7 +171,7 @@ void main() {
     await file('records.json').writeAsString('{broken');
     final restarted = makeStore(AppFileStorage(directory));
     await expectLater(restarted.load(), throwsFormatException);
-    expect(restarted.history, isEmpty);
+    expect(restarted.records.history, isEmpty);
     expect(await file('records.json').readAsString(), '{broken');
   });
 
@@ -205,20 +208,20 @@ void main() {
     () async {
       final storage = AppFileStorage(directory);
       final store = makeStore(storage);
-      await store.saveWatch(watch(1));
+      await store.records.saveWatch(watch(1));
       final before = await file('records.json').readAsString();
       final obstacle = Directory('${directory.path}/records.json.tmp');
       await obstacle.create();
       await expectLater(
-        store.saveWatch(watch(2)),
+        store.records.saveWatch(watch(2)),
         throwsA(isA<FileSystemException>()),
       );
       expect(await file('records.json').readAsString(), before);
       await obstacle.delete();
-      await store.saveWatch(watch(2));
+      await store.records.saveWatch(watch(2));
       final restarted = makeStore(AppFileStorage(directory));
       await restarted.load();
-      expect(restarted.history[anchor.key]!.positionMs, 2);
+      expect(restarted.records.history[anchor.key]!.positionMs, 2);
     },
   );
 
@@ -228,7 +231,7 @@ void main() {
       await AppFileStorage(directory).write(await savedState());
       final store = makeStore(AppFileStorage(directory));
       await store.load();
-      await store.saveWatch(watch(40000));
+      await store.records.saveWatch(watch(40000));
       final obstacle = Directory('${directory.path}/catalog-cache.json.tmp');
       await obstacle.create();
       await store.persist();
@@ -236,8 +239,8 @@ void main() {
       expect(store.cachePersistenceError, isNotNull);
       final restarted = makeStore(AppFileStorage(directory));
       await restarted.load();
-      expect(restarted.history[anchor.key]!.positionMs, 40000);
-      expect(restarted.catalogs[DramaSource.hongguo], hasLength(2));
+      expect(restarted.records.history[anchor.key]!.positionMs, 40000);
+      expect(restarted.catalog.catalogs[DramaSource.hongguo], hasLength(2));
       await obstacle.delete();
       await store.persist();
       expect(store.cachePersistenceError, isNull);

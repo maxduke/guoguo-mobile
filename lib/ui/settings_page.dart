@@ -42,7 +42,7 @@ class _SettingsPageState extends State<SettingsPage> {
         : box.localToGlobal(Offset.zero) & box.size;
     final directory = await getTemporaryDirectory();
     final file = File('${directory.path}/guoguo-records.json');
-    await file.writeAsString(store.exportBackup(), flush: true);
+    await file.writeAsString(store.records.exportBackup(), flush: true);
     await SharePlus.instance.share(
       ShareParams(
         files: [XFile(file.path, mimeType: 'application/json')],
@@ -63,7 +63,7 @@ class _SettingsPageState extends State<SettingsPage> {
       throw const FormatException('备份文件超过 20 MB 或无法读取大小');
     }
     final raw = utf8.decode(await selected.readAsBytes());
-    final backup = store.inspectBackup(raw);
+    final backup = store.records.inspectBackup(raw);
     if (!context.mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -85,7 +85,7 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
     if (confirmed == true) {
-      await store.importBackup(backup);
+      await store.records.importBackup(backup);
       if (context.mounted) {
         ScaffoldMessenger.of(
           context,
@@ -184,7 +184,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: store,
+    listenable: store.preferences,
     builder: (context, _) => Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: Center(
@@ -219,9 +219,11 @@ class _SettingsPageState extends State<SettingsPage> {
                             label: Text('跟随系统'),
                           ),
                         ],
-                        selected: {store.themeMode},
-                        onSelectionChanged: (v) =>
-                            perform(context, () => store.setTheme(v.first)),
+                        selected: {store.preferences.themeMode},
+                        onSelectionChanged: (v) => perform(
+                          context,
+                          () => store.preferences.setTheme(v.first),
+                        ),
                       ),
                     ],
                   ),
@@ -233,28 +235,34 @@ class _SettingsPageState extends State<SettingsPage> {
                     SwitchListTile(
                       title: const Text('自动播放下一集'),
                       subtitle: const Text('关闭后，播完停在当前集'),
-                      value: store.autoAdvance,
-                      onChanged: (v) =>
-                          perform(context, () => store.setPlayback(advance: v)),
+                      value: store.preferences.autoAdvance,
+                      onChanged: (v) => perform(
+                        context,
+                        () => store.preferences.setPlayback(advance: v),
+                      ),
                     ),
                     SwitchListTile(
                       title: const Text('预缓冲下一集'),
                       subtitle: const Text('当前集播放顺畅后再准备下一集'),
-                      value: store.prefetch,
-                      onChanged: (v) =>
-                          perform(context, () => store.setPrefetch(v)),
+                      value: store.preferences.prefetch,
+                      onChanged: (v) => perform(
+                        context,
+                        () => store.preferences.setPrefetch(v),
+                      ),
                     ),
                     SwitchListTile(
                       title: const Text('使用移动数据预缓冲'),
                       subtitle: const Text('默认只在 Wi-Fi 下预缓冲'),
-                      value: store.cellularPrefetch,
-                      onChanged: (v) =>
-                          perform(context, () => store.setNetwork(preload: v)),
+                      value: store.preferences.cellularPrefetch,
+                      onChanged: (v) => perform(
+                        context,
+                        () => store.preferences.setNetwork(preload: v),
+                      ),
                     ),
                     SwitchListTile(
                       title: const Text('使用移动数据下载'),
                       subtitle: const Text('更改后同时更新已有任务的网络要求'),
-                      value: store.cellularDownloads,
+                      value: store.preferences.cellularDownloads,
                       onChanged: (v) =>
                           perform(context, () => downloads.setCellular(v)),
                     ),

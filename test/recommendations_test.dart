@@ -55,7 +55,7 @@ void main() {
       'hongguo:2',
     );
     expect(find.text('旧分类'), findsNothing);
-    expect(store.library.map((d) => d.id), ['hongguo:2']);
+    expect(store.catalog.library.map((d) => d.id), ['hongguo:2']);
     await tester.scrollUntilVisible(find.text('继续推荐'), 200);
     await tester.tap(find.text('继续推荐'));
     await tester.pump();
@@ -74,7 +74,7 @@ void main() {
     expect(provider.requests.last['offset'], 18);
     provider.responses.last.complete(page('hongguo:3', '下一页', next: 36));
     await tester.pumpAndSettle();
-    expect(store.library.length, 2);
+    expect(store.catalog.library.length, 2);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     store.dispose();
