@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/services.dart';
 import '../domain/models.dart';
@@ -10,21 +11,57 @@ abstract interface class ProviderClient {
 }
 
 class NativeProviderClient implements ProviderClient {
+  // Covers and app operations use the same native core and readiness gate.
+  static final shared = NativeProviderClient();
   static const _channel = MethodChannel('guoguo/core');
-  Future<void> initialize(String directory) async {
-    await _channel.invokeMethod<void>('initialize', {'directory': directory});
+  Future<void>? _initialization;
+  bool _initialized = false, _initializing = false;
+
+  Future<void> get ready =>
+      _initialization ??
+      Future.error(const ProviderException('站源组件尚未就绪，请稍候或重试站源连接'));
+
+  Future<void> initialize(String directory) {
+    if (_initialized || _initializing) return _initialization!;
+    _initializing = true;
+    final future = Future<void>.microtask(() => _initialize(directory));
+    _initialization = future;
+    // Keep a failed attempt observable to callers until an explicit retry.
+    unawaited(future.then<void>((_) {}, onError: (Object _, StackTrace _) {}));
+    return future;
+  }
+
+  Future<void> _initialize(String directory) async {
     try {
-      final info = await call('coreInfo');
-      if (info['protocol'] != 3) {
+      await _channel.invokeMethod<void>('initialize', {'directory': directory});
+      try {
+        final info = await _call('coreInfo');
+        if (info['protocol'] != 3) {
+          throw const ProviderException('站源组件版本不匹配，请安装最新完整版本');
+        }
+      } catch (_) {
         throw const ProviderException('站源组件版本不匹配，请安装最新完整版本');
       }
-    } catch (_) {
-      throw const ProviderException('站源组件版本不匹配，请安装最新完整版本');
+      _initialized = true;
+    } on MissingPluginException {
+      throw const ProviderException('站源组件未安装，请安装包含站源核心的完整版本');
+    } on PlatformException {
+      throw const ProviderException('站源连接暂未就绪，请重试');
+    } finally {
+      _initializing = false;
     }
   }
 
   @override
   Future<Map<String, dynamic>> call(
+    String method, [
+    Map<String, dynamic> arguments = const {},
+  ]) async {
+    await ready;
+    return _call(method, arguments);
+  }
+
+  Future<Map<String, dynamic>> _call(
     String method, [
     Map<String, dynamic> arguments = const {},
   ]) async {

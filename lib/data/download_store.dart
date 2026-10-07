@@ -156,9 +156,11 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     DownloadDriver? driver,
     LocalStorage? storage,
     Directory? root,
+    Future<void> Function()? waitForProvider,
   }) : driver = driver ?? DownloadDriver(),
        _storage = storage,
-       _root = root;
+       _root = root,
+       _waitForProvider = waitForProvider;
   final DownloadDriver driver;
   final AppStore app;
   FileDownloader get downloader => driver.downloader;
@@ -166,8 +168,13 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription<TaskUpdate>? _subscription;
   LocalStorage? _storage;
   Directory? _root;
+  final Future<void> Function()? _waitForProvider;
+  Future<void>? _initialization, _manifestLoad;
+  bool initialized = false, manifestLoaded = false;
+  bool get initializing => _initialization != null;
+  String? initializationError;
   String? _error, _manifestError;
-  String? get error => _manifestError ?? _error;
+  String? get error => _manifestError ?? initializationError ?? _error;
   set error(String? value) => _error = value;
   Timer? _refreshTimer;
   bool _verifyFiles = false;
@@ -186,52 +193,108 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   String? usageError;
   static const group = 'guoguo';
 
-  Future<void> initialize() async {
-    _root = Directory(
+  Future<void> initialize() {
+    if (_disposed) return Future.value();
+    if (_initialization != null) return _initialization!;
+    if (initialized) return Future.value();
+    initializationError = null;
+    if (!manifestLoaded) _manifestLoad = Future<void>.microtask(_loadManifest);
+    _initialization = Future<void>.microtask(_initialize);
+    notifyListeners();
+    return _initialization!;
+  }
+
+  Future<void> _loadManifest() async {
+    if (manifestLoaded || _disposed) return;
+    _root ??= Directory(
       '${(await getApplicationDocumentsDirectory()).path}/guoguo',
     );
+    if (_disposed) return;
     await _root!.create(recursive: true);
-    _storage = FileStorage(
+    if (_disposed) return;
+    _storage ??= FileStorage(
       Directory('${(await getApplicationSupportDirectory()).path}/downloads'),
     );
+    if (_disposed) return;
     final state = await _storage!.read();
+    if (_disposed) return;
     if (state != null) {
-      entries = (state['jobs'] as List)
+      final loaded = (state['jobs'] as List)
           .map(
             (v) => DownloadEntry.fromJson(Map<String, dynamic>.from(v as Map)),
           )
           .toList();
       // Application container paths can change after an iOS update/reinstall.
-      entries = entries.map((entry) {
+      entries = loaded.map((entry) {
         final json = entry.toJson();
         json['directory'] = '${_root!.path}/${entry.id}';
         return DownloadEntry.fromJson(json);
       }).toList();
     }
-    WidgetsBinding.instance.addObserver(this);
-    _subscription = downloader.updates.listen((_) {
-      _refreshTimer ??= Timer(const Duration(milliseconds: 300), () {
-        _refreshTimer = null;
-        unawaited(reload(verifyFiles: false));
+    manifestLoaded = true;
+    notifyListeners();
+  }
+
+  Future<void> _initialize() async {
+    try {
+      await _manifestLoad;
+      if (_disposed) return;
+      await _waitForProvider?.call();
+      if (_disposed) return;
+      await driver.trackTasks();
+      if (_disposed) return;
+      if (!await driver.requireWiFi(app.preferences.cellularDownloads)) {
+        throw const ProviderException('下载网络规则未能更新，请重试');
+      }
+      if (_disposed) return;
+      await driver.start();
+      if (_disposed) return;
+      downloader.configureNotificationForGroup(
+        group,
+        running: const TaskNotification('正在下载 {displayName}', '{progress}'),
+        error: const TaskNotification('下载未完成', '{displayName}'),
+        paused: const TaskNotification('下载已暂停', '{displayName}'),
+        progressBar: true,
+      );
+      WidgetsBinding.instance.addObserver(this);
+      _foreground =
+          WidgetsBinding.instance.lifecycleState == null ||
+          WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+      _subscription = driver.updates.listen((_) {
+        if (_disposed) return;
+        _refreshTimer ??= Timer(const Duration(milliseconds: 300), () {
+          _refreshTimer = null;
+          unawaited(reload(verifyFiles: false));
+        });
       });
-    });
-    downloader.configureNotificationForGroup(
-      group,
-      running: const TaskNotification('正在下载 {displayName}', '{progress}'),
-      error: const TaskNotification('下载未完成', '{displayName}'),
-      paused: const TaskNotification('下载已暂停', '{displayName}'),
-      progressBar: true,
-    );
-    await downloader.trackTasks();
-    await downloader.requireWiFi(
-      app.preferences.cellularDownloads
-          ? RequireWiFi.forNoTasks
-          : RequireWiFi.forAllTasks,
-    );
-    await downloader.start();
-    await cleanupOrphans();
-    await restorePendingTasks();
-    await reload();
+      await cleanupOrphans();
+      if (_disposed) return;
+      await restorePendingTasks();
+      if (_disposed) return;
+      initialized = true;
+      await reload();
+    } catch (_) {
+      if (!_disposed) {
+        initializationError = '下载组件暂未就绪，请重试；已保存文件会保留';
+        await _subscription?.cancel();
+        _subscription = null;
+        _refreshTimer?.cancel();
+        _refreshTimer = null;
+        WidgetsBinding.instance.removeObserver(this);
+      }
+    } finally {
+      _initialization = null;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  void _requireReady() {
+    if (_disposed ||
+        initializing ||
+        initializationError != null ||
+        _root == null) {
+      throw const ProviderException('下载组件尚未就绪，请稍候或在下载页重试');
+    }
   }
 
   Future<void> restorePendingTasks() async {
@@ -239,22 +302,26 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         in entries
             .where((e) => !e.ready && !e.userPaused && e.failure == null)
             .toList()) {
+      if (_disposed) return;
       try {
         final missing = <DownloadTask>[];
         for (final task in entry.tasks) {
           if (await driver.record(task.taskId) == null) missing.add(task);
+          if (_disposed) return;
         }
         if (missing.isEmpty) continue;
         if (entry.refreshOnResume) {
-          await retry(entry);
+          await _retry(entry);
         } else {
           for (final task in missing) {
+            if (_disposed) return;
             if (!await driver.enqueue(task)) {
               throw const ProviderException('下载恢复未能入队，请重试；已下载文件已保留');
             }
           }
         }
       } catch (problem) {
+        if (_disposed) return;
         entry.failure ??= problem is ProviderException
             ? problem.message
             : '下载恢复失败，请重试；已下载文件已保留';
@@ -291,9 +358,8 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> setCellular(bool enabled) async {
-    final ok = await downloader.requireWiFi(
-      enabled ? RequireWiFi.forNoTasks : RequireWiFi.forAllTasks,
-    );
+    _requireReady();
+    final ok = await driver.requireWiFi(enabled);
     if (!ok) throw const ProviderException('网络规则未能更新，请重试');
     await app.preferences.setNetwork(downloads: enabled);
   }
@@ -310,7 +376,11 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> reload({bool verifyFiles = true}) async {
     _verifyFiles = _verifyFiles || verifyFiles;
-    if (_disposed || _storage == null) return;
+    if (_disposed ||
+        _storage == null ||
+        (!initialized && (initializing || initializationError != null))) {
+      return;
+    }
     if (_loading) {
       _reloadAgain = true;
       return;
@@ -323,6 +393,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         final checkFiles = _verifyFiles;
         _verifyFiles = false;
         final records = {for (final r in await driver.records()) r.taskId: r};
+        if (_disposed) return;
         for (final entry in entries.toList()) {
           if (_removing.contains(entry.id)) continue;
           if (entry.ready) {
@@ -399,6 +470,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
           }
         }
         if (checkFiles) await refreshUsage();
+        if (_disposed) return;
         if (!_finalizing && _foreground) {
           final ready = entries
               .where(
@@ -480,7 +552,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> enqueue(Drama drama, Episode episode, int index) async {
-    if (_root == null) throw const ProviderException('下载组件尚未就绪，请重新打开应用');
+    _requireReady();
     final identity = '${drama.key}:${episode.id}';
     if (!_enqueuing.add(identity)) return;
     Directory? staging;
@@ -624,6 +696,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       entry.refreshOnResume ? retry(entry) : _setPaused(entry, false);
 
   Future<void> _setPaused(DownloadEntry entry, bool paused) async {
+    _requireReady();
     if (entry.ready || !entries.contains(entry)) return;
     if (entry.processing || !_removing.add(entry.id)) {
       throw const ProviderException('任务正在处理中，请稍候');
@@ -683,15 +756,19 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     if (_root == null || !await _root!.exists()) return;
     final known = entries.map((e) => e.id).toSet();
     final records = await driver.records();
+    if (_disposed) return;
     for (final record in records) {
+      if (_disposed) return;
       if (!known.contains(record.task.metaData)) {
         if (!await driver.cancel([record.taskId])) {
           throw const ProviderException('旧下载任务尚未停止，请稍后重试清理');
         }
+        if (_disposed) return;
         await driver.deleteRecord(record.taskId);
       }
     }
     await for (final item in _root!.list(followLinks: false)) {
+      if (_disposed) return;
       final name = item.uri.pathSegments.where((s) => s.isNotEmpty).last;
       if (item is Directory &&
           RegExp(r'^\d+$').hasMatch(name) &&
@@ -702,6 +779,11 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> retry(DownloadEntry entry) async {
+    _requireReady();
+    await _retry(entry);
+  }
+
+  Future<void> _retry(DownloadEntry entry) async {
     if (entry.ready || !entries.contains(entry)) return;
     if (entry.processing || !_removing.add(entry.id)) {
       throw const ProviderException('任务正在处理中，请稍候');
@@ -710,6 +792,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       final complete = <String>{};
       for (final task in entry.tasks) {
         final record = await driver.record(task.taskId);
+        if (_disposed) return;
         final file = File('${entry.directory}/${task.filename}');
         if (record?.status == TaskStatus.complete &&
             await file.exists() &&
@@ -717,12 +800,14 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
           complete.add(task.taskId);
         }
       }
+      if (_disposed) return;
       if (complete.length != entry.tasks.length) {
         // Resolve first: an expired URL or provider error never removes progress.
         final plan = await app.provider.call('downloadPlan', {
           'id': entry.drama.id,
           'chapter': entry.episode.raw,
         });
+        if (_disposed) return;
         final assets = {
           for (final asset in plan['assets'] as List)
             asset['name'] as String: asset['url'] as String,
@@ -741,6 +826,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         }
         // Do not mix changed playlists, keys or segment ordering with old parts.
         for (final inline in plan['inline'] as List) {
+          if (_disposed) return;
           final name = inline['name'] as String;
           if (!RegExp(r'^[a-zA-Z0-9_.-]+$').hasMatch(name) ||
               name == '.' ||
@@ -776,6 +862,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         )) {
           throw const ProviderException('旧下载尚未停止，已保留进度，请稍后重试');
         }
+        if (_disposed) return;
         entry.tasks
           ..clear()
           ..addAll(replacements);
@@ -789,15 +876,18 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         for (final task in entry.tasks.where(
           (t) => !complete.contains(t.taskId),
         )) {
+          if (_disposed) return;
           if (!await driver.enqueue(task)) {
             throw const ProviderException('部分资源无法恢复，已完成分片会保留');
           }
         }
       }
+      if (_disposed) return;
       entry.failure = null;
       entry.userPaused = false;
       await _save();
     } catch (e) {
+      if (_disposed) return;
       entry.failure = e is ProviderException
           ? e.message
           : '重试失败，已下载文件已保留；请检查网络和设备空间';
@@ -815,6 +905,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> remove(DownloadEntry entry) async {
+    _requireReady();
     if (entry.processing) throw const ProviderException('正在整理视频，请稍候再删除');
     if (!entries.contains(entry)) return;
     if (!_removing.add(entry.id)) {
@@ -933,6 +1024,14 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<String?> localFile(Drama drama, Episode episode) async {
+    // An immediate continue action must not miss files still being read from
+    // the manifest, or wait for native task restoration to finish.
+    try {
+      await _manifestLoad;
+    } catch (_) {
+      // A manifest failure affects downloads; online playback remains usable.
+    }
+    if (_disposed) return null;
     final found = entries
         .where(
           (e) =>

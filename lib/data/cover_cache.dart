@@ -15,7 +15,7 @@ final coverCache = CacheManager(
   Config(
     'guoguo-decoded-covers-v1',
     maxNrOfCacheObjects: 600,
-    fileService: ProviderCoverService(NativeProviderClient()),
+    fileService: ProviderCoverService(NativeProviderClient.shared),
   ),
 );
 

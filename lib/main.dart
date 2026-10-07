@@ -7,6 +7,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'data/app_store.dart';
+import 'data/app_startup.dart';
 import 'data/download_store.dart';
 import 'data/storage.dart';
 import 'platform/provider_client.dart';
@@ -19,16 +20,16 @@ void main() {
 }
 
 class Bootstrap extends StatefulWidget {
-  const Bootstrap({super.key});
+  const Bootstrap({super.key, this.load});
+  final Future<AppStartup> Function()? load;
   @override
   State<Bootstrap> createState() => _BootstrapState();
 }
 
 class _BootstrapState extends State<Bootstrap> {
-  AppStore? _store;
-  DownloadStore? _downloads;
+  AppStartup? _startup;
   String? _error;
-  StreamSubscription<List<ConnectivityResult>>? _network;
+  bool _loading = false;
   @override
   void initState() {
     super.initState();
@@ -36,58 +37,35 @@ class _BootstrapState extends State<Bootstrap> {
   }
 
   Future<void> _initialize() async {
+    if (_loading || !mounted) return;
+    _loading = true;
     setState(() => _error = null);
     try {
-      // No player exists during bootstrap. Remove remux files left by a
-      // terminated process before creating new playback sessions.
-      try {
-        final temporary = await getTemporaryDirectory();
-        final playback = Directory('${temporary.path}/playback');
-        if (await playback.exists()) await playback.delete(recursive: true);
-      } on FileSystemException {
-        // Cache cleanup must not prevent access to records or downloads.
-      }
-      final directory = await getApplicationSupportDirectory();
-      final provider = NativeProviderClient();
-      final store = AppStore(
-        storage: AppFileStorage(Directory('${directory.path}/records')),
-        provider: provider,
-      );
-      await store.load();
-      await provider.initialize('${directory.path}/providers');
-      final downloads = DownloadStore(store);
-      try {
-        await downloads.initialize();
-      } catch (_) {
-        downloads.error = '下载组件尚未就绪，请重新打开应用后重试';
-      }
-      final connectivity = Connectivity();
-      store.setOffline(
-        (await connectivity.checkConnectivity()).contains(
-          ConnectivityResult.none,
-        ),
-      );
-      _network = connectivity.onConnectivityChanged.listen(
-        (values) => store.setOffline(values.contains(ConnectivityResult.none)),
-      );
+      final startup = await (widget.load ?? _loadStartup)();
       if (!mounted) {
-        downloads.dispose();
-        store.dispose();
+        startup.dispose();
         return;
       }
-      setState(() {
-        _store = store;
-        _downloads = downloads;
-      });
-    } catch (error) {
-      if (mounted) setState(() => _error = '$error');
+      startup.start();
+      setState(() => _startup = startup);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = '本地记录暂时无法读取，请检查设备空间后重试');
+      }
+    } finally {
+      _loading = false;
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_store != null) {
-      return GuoguoApp(store: _store!, downloads: _downloads!);
+    if (_startup != null) {
+      return GuoguoApp(
+        store: _startup!.store,
+        downloads: _startup!.downloads,
+        startup: _startup,
+        autoLoad: false,
+      );
     }
     return MaterialApp(
       debugShowCheckedModeBanner: false,
@@ -136,11 +114,45 @@ class _BootstrapState extends State<Bootstrap> {
 
   @override
   void dispose() {
-    _network?.cancel();
-    _downloads?.dispose();
-    _store?.dispose();
+    _startup?.dispose();
     super.dispose();
   }
+}
+
+Future<AppStartup> _loadStartup() async {
+  // Keep cleanup before any player can acquire a file in this directory.
+  try {
+    final temporary = await getTemporaryDirectory();
+    final playback = Directory('${temporary.path}/playback');
+    if (await playback.exists()) await playback.delete(recursive: true);
+  } catch (_) {
+    // Reconstructible cache cleanup cannot block access to durable records.
+  }
+  final directory = await getApplicationSupportDirectory();
+  final provider = NativeProviderClient.shared;
+  final store = AppStore(
+    storage: AppFileStorage(Directory('${directory.path}/records')),
+    provider: provider,
+  );
+  try {
+    await store.load();
+  } catch (_) {
+    store.dispose();
+    rethrow;
+  }
+  final downloads = DownloadStore(store, waitForProvider: () => provider.ready);
+  final connectivity = Connectivity();
+  return AppStartup(
+    store: store,
+    downloads: downloads,
+    initializeCore: () => provider.initialize('${directory.path}/providers'),
+    checkOffline: () async => (await connectivity.checkConnectivity()).contains(
+      ConnectivityResult.none,
+    ),
+    offlineChanges: connectivity.onConnectivityChanged.map(
+      (values) => values.contains(ConnectivityResult.none),
+    ),
+  );
 }
 
 class GuoguoApp extends StatelessWidget {
@@ -149,14 +161,21 @@ class GuoguoApp extends StatelessWidget {
     required this.store,
     required this.downloads,
     this.autoLoad = true,
+    this.startup,
   });
   final AppStore store;
   final DownloadStore downloads;
   final bool autoLoad;
+  final AppStartup? startup;
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: store.preferences.theme,
-    child: HomePage(store: store, downloads: downloads, autoLoad: autoLoad),
+    child: HomePage(
+      store: store,
+      downloads: downloads,
+      autoLoad: autoLoad,
+      startup: startup,
+    ),
     builder: (context, child) => MaterialApp(
       title: '果果',
       debugShowCheckedModeBanner: false,
