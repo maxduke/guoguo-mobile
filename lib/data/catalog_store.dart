@@ -131,6 +131,7 @@ class CatalogStore extends ChangeNotifier {
     }
     try {
       final result = await provider.call('categories', {'source': target.name});
+      if (_closed) return;
       sourceCategories[target] = (result['items'] as List)
           .map((v) => SourceCategory(v['id'] as String, v['name'] as String))
           .toList();
@@ -175,6 +176,7 @@ class CatalogStore extends ChangeNotifier {
         'category': category,
         'page': page,
       });
+      if (_closed) return;
       final rows = _parseRows(result, target);
       slice.items = {
         for (final row in [...(more ? slice.items : <Drama>[]), ...rows])
@@ -303,6 +305,7 @@ class CatalogStore extends ChangeNotifier {
     notifyListeners();
     try {
       final response = await provider.call('catalog', {'source': target.name});
+      if (_closed) return;
       final incoming = _parseRows(response, target);
       _mergeCatalog(target, incoming);
       catalogPages[target] = 1;
@@ -908,6 +911,11 @@ class CatalogStore extends ChangeNotifier {
     this.hideVip = hideVip;
     recentSearches.addAll(searches);
     notifyListeners();
+  }
+
+  @override
+  void notifyListeners() {
+    if (!_closed) super.notifyListeners();
   }
 
   @override

@@ -34,15 +34,36 @@ class _DownloadsPageState extends State<DownloadsPage> {
   _Sort _sort = _Sort.recent;
   final Set<String> _selected = {};
   final Set<String> _collapsed = {};
+  bool _defaultFilterSet = false;
 
   @override
   void initState() {
     super.initState();
+    _setDefaultFilter();
+    widget.downloads.addListener(_downloadsChanged);
+    unawaited(widget.downloads.refreshUsage());
+  }
+
+  void _setDefaultFilter() {
+    if (_defaultFilterSet ||
+        (widget.downloads.initializing && !widget.downloads.manifestLoaded)) {
+      return;
+    }
+    _defaultFilterSet = true;
     if (widget.downloads.entries.isNotEmpty &&
         widget.downloads.entries.every((e) => e.complete)) {
       _filter = _TaskFilter.complete;
     }
-    unawaited(widget.downloads.refreshUsage());
+  }
+
+  void _downloadsChanged() {
+    if (!_defaultFilterSet && mounted) setState(_setDefaultFilter);
+  }
+
+  @override
+  void dispose() {
+    widget.downloads.removeListener(_downloadsChanged);
+    super.dispose();
   }
 
   bool _matches(DownloadEntry entry, _TaskFilter filter) => switch (filter) {
@@ -241,7 +262,11 @@ class _DownloadsPageState extends State<DownloadsPage> {
       final retryable = entries.where((e) => e.canRetry).toList();
       return RefreshIndicator(
         onRefresh: () async {
-          await widget.downloads.reload();
+          if (widget.downloads.initializationError != null) {
+            await widget.downloads.initialize();
+          } else {
+            await widget.downloads.reload();
+          }
         },
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -361,6 +386,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
                                 onSelected: _busy
                                     ? null
                                     : (_) => setState(() {
+                                        _defaultFilterSet = true;
                                         _filter = filter;
                                         _selected.clear();
                                       }),
@@ -448,6 +474,22 @@ class _DownloadsPageState extends State<DownloadsPage> {
                   if ((_busy && !_confirming) ||
                       widget.downloads.measuringUsage)
                     const LinearProgressIndicator(),
+                  if (widget.downloads.initializing)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Text('正在恢复下载，可先观看已保存视频'),
+                    ),
+                  if (widget.downloads.initializationError != null)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: widget.downloads.initializing
+                            ? null
+                            : () => unawaited(widget.downloads.initialize()),
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: const Text('重试下载恢复'),
+                      ),
+                    ),
                   if (widget.downloads.error != null)
                     Padding(
                       padding: const EdgeInsets.all(8),

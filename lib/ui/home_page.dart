@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../data/app_store.dart';
+import '../data/app_startup.dart';
 import '../data/download_store.dart';
 import '../domain/models.dart';
 import '../domain/catalog_query.dart';
@@ -20,10 +21,12 @@ class HomePage extends StatefulWidget {
     required this.store,
     required this.downloads,
     this.autoLoad = true,
+    this.startup,
   });
   final AppStore store;
   final DownloadStore downloads;
   final bool autoLoad;
+  final AppStartup? startup;
   @override
   State<HomePage> createState() => _HomePageState();
 }
@@ -265,9 +268,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       body: Column(
         children: [
           ListenableBuilder(
-            listenable: store,
+            listenable: Listenable.merge([
+              store,
+              if (widget.startup != null) widget.startup!,
+            ]),
             builder: (context, _) => Column(
               children: [
+                if (widget.startup?.coreLoading == true)
+                  const _Notice('正在连接站源，可先浏览已有记录', Icons.hourglass_top_rounded),
+                if (widget.startup?.coreError != null)
+                  _Notice(
+                    widget.startup!.coreError!,
+                    Icons.warning_amber_rounded,
+                    retryLabel: '重试站源',
+                    onRetry: () => unawaited(widget.startup!.retryCore()),
+                  ),
+                if (widget.startup?.networkError != null)
+                  _Notice(
+                    widget.startup!.networkError!,
+                    Icons.wifi_off_rounded,
+                    retryLabel: '重试网络',
+                    onRetry: widget.startup!.networkLoading
+                        ? null
+                        : () => unawaited(widget.startup!.retryNetwork()),
+                  ),
                 if (store.offline)
                   const _Notice(
                     '当前离线 · 可以浏览缓存与观看已下载分集',
@@ -1145,9 +1169,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 }
 
 class _Notice extends StatelessWidget {
-  const _Notice(this.message, this.icon);
+  const _Notice(
+    this.message,
+    this.icon, {
+    this.onRetry,
+    this.retryLabel = '重试',
+  });
   final String message;
   final IconData icon;
+  final VoidCallback? onRetry;
+  final String retryLabel;
   @override
   Widget build(BuildContext context) => Container(
     width: double.infinity,
@@ -1164,6 +1195,8 @@ class _Notice extends StatelessWidget {
         Icon(icon, size: 18),
         const SizedBox(width: 9),
         Expanded(child: Text(message, style: const TextStyle(fontSize: 12))),
+        if (onRetry != null)
+          TextButton(onPressed: onRetry, child: Text(retryLabel)),
       ],
     ),
   );
