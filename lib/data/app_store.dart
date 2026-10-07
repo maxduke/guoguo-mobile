@@ -46,6 +46,7 @@ class AppStore extends ChangeNotifier implements StorePersistence {
   String? persistenceError;
   String? cachePersistenceError;
   bool _hasRecordState = false, _closed = false;
+  Future<void> _recordQueue = Future.value();
   final List<PlaybackDiagnostic> playbackDiagnostics = [];
   static const maxPlaybackDiagnostics = 30;
 
@@ -97,12 +98,16 @@ class AppStore extends ChangeNotifier implements StorePersistence {
     notifyListeners();
   }
 
-  Map<String, dynamic> _recordSnapshot({bool reuseHistory = true}) => {
+  Map<String, dynamic> _recordSnapshot({
+    bool reuseHistory = true,
+    RecordBackup? candidate,
+  }) => {
     'version': 1,
     ...preferences.toJson(),
     ...catalog.settingsSnapshot(),
     'playbackDiagnostics': playbackDiagnostics.map((d) => d.toJson()).toList(),
-    'records': records.snapshot(reuseHistory: reuseHistory),
+    'records':
+        candidate?.toJson() ?? records.snapshot(reuseHistory: reuseHistory),
     'episodeSeenIds': {
       for (final entry in records.episodeSeenIds.entries)
         entry.key: entry.value.toList(),
@@ -115,21 +120,39 @@ class AppStore extends ChangeNotifier implements StorePersistence {
   };
 
   @override
-  Future<void> persist({bool records = true, bool cache = true}) async {
-    Future<void> saveRecords(Future<void> operation) async {
-      try {
-        await operation;
-        final recovered = persistenceError != null;
-        persistenceError = null;
-        if (recovered && !_closed) notifyListeners();
-        _hasRecordState = true;
-      } catch (_) {
-        persistenceError = '记录暂未保存，请检查可用空间后重试';
-        if (!_closed) notifyListeners();
-        rethrow;
-      }
-    }
+  Future<T> updateRecords<T>(Future<T> Function(SaveRecords save) operation) {
+    if (_closed) return Future.error(StateError('记录存储已关闭'));
+    final next = _recordQueue.then((_) => operation(_writeRecords));
+    _recordQueue = next.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return next;
+  }
 
+  Future<void> _writeRecords({RecordBackup? candidate}) async {
+    try {
+      final snapshot = _recordSnapshot(candidate: candidate);
+      final target = storage;
+      if (target is PartitionedStorage) {
+        await target.writeRecords(snapshot);
+      } else {
+        await target.write({...snapshot, ...catalog.cacheSnapshot()});
+      }
+      final recovered = persistenceError != null;
+      persistenceError = null;
+      _hasRecordState = true;
+      if (recovered && !_closed) notifyListeners();
+    } catch (_) {
+      persistenceError = '记录暂未保存，请检查可用空间后重试';
+      if (!_closed) notifyListeners();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> persist({bool records = true, bool cache = true}) async {
+    if (_closed) throw StateError('记录存储已关闭');
     Future<void> saveCache(Future<void> operation) async {
       try {
         await operation;
@@ -139,23 +162,23 @@ class AppStore extends ChangeNotifier implements StorePersistence {
       } catch (_) {
         cachePersistenceError = '目录缓存暂未保存，请检查可用空间后重试';
         if (!_closed) notifyListeners();
-        // Mixed operations may already have committed their durable state.
-        // A cache failure must not roll back a successfully saved reminder.
+        // Cache failure cannot undo already committed durable records.
         if (!records) rethrow;
       }
     }
 
     final target = storage;
     if (target is PartitionedStorage) {
-      // Queue both snapshots at invocation so overlapping operations preserve
-      // order within each file. Neither queue blocks the other file.
       await Future.wait([
         if (records || !_hasRecordState)
-          saveRecords(target.writeRecords(_recordSnapshot())),
+          updateRecords((save) async {
+            // Snapshot only after the preceding record transaction finishes.
+            if (records || !_hasRecordState) await save();
+          }),
         if (cache) saveCache(target.writeCache(catalog.cacheSnapshot())),
       ]);
     } else {
-      await saveRecords(target.write(snapshot()));
+      await updateRecords((save) => save());
     }
   }
 

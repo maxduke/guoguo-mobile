@@ -679,10 +679,10 @@ class CatalogStore extends ChangeNotifier {
       ).merge(patch, replaceTags: replaceTags);
       details[drama.key] = updated;
       _mergeCatalog(drama.source, [updated], replaceTags: replaceTags);
-      records.updateDrama(updated);
+      await records.updateDrama(updated);
       _detailChecked[drama.key] = now();
       detailErrors.remove(drama.key);
-      await _persistence.persist();
+      await _persistence.persist(records: false);
       notifyListeners();
       return updated;
     } catch (error) {
@@ -765,8 +765,8 @@ class CatalogStore extends ChangeNotifier {
       episodeCache[drama.key] = unique;
       episodeUpdatedAt[drama.key] = now();
       episodeErrors.remove(drama.key);
-      records.episodesUpdated(drama, cached ?? unique);
-      await _persistence.persist();
+      await records.episodesUpdated(drama, cached ?? unique);
+      await _persistence.persist(records: false);
       notifyListeners();
       return unique;
     } catch (_) {

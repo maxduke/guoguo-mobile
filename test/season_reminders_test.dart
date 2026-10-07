@@ -58,17 +58,21 @@ void main() {
     'backup merge rejects a combined reminder count above the saved-format limit atomically',
     () async {
       final store = makeStore();
+      final reminders = <SeasonReminder>[];
       for (var i = 0; i < 1000; i++) {
         final anchor = Drama(
           id: 'anchor-$i',
           source: DramaSource.hongguo,
           title: '作品 $i 第一季',
         );
-        store.records.seasonReminders[anchor.key] = SeasonReminder(
-          anchor: anchor,
-          updatedAt: DateTime.utc(2026),
+        reminders.add(
+          SeasonReminder(anchor: anchor, updatedAt: DateTime.utc(2026)),
         );
       }
+      store.records.restore(
+        RecordBackup([], [], seasonReminders: reminders),
+        {},
+      );
       await expectLater(
         store.records.importBackup(
           RecordBackup(

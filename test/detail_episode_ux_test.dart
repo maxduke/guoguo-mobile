@@ -94,13 +94,18 @@ void main() {
       final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
         ..offline = true;
       store.catalog.episodeCache[drama.key] = episodes();
-      store.records.history[drama.key] = WatchRecord(
-        drama: drama,
-        episodeId: 'e35',
-        episodeIndex: 35,
-        positionMs: 3000,
-        durationMs: 60000,
-        updatedAt: DateTime.now(),
+      store.records.restore(
+        RecordBackup([], [
+          WatchRecord(
+            drama: drama,
+            episodeId: 'e35',
+            episodeIndex: 35,
+            positionMs: 3000,
+            durationMs: 60000,
+            updatedAt: DateTime.now(),
+          ),
+        ]),
+        {},
       );
       final downloads = FakeDownloads(store);
       await tester.pumpWidget(

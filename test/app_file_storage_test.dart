@@ -44,12 +44,22 @@ Future<Map<String, dynamic>> savedState() async {
     const Episode(id: 'e2', title: '二', number: 2, raw: {'id': 'e2'}),
   ];
   store.catalog.episodeUpdatedAt[anchor.key] = DateTime.utc(2026);
-  store.records.episodeSeenIds[anchor.key] = {'e1'};
-  store.records.seasonReminders[anchor.key] = SeasonReminder(
-    anchor: anchor,
-    initialized: true,
-    updatedAt: DateTime.utc(2026),
-    seasons: {season.key: const SeasonNotice(season)},
+  await store.records.markEpisodesSeen(anchor, [
+    store.catalog.episodeCache[anchor.key]!.first,
+  ]);
+  await store.records.importBackup(
+    RecordBackup(
+      [],
+      [],
+      seasonReminders: [
+        SeasonReminder(
+          anchor: anchor,
+          initialized: true,
+          updatedAt: DateTime.utc(2026),
+          seasons: {season.key: const SeasonNotice(season)},
+        ),
+      ],
+    ),
   );
   return store.snapshot();
 }
