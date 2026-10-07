@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import '../domain/models.dart';
+import '../domain/watch_resume.dart';
 import '../domain/catalog_query.dart';
 import '../domain/series_title.dart';
 import '../platform/provider_client.dart';
@@ -77,6 +78,12 @@ class RecordStore extends ChangeNotifier {
           .firstOrNull
           ?.number ??
       record.episodeNumber;
+
+  WatchResume resumeFor(WatchRecord record) =>
+      WatchResume(record, _cachedEpisodes(record.drama));
+
+  List<WatchRecord> get continuable =>
+      recent.where((record) => resumeFor(record).canContinue).toList();
 
   List<Map<String, dynamic>> _historyRows() {
     _historyJson.removeWhere((key, _) => !_history.containsKey(key));
@@ -312,6 +319,7 @@ class RecordStore extends ChangeNotifier {
         previous.episodeId == record.episodeId &&
         previous.episodeIndex == record.episodeIndex &&
         previous.episodeNumber == record.episodeNumber &&
+        previous.episodeCompleted == record.episodeCompleted &&
         previous.positionMs == record.positionMs &&
         previous.durationMs == record.durationMs &&
         previous.drama.hasSameMetadata(record.drama)) {

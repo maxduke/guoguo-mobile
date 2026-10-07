@@ -157,6 +157,7 @@ class WatchRecord {
     required this.episodeId,
     required this.episodeIndex,
     this.episodeNumber,
+    this.episodeCompleted = false,
     required this.positionMs,
     required this.durationMs,
     required this.updatedAt,
@@ -166,6 +167,8 @@ class WatchRecord {
   final int episodeIndex, positionMs, durationMs;
   // Queue position is not a source's display number (downloads may be sparse).
   final int? episodeNumber;
+  // Only a confirmed playback end marks completion; position alone cannot.
+  final bool episodeCompleted;
   final DateTime updatedAt;
   double get progress =>
       durationMs <= 0 ? 0 : (positionMs / durationMs).clamp(0, 1);
@@ -185,6 +188,7 @@ class WatchRecord {
       episodeId: json['episodeId'] as String,
       episodeIndex: index,
       episodeNumber: number,
+      episodeCompleted: json['episodeCompleted'] as bool? ?? false,
       positionMs: position,
       durationMs: duration,
       updatedAt: DateTime.parse(json['updatedAt'] as String),
@@ -195,6 +199,7 @@ class WatchRecord {
     'episodeId': episodeId,
     'episodeIndex': episodeIndex,
     if (episodeNumber != null) 'episodeNumber': episodeNumber,
+    'episodeCompleted': episodeCompleted,
     'positionMs': positionMs,
     'durationMs': durationMs,
     'updatedAt': updatedAt.toUtc().toIso8601String(),
@@ -205,6 +210,7 @@ class WatchRecord {
     episodeId: episodeId,
     episodeIndex: episodeIndex,
     episodeNumber: episodeNumber,
+    episodeCompleted: episodeCompleted,
     positionMs: positionMs,
     durationMs: durationMs,
     updatedAt: updatedAt,

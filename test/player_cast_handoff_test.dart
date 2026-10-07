@@ -248,6 +248,7 @@ void main() {
     bool playing = true,
     bool global = false,
     bool ended = false,
+    int positionMs = 42000,
   }) async {
     final done = Completer<void>();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -258,7 +259,7 @@ void main() {
               'sessionId': global ? '' : airPlayIdentity,
               'sequence': ++airPlaySequence,
               'itemId': '$index',
-              'positionMs': 42000,
+              'positionMs': positionMs,
               'durationMs': 120000,
               'playing': playing && !closed,
               'routed': external,
@@ -420,6 +421,57 @@ void main() {
     expect(native.plays, plays);
     expect(native.seeks.last, 42000);
     expect(find.byTooltip('播放').hitTestable(), findsOneWidget);
+    await unmount(tester);
+  });
+
+  for (final ended in [true, false]) {
+    testWidgets(
+      'AirPlay at full duration confirms completion only with ended=$ended',
+      (tester) async {
+        installAirPlay();
+        final (native, _, _, store, _) = await mount(
+          tester,
+          airPlayChannel: airPlayChannel,
+          autoAdvance: false,
+        );
+        await tester.tap(find.byTooltip('AirPlay'));
+        await tester.pumpAndSettle();
+        await emitAirPlay(playing: false, ended: ended, positionMs: 120000);
+        await tester.pumpAndSettle();
+        await emitAirPlay(
+          playing: false,
+          ended: ended,
+          positionMs: 120000,
+          closed: true,
+        );
+        await tester.pumpAndSettle();
+        expect(
+          store.records.history['hongguo:fixture']!.episodeCompleted,
+          ended,
+        );
+        expect(native.seeks.last, 120000);
+        await unmount(tester);
+        expect(
+          store.records.history['hongguo:fixture']!.episodeCompleted,
+          ended,
+        );
+      },
+    );
+  }
+
+  testWidgets('Cast stopped at full duration does not confirm completion', (
+    tester,
+  ) async {
+    final (_, receiver, _, store, _) = await mount(tester);
+    await connect(tester);
+    receiver.playback = const CastPlayback(
+      position: Duration(seconds: 120),
+      duration: Duration(seconds: 120),
+      state: CastPlaybackState.stopped,
+    );
+    await tester.tap(find.byKey(const Key('stopCasting')));
+    await tester.pumpAndSettle();
+    expect(store.records.history['hongguo:fixture']!.episodeCompleted, false);
     await unmount(tester);
   });
 

@@ -789,6 +789,7 @@ void main() {
         expect(player.isPlaying(), !paused);
         await tester.pumpWidget(const SizedBox());
         await tester.pump();
+        expect(store.records.history.values.single.episodeCompleted, false);
         expect(jobs.last.disposed, isTrue);
       },
     );
@@ -1239,7 +1240,9 @@ void main() {
       expect(platform.sources, hasLength(1));
       expect(store.records.history.values.single.durationMs, 8000);
       expect(store.records.history.values.single.positionMs, 8000);
+      expect(store.records.history.values.single.episodeCompleted, true);
       await tester.pumpWidget(const SizedBox());
+      expect(store.records.history.values.single.episodeCompleted, true);
     },
   );
 
@@ -1644,6 +1647,130 @@ void main() {
       expect(platform.plays.length, playCalls);
       expect(player.isPlaying(), isFalse);
       await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  for (final replay in [false, true]) {
+    testWidgets(
+      'confirmed completion survives saves and clears on ${replay ? 'replay' : 'seek back'}',
+      (tester) async {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        final platform = _NativePlayer()
+          ..followSeeks = true
+          ..install();
+        addTearDown(platform.uninstall);
+        final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
+          ..offline = true
+          ..preferences.autoAdvance = false;
+        final directory = Directory.systemTemp.createTempSync(
+          'guoguo-completion-',
+        );
+        File('${directory.path}/pip_episode_1.mp4').createSync();
+        final downloads = _LocalDownloads(store, directory.path);
+        addTearDown(() {
+          downloads.dispose();
+          store.dispose();
+          directory.deleteSync(recursive: true);
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            home: PlayerPage(
+              store: store,
+              downloads: downloads,
+              drama: const Drama(
+                id: 'fixture',
+                source: DramaSource.hongguo,
+                title: '完成状态',
+              ),
+              episodes: [
+                Episode.fromJson({'id': '1'}, 0),
+              ],
+              initialIndex: 0,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        platform.emit('completed');
+        await tester.pumpAndSettle();
+        expect(store.records.history.values.single.episodeCompleted, true);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await tester.pump();
+        expect(store.records.history.values.single.episodeCompleted, true);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pumpAndSettle();
+        if (replay) {
+          await tester.tap(find.byTooltip('播放'));
+        } else {
+          tester.widget<Slider>(find.byType(Slider)).onChangeEnd!(5000);
+        }
+        await tester.pumpAndSettle();
+        expect(store.records.history.values.single.episodeCompleted, false);
+        expect(platform.seeks.last, replay ? 0 : 5000);
+        await tester.pumpWidget(const SizedBox());
+        expect(store.records.history.values.single.episodeCompleted, false);
+      },
+    );
+  }
+
+  testWidgets(
+    'opening a completed episode replays from zero instead of saved end',
+    (tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final platform = _NativePlayer()
+        ..followSeeks = true
+        ..install();
+      addTearDown(platform.uninstall);
+      final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
+        ..offline = true;
+      const drama = Drama(
+        id: 'fixture',
+        source: DramaSource.hongguo,
+        title: '重看',
+      );
+      store.records.restore(
+        RecordBackup([], [
+          WatchRecord(
+            drama: drama,
+            episodeId: '1',
+            episodeIndex: 0,
+            episodeCompleted: true,
+            positionMs: 30000,
+            durationMs: 30000,
+            updatedAt: DateTime.utc(2026),
+          ),
+        ]),
+        {},
+      );
+      final directory = Directory.systemTemp.createTempSync('guoguo-replay-');
+      File('${directory.path}/pip_episode_1.mp4').createSync();
+      final downloads = _LocalDownloads(store, directory.path);
+      addTearDown(() {
+        downloads.dispose();
+        store.dispose();
+        directory.deleteSync(recursive: true);
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: drama,
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+            ],
+            initialIndex: 0,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(platform.seeks, [0]);
+      await tester.pumpWidget(const SizedBox());
+      expect(store.records.history.values.single.episodeCompleted, false);
+      expect(store.records.history.values.single.positionMs, 0);
     },
   );
 

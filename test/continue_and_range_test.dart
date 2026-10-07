@@ -30,16 +30,22 @@ class Routes extends NavigatorObserver {
 const drama = Drama(id: 'serial', source: DramaSource.hongguo, title: '续播示例');
 List<Episode> chapters() =>
     List.generate(20, (i) => Episode.fromJson({'id': 'e$i'}, i));
-AppStore fixture() {
+AppStore fixture({
+  bool completed = false,
+  String status = '',
+  String episodeId = 'e4',
+  int index = 4,
+}) {
   final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
     ..offline = true;
   store.catalog.episodeCache[drama.key] = chapters();
   store.records.restore(
     RecordBackup([], [
       WatchRecord(
-        drama: drama,
-        episodeId: 'e4',
-        episodeIndex: 4,
+        drama: Drama.fromJson({...drama.toJson(), 'status': status}),
+        episodeId: episodeId,
+        episodeIndex: index,
+        episodeCompleted: completed,
         positionMs: 15000,
         durationMs: 60000,
         updatedAt: DateTime.now(),
@@ -184,6 +190,143 @@ void main() {
     downloads.dispose();
     store.dispose();
   });
+
+  testWidgets(
+    'completed episode card and detail both continue at the next ID',
+    (tester) async {
+      final store = fixture(completed: true);
+      final downloads = RangeDownloads(store);
+      final routes = Routes();
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorObservers: [routes],
+          home: HomePage(store: store, downloads: downloads, autoLoad: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('第 5 集已播完 · 接着看第 6 集'), findsOneWidget);
+      await tester.tap(find.text('接着上次看 · 红果').hitTestable());
+      final route = routes.last! as MaterialPageRoute<void>;
+      final player =
+          route.builder(tester.element(find.byType(HomePage))) as PlayerPage;
+      expect(player.initialIndex, 5);
+      expect(player.episodes[5].id, 'e5');
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DetailPage(store: store, downloads: downloads, drama: drama),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('继续第 6 集'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      downloads.dispose();
+      store.dispose();
+    },
+  );
+
+  for (final status in ['ongoing', 'finished', '']) {
+    testWidgets(
+      'completed last episode status=$status leaves continue cards and remains in history',
+      (tester) async {
+        final store = fixture(
+          completed: true,
+          status: status,
+          episodeId: 'e19',
+          index: 19,
+        );
+        final downloads = RangeDownloads(store);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: HomePage(store: store, downloads: downloads, autoLoad: false),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.textContaining('接着上次看'), findsNothing);
+        await tester.tap(find.text('追剧'));
+        await tester.pumpAndSettle();
+        expect(find.textContaining('接着上次看'), findsNothing);
+        await tester.tap(find.text('历史 1'));
+        await tester.pumpAndSettle();
+        expect(
+          find.text(switch (status) {
+            'ongoing' => '红果 · 第 20 集 · 等待更新',
+            'finished' => '红果 · 已看完',
+            _ => '红果 · 第 20 集 · 本集已看完',
+          }),
+          findsOneWidget,
+        );
+        await tester.pumpWidget(const SizedBox());
+        await tester.pumpWidget(
+          MaterialApp(
+            home: DetailPage(store: store, downloads: downloads, drama: drama),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.text(status == 'finished' ? '重新观看' : '重看第 20 集'),
+          findsOneWidget,
+        );
+        await tester.pumpWidget(const SizedBox());
+        downloads.dispose();
+        store.dispose();
+      },
+    );
+  }
+
+  for (final adjacent in [true, false]) {
+    testWidgets(
+      'offline completion advances only to an adjacent original slot: $adjacent',
+      (tester) async {
+        final store = fixture(completed: true)..catalog.episodeCache.clear();
+        final downloads = RangeDownloads(store);
+        for (final index in [4, adjacent ? 5 : 9]) {
+          downloads.entries.add(
+            DownloadEntry(
+              id: 'saved-$index',
+              drama: drama,
+              episode: chapters()[index],
+              index: index,
+              directory: '/fixture',
+              input: 'video.mp4',
+              contentKey: '',
+              process: false,
+              tasks: [],
+              ready: true,
+            ),
+          );
+        }
+        final routes = Routes();
+        await tester.pumpWidget(
+          MaterialApp(
+            navigatorObservers: [routes],
+            home: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => continueDrama(
+                  context,
+                  store,
+                  downloads,
+                  store.records.history[drama.key]!,
+                ),
+                child: const Text('continue'),
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.text('continue'));
+        final route = routes.last! as MaterialPageRoute<void>;
+        final player =
+            route.builder(tester.element(find.byType(TextButton)))
+                as PlayerPage;
+        expect(player.localOnly, true);
+        expect(player.initialIndex, adjacent ? 1 : 0);
+        expect(player.episodeIndices, [4, adjacent ? 5 : 9]);
+        await tester.pumpWidget(const SizedBox());
+        downloads.dispose();
+        store.dispose();
+      },
+    );
+  }
 
   testWidgets(
     'detail marks downloaded episodes and queues next ten from saved episode',
