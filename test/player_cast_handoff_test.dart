@@ -395,6 +395,7 @@ void main() {
       expect(native.seeks.last, 42000);
       expect(store.records.history['hongguo:fixture']!.episodeId, 'two');
       expect(store.records.history['hongguo:fixture']!.episodeIndex, 9);
+      expect(store.records.history['hongguo:fixture']!.episodeNumber, 2);
       expect(relay.closes, 2);
       await unmount(tester);
     },
@@ -558,6 +559,7 @@ void main() {
       expect(record.positionMs, 57000);
       expect(record.episodeId, 'one');
       expect(record.episodeIndex, 5);
+      expect(record.episodeNumber, 1);
       expect(find.byType(CastSheet), findsNothing);
       expect(
         tester.widget<PlayerTransport>(find.byType(PlayerTransport)).enabled,

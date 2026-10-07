@@ -61,6 +61,22 @@ class Drama {
     _ => '',
   };
   String get key => '${source.name}:$id';
+  bool hasSameMetadata(Drama other) =>
+      identical(this, other) ||
+      (id == other.id &&
+          source == other.source &&
+          title == other.title &&
+          description == other.description &&
+          cover == other.cover &&
+          category == other.category &&
+          episodes == other.episodes &&
+          heat == other.heat &&
+          date == other.date &&
+          status == other.status &&
+          vip == other.vip &&
+          tags.length == other.tags.length &&
+          tags.indexed.every((tag) => tag.$2 == other.tags[tag.$1]));
+
   factory Drama.fromJson(Map<String, dynamic> json) {
     final id = json['id'] as String;
     final title = json['title'] as String;
@@ -140,6 +156,7 @@ class WatchRecord {
     required this.drama,
     required this.episodeId,
     required this.episodeIndex,
+    this.episodeNumber,
     required this.positionMs,
     required this.durationMs,
     required this.updatedAt,
@@ -147,20 +164,27 @@ class WatchRecord {
   final Drama drama;
   final String episodeId;
   final int episodeIndex, positionMs, durationMs;
+  // Queue position is not a source's display number (downloads may be sparse).
+  final int? episodeNumber;
   final DateTime updatedAt;
   double get progress =>
       durationMs <= 0 ? 0 : (positionMs / durationMs).clamp(0, 1);
   factory WatchRecord.fromJson(Map<String, dynamic> json) {
     final index = json['episodeIndex'] as int;
+    final number = json['episodeNumber'] as int?;
     final position = json['positionMs'] as int;
     final duration = json['durationMs'] as int;
-    if (index < 0 || position < 0 || duration < 0) {
+    if (index < 0 ||
+        (number != null && number < 0) ||
+        position < 0 ||
+        duration < 0) {
       throw const FormatException('观看记录无效');
     }
     return WatchRecord(
       drama: Drama.fromJson(Map<String, dynamic>.from(json['drama'] as Map)),
       episodeId: json['episodeId'] as String,
       episodeIndex: index,
+      episodeNumber: number,
       positionMs: position,
       durationMs: duration,
       updatedAt: DateTime.parse(json['updatedAt'] as String),
@@ -170,10 +194,21 @@ class WatchRecord {
     'drama': drama.toJson(),
     'episodeId': episodeId,
     'episodeIndex': episodeIndex,
+    if (episodeNumber != null) 'episodeNumber': episodeNumber,
     'positionMs': positionMs,
     'durationMs': durationMs,
     'updatedAt': updatedAt.toUtc().toIso8601String(),
   };
+
+  WatchRecord withDrama(Drama updated) => WatchRecord(
+    drama: updated,
+    episodeId: episodeId,
+    episodeIndex: episodeIndex,
+    episodeNumber: episodeNumber,
+    positionMs: positionMs,
+    durationMs: durationMs,
+    updatedAt: updatedAt,
+  );
 }
 
 class ResolvedMedia {
