@@ -71,6 +71,13 @@ class RecordStore extends ChangeNotifier {
       _history.values.toList()
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
+  int? episodeNumberFor(WatchRecord record) =>
+      _cachedEpisodes(record.drama)
+          ?.where((episode) => episode.id == record.episodeId)
+          .firstOrNull
+          ?.number ??
+      record.episodeNumber;
+
   List<Map<String, dynamic>> _historyRows() {
     _historyJson.removeWhere((key, _) => !_history.containsKey(key));
     return [
@@ -214,7 +221,12 @@ class RecordStore extends ChangeNotifier {
 
   Future<void> markEpisodesSeen(Drama drama, List<Episode> rows) =>
       _change((save) async {
-        _episodeSeenIds[drama.key] = Set.unmodifiable(rows.map((e) => e.id));
+        final ids = Set<String>.unmodifiable(rows.map((e) => e.id));
+        if (setEquals(_episodeSeenIds[drama.key], ids) &&
+            _persistence.persistenceError == null) {
+          return;
+        }
+        _episodeSeenIds[drama.key] = ids;
         await save();
         notifyListeners();
       });
@@ -299,13 +311,10 @@ class RecordStore extends ChangeNotifier {
         _persistence.persistenceError == null &&
         previous.episodeId == record.episodeId &&
         previous.episodeIndex == record.episodeIndex &&
+        previous.episodeNumber == record.episodeNumber &&
         previous.positionMs == record.positionMs &&
         previous.durationMs == record.durationMs &&
-        listEquals(previous.drama.tags, record.drama.tags) &&
-        mapEquals(
-          {...previous.drama.toJson(), 'tags': null},
-          {...record.drama.toJson(), 'tags': null},
-        )) {
+        previous.drama.hasSameMetadata(record.drama)) {
       return;
     }
     _history[record.drama.key] = record;
@@ -421,27 +430,22 @@ class RecordStore extends ChangeNotifier {
 
   Future<void> updateDrama(Drama updated) => _change((save) async {
     final key = updated.key;
+    final favorite = _favorites[key];
+    final record = _history[key];
+    if (favorite == null && record == null) return;
     var changed = false;
-    if (_favorites.containsKey(key)) {
+    if (favorite != null && !favorite.hasSameMetadata(updated)) {
       _favorites[key] = updated;
       changed = true;
     }
-    final record = _history[key];
-    if (record != null) {
-      _history[key] = WatchRecord(
-        drama: updated,
-        episodeId: record.episodeId,
-        episodeIndex: record.episodeIndex,
-        positionMs: record.positionMs,
-        durationMs: record.durationMs,
-        updatedAt: record.updatedAt,
-      );
+    if (record != null && !record.drama.hasSameMetadata(updated)) {
+      _history[key] = record.withDrama(updated);
       changed = true;
     }
-    if (changed) {
-      await save();
-      notifyListeners();
-    }
+    if (!changed && _persistence.persistenceError == null) return;
+    await save();
+    // A retry commits the in-memory metadata left by the failed write.
+    notifyListeners();
   });
 
   Future<void> episodesUpdated(Drama drama, List<Episode> baseline) =>

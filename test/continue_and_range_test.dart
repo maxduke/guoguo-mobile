@@ -52,6 +52,85 @@ AppStore fixture() {
 
 void main() {
   testWidgets(
+    'continue and history show original non-contiguous episode numbers',
+    (tester) async {
+      final store = fixture();
+      store.catalog.episodeCache[drama.key] = [
+        for (var i = 0; i < 20; i++)
+          Episode.fromJson({'id': 'e$i', 'currentEpisode': (i + 1) * 2}, i),
+      ];
+      final downloads = RangeDownloads(store);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomePage(store: store, downloads: downloads, autoLoad: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('第 10 集 · 已看 25%'), findsOneWidget);
+      await tester.tap(find.text('追剧'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('历史 1'));
+      await tester.pumpAndSettle();
+      expect(find.text('红果 · 第 10 集'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      downloads.dispose();
+      store.dispose();
+    },
+  );
+
+  testWidgets(
+    'personal continue card follows source filter including empty source',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final store = fixture();
+      const yellow = Drama(
+        id: 'yellow',
+        source: DramaSource.huangguo,
+        title: '黄果记录',
+      );
+      store.records.restore(
+        RecordBackup([], [
+          WatchRecord(
+            drama: yellow,
+            episodeId: 'yellow-one',
+            episodeIndex: 0,
+            positionMs: 1000,
+            durationMs: 60000,
+            updatedAt: DateTime.utc(2026, 1, 1),
+          ),
+        ]),
+        {},
+      );
+      final downloads = RangeDownloads(store);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomePage(store: store, downloads: downloads, autoLoad: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('追剧'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('全部站源'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ChoiceChip, '黄果'));
+      await tester.pumpAndSettle();
+      expect(find.text('接着上次看 · 黄果'), findsOneWidget);
+      expect(find.text('接着上次看 · 红果'), findsNothing);
+      await tester.tap(find.widgetWithText(OutlinedButton, '黄果'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ChoiceChip, '黄豆'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('接着上次看'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+      downloads.dispose();
+      store.dispose();
+    },
+  );
+
+  testWidgets(
     'continue card shows watched time when progressive total is unknown',
     (tester) async {
       final store = fixture();

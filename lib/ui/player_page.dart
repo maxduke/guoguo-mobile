@@ -304,6 +304,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               drama: widget.drama,
               episodeId: widget.episodes[_index].id,
               episodeIndex: widget.episodeIndices?[_index] ?? _index,
+              episodeNumber: widget.episodes[_index].number,
               positionMs: position.inMilliseconds,
               durationMs: duration.inMilliseconds,
               updatedAt: DateTime.now(),

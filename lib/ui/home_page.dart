@@ -901,6 +901,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (mounted) setState(() => _resuming = false);
   }
 
+  String _episodeLabel(WatchRecord record) {
+    final number = store.records.episodeNumberFor(record);
+    return number == null ? '上次观看' : '第 $number 集';
+  }
+
   Widget _continueCard(WatchRecord record) => Card(
     margin: EdgeInsets.zero,
     child: InkWell(
@@ -937,7 +942,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '第 ${record.episodeIndex + 1} 集 · 已看 ${record.durationMs > 0 ? '${(record.progress * 100).round()}%' : '${record.positionMs ~/ 60000}分${record.positionMs ~/ 1000 % 60}秒'}',
+                    '${_episodeLabel(record)} · 已看 ${record.durationMs > 0 ? '${(record.progress * 100).round()}%' : '${record.positionMs ~/ 60000}分${record.positionMs ~/ 1000 % 60}秒'}',
                     style: const TextStyle(fontSize: 12),
                   ),
                 ],
@@ -979,8 +984,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ),
         ),
         const SizedBox(height: 24),
-        if (store.records.recent.isNotEmpty) ...[
-          _continueCard(store.records.recent.first),
+        if (records.isNotEmpty) ...[
+          _continueCard(records.first),
           const SizedBox(height: 24),
         ],
         SourceFilter(
@@ -1116,7 +1121,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   overflow: TextOverflow.ellipsis,
                 ),
                 subtitle: Text(
-                  '${drama.source.label}${record == null ? '' : ' · 第 ${record.episodeIndex + 1} 集'}${store.records.newEpisodeCount(drama) > 0 ? ' · 新增 ${store.records.newEpisodeCount(drama)} 集' : ''}',
+                  '${drama.source.label}${record == null ? '' : ' · ${_episodeLabel(record)}'}${store.records.newEpisodeCount(drama) > 0 ? ' · 新增 ${store.records.newEpisodeCount(drama)} 集' : ''}',
                 ),
                 onTap: () => _open(drama),
                 trailing: IconButton(

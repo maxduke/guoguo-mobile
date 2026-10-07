@@ -18,6 +18,14 @@
 
 `updateDrama` 和 `episodesUpdated` 是异步记录操作，目录层等待它们完成后单独保存缓存，避免嵌套队列和重复记录写入。关闭后不接受新记录操作，关闭前已接受的保存会完成但不再发送页面通知。
 
+剧集资料通过 `Drama.hasSameMetadata` 比较实际字段与标签内容，不为变化检测生成 JSON。资料没有改变时保留原收藏和历史对象，跳过记录写入与通知；已读分集 ID 集合没有改变时也跳过保存。存在记录保存错误时仍允许相同内容重试，不能让去重阻止错误恢复。
+
+## 观看集号
+
+`WatchRecord.episodeIndex` 是原始队列位置，`episodeNumber` 是可选的站源真实集号，播放器按当前 `Episode.number` 保存后者。首页与历史共用 `RecordStore.episodeNumberFor`：按分集 ID 查找缓存中的真实集号，缓存缺失时使用记录保存的集号；两者都未知时显示“上次观看”，不从队列位置推算。
+
+更新剧集资料通过 `WatchRecord.withDrama` 保留分集身份、集号、位置、时长和观看时间。追剧页顶部续播与下方历史使用同一份来源筛选后的记录，不重复获取与排序全部历史。
+
 ## 订阅原则
 
 - 首页外壳不监听所有业务变化。通知提示、目录和个人记录分别订阅各自状态，标签页继续通过 `IndexedStack` 保留。
@@ -44,6 +52,8 @@
 - `test/record_transactions_test.dart`：候选提交、并发修改、失败重试、只读集合与真实文件重启恢复。
 - `test/scoped_store_test.dart`：状态通知隔离、持久化错误恢复、观看位置与收藏的局部更新、主题专用通知。
 - `test/player_sheets_test.dart`：选集/VIP 展示、禁用操作、自动连播和清晰度回调。
+- `test/record_maintenance_test.dart`：无变化资料与已读集合跳过写入、失败后的相同内容重试、集号保存与缓存缺失时的恢复。
+- `test/continue_and_range_test.dart`：非连续原始集号展示、追剧续播来源筛选、直接续播与下载范围。
 - 原有分区存储、备份、更新提醒、请求取消、播放器交接和 PiP 测试继续保留。
 
 CI 的 iOS 编译及模拟测试不等于 AirPlay 接收器或 PiP 真机验收。
