@@ -166,7 +166,9 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription<TaskUpdate>? _subscription;
   LocalStorage? _storage;
   Directory? _root;
-  String? error;
+  String? _error, _manifestError;
+  String? get error => _manifestError ?? _error;
+  set error(String? value) => _error = value;
   Timer? _refreshTimer;
   bool _verifyFiles = false;
   final Set<String> _removing = {};
@@ -237,29 +239,57 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         in entries
             .where((e) => !e.ready && !e.userPaused && e.failure == null)
             .toList()) {
-      final missing = <DownloadTask>[];
-      for (final task in entry.tasks) {
-        if (await driver.record(task.taskId) == null) missing.add(task);
-      }
-      if (missing.isEmpty) continue;
-      if (entry.refreshOnResume) {
-        try {
-          await retry(entry);
-        } catch (_) {
-          // retry preserves files and records the error for an explicit retry.
+      try {
+        final missing = <DownloadTask>[];
+        for (final task in entry.tasks) {
+          if (await driver.record(task.taskId) == null) missing.add(task);
         }
-      } else {
-        for (final task in missing) {
-          await driver.enqueue(task);
+        if (missing.isEmpty) continue;
+        if (entry.refreshOnResume) {
+          await retry(entry);
+        } else {
+          for (final task in missing) {
+            if (!await driver.enqueue(task)) {
+              throw const ProviderException('下载恢复未能入队，请重试；已下载文件已保留');
+            }
+          }
+        }
+      } catch (problem) {
+        entry.failure ??= problem is ProviderException
+            ? problem.message
+            : '下载恢复失败，请重试；已下载文件已保留';
+        entry.status = TaskStatus.failed;
+        try {
+          await _save();
+        } catch (_) {
+          // Keep the manifest error visible while recovering the other entries.
         }
       }
     }
+    if (!_disposed) notifyListeners();
   }
 
-  Future<void> _save() async => _storage?.write({
-    'version': 1,
-    'jobs': entries.map((e) => e.toJson()).toList(),
-  });
+  Future<void> _save() async {
+    final target = _storage;
+    if (target == null) return;
+    try {
+      await target.write({
+        'version': 1,
+        'jobs': entries.map((e) => e.toJson()).toList(),
+      });
+      _setManifestError(null);
+    } catch (_) {
+      _setManifestError('下载记录保存失败，请检查设备空间后重试');
+      rethrow;
+    }
+  }
+
+  void _setManifestError(String? value) {
+    if (_manifestError == value) return;
+    _manifestError = value;
+    if (!_disposed) notifyListeners();
+  }
+
   Future<void> setCellular(bool enabled) async {
     final ok = await downloader.requireWiFi(
       enabled ? RequireWiFi.forNoTasks : RequireWiFi.forAllTasks,
