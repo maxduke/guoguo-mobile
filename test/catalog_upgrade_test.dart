@@ -74,14 +74,19 @@ void main() {
       final provider = UpgradeProvider()..gate = Completer();
       final storage = MemoryStorage();
       final store = AppStore(storage: storage, provider: provider);
-      store.records.favorites[drama.key] = drama;
-      store.records.history[drama.key] = WatchRecord(
-        drama: drama,
-        episodeId: 'e3',
-        episodeIndex: 2,
-        positionMs: 12345,
-        durationMs: 60000,
-        updatedAt: DateTime.utc(2026),
+      store.records.restore(RecordBackup([drama], []), {});
+      store.records.restore(
+        RecordBackup([], [
+          WatchRecord(
+            drama: drama,
+            episodeId: 'e3',
+            episodeIndex: 2,
+            positionMs: 12345,
+            durationMs: 60000,
+            updatedAt: DateTime.utc(2026),
+          ),
+        ]),
+        {},
       );
       final first = store.catalog.refreshDetail(drama),
           second = store.catalog.refreshDetail(drama);
@@ -127,7 +132,7 @@ void main() {
     final storage = MemoryStorage();
     final store = AppStore(storage: storage, provider: provider);
     store.catalog.catalogs[old.source] = [old];
-    store.records.favorites[old.key] = old;
+    store.records.restore(RecordBackup([old], []), {});
     await store.catalog.refreshDetail(old);
     expect(store.catalog.currentDrama(old).tags, isEmpty);
     expect(store.records.favorites[old.key]!.tags, isEmpty);
@@ -144,7 +149,7 @@ void main() {
         'item': {...drama.toJson(), 'id': 'other'},
       };
     final store = AppStore(storage: MemoryStorage(), provider: provider);
-    store.records.favorites[drama.key] = drama;
+    store.records.restore(RecordBackup([drama], []), {});
     expect((await store.catalog.refreshDetail(drama)).id, drama.id);
     expect(store.records.favorites[drama.key], same(drama));
     expect(store.catalog.detailErrors[drama.key], isNotNull);

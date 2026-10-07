@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import '../domain/models.dart';
 import '../domain/catalog_query.dart';
@@ -27,9 +28,28 @@ class RecordStore extends ChangeNotifier {
   final List<Episode>? Function(Drama) _cachedEpisodes;
   final SeriesLookup Function(Drama, {bool refresh}) _lookupSeries;
   final progress = ChangeNotifier();
-  bool _closed = false;
+  bool _closed = false, _started = false;
+  late final Map<String, Drama> favorites = UnmodifiableMapView(_favorites);
+  late final Map<String, WatchRecord> history = UnmodifiableMapView(_history);
+  late final Map<String, SeasonReminder> seasonReminders = UnmodifiableMapView(
+    _seasonReminders,
+  );
+  late final Map<String, Set<String>> episodeSeenIds = UnmodifiableMapView(
+    _episodeSeenIds,
+  );
 
-  final Map<String, Set<String>> episodeSeenIds = {};
+  Future<void> _change(Future<void> Function(SaveRecords save) operation) {
+    if (_closed) return Future.error(StateError('记录存储已关闭'));
+    _started = true;
+    return _persistence.updateRecords(operation);
+  }
+
+  @override
+  void notifyListeners() {
+    if (!_closed) super.notifyListeners();
+  }
+
+  final Map<String, Set<String>> _episodeSeenIds = {};
 
   bool checkingUpdates = false;
 
@@ -37,24 +57,24 @@ class RecordStore extends ChangeNotifier {
 
   SeriesLookup? _updateLookup;
 
-  final Map<String, Drama> favorites = {};
+  final Map<String, Drama> _favorites = {};
 
-  final Map<String, WatchRecord> history = {};
+  final Map<String, WatchRecord> _history = {};
 
-  final Map<String, SeasonReminder> seasonReminders = {};
+  final Map<String, SeasonReminder> _seasonReminders = {};
 
   DateTime? _lastReminderEnabledAt;
 
   final _historyJson = <String, (WatchRecord, Map<String, dynamic>)>{};
 
   List<WatchRecord> get recent =>
-      history.values.toList()
+      _history.values.toList()
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
   List<Map<String, dynamic>> _historyRows() {
-    _historyJson.removeWhere((key, _) => !history.containsKey(key));
+    _historyJson.removeWhere((key, _) => !_history.containsKey(key));
     return [
-      for (final entry in history.entries)
+      for (final entry in _history.entries)
         (_historyJson[entry.key] =
                 identical(_historyJson[entry.key]?.$1, entry.value)
                 ? _historyJson[entry.key]!
@@ -63,37 +83,34 @@ class RecordStore extends ChangeNotifier {
     ];
   }
 
-  Future<void> toggleSeasonReminder(Drama drama) async {
-    final previous = seasonReminders[drama.key];
+  Future<void> toggleSeasonReminder(Drama drama) => _change((save) async {
+    final previous = _seasonReminders[drama.key];
     if (previous != null) {
-      seasonReminders.remove(drama.key);
+      _seasonReminders.remove(drama.key);
     } else {
       if (drama.source != DramaSource.hongguo ||
           SeriesTitle.parse(drama.title) == null ||
-          seasonReminders.length >= 1000) {
+          _seasonReminders.length >= RecordBackup.maxSeasonReminders) {
         throw const ProviderException('暂时无法添加新季提醒');
       }
-      seasonReminders[drama.key] = SeasonReminder(
+      _seasonReminders[drama.key] = SeasonReminder(
         anchor: drama,
         updatedAt: _newReminderTime(),
       );
     }
-    final updated = seasonReminders[drama.key];
     try {
-      await _persistence.persist(cache: false);
+      await save();
     } catch (_) {
-      if (identical(seasonReminders[drama.key], updated)) {
-        if (previous == null) {
-          seasonReminders.remove(drama.key);
-        } else {
-          seasonReminders[drama.key] = previous;
-        }
+      if (previous == null) {
+        _seasonReminders.remove(drama.key);
+      } else {
+        _seasonReminders[drama.key] = previous;
       }
-      if (!_closed) notifyListeners();
+      notifyListeners();
       rethrow;
     }
-    if (!_closed) notifyListeners();
-  }
+    notifyListeners();
+  });
 
   DateTime _newReminderTime() {
     final date = now();
@@ -114,8 +131,8 @@ class RecordStore extends ChangeNotifier {
     Drama anchor,
     CatalogSearchResult result, {
     SeasonReminder? expected,
-  }) async {
-    final current = seasonReminders[anchor.key];
+  }) => _change((save) async {
+    final current = _seasonReminders[anchor.key];
     if (current == null ||
         (expected != null && current.enabledAt != expected.enabledAt)) {
       return;
@@ -146,23 +163,21 @@ class RecordStore extends ChangeNotifier {
       initialized: current.initialized || complete,
       seasons: seasons,
     );
-    seasonReminders[anchor.key] = updated;
+    _seasonReminders[anchor.key] = updated;
     try {
-      await _persistence.persist(cache: false);
+      await save();
     } catch (_) {
-      if (identical(seasonReminders[anchor.key], updated)) {
-        seasonReminders[anchor.key] = current;
-      }
-      if (!_closed) notifyListeners();
+      _seasonReminders[anchor.key] = current;
+      notifyListeners();
       rethrow;
     }
-    if (!_closed) notifyListeners();
-  }
+    notifyListeners();
+  });
 
-  Future<void> markSeasonRead(String key) async {
+  Future<void> markSeasonRead(String key) => _change((save) async {
     final old = <String, SeasonReminder>{};
     final changed = <String, SeasonReminder>{};
-    for (final entry in seasonReminders.entries.toList()) {
+    for (final entry in _seasonReminders.entries.toList()) {
       final notice = entry.value.seasons[key];
       if (notice == null || notice.read) continue;
       old[entry.key] = entry.value;
@@ -178,34 +193,31 @@ class RecordStore extends ChangeNotifier {
       );
     }
     if (changed.isEmpty) return;
-    seasonReminders.addAll(changed);
+    _seasonReminders.addAll(changed);
     try {
-      await _persistence.persist(cache: false);
+      await save();
     } catch (_) {
-      for (final entry in old.entries) {
-        if (identical(seasonReminders[entry.key], changed[entry.key])) {
-          seasonReminders[entry.key] = entry.value;
-        }
-      }
-      if (!_closed) notifyListeners();
+      _seasonReminders.addAll(old);
+      notifyListeners();
       rethrow;
     }
-    if (!_closed) notifyListeners();
-  }
+    notifyListeners();
+  });
 
   int newEpisodeCount(Drama drama) {
-    final seen = episodeSeenIds[drama.key];
+    final seen = _episodeSeenIds[drama.key];
     if (seen == null) return 0;
     return (_cachedEpisodes(drama) ?? [])
         .where((e) => !seen.contains(e.id))
         .length;
   }
 
-  Future<void> markEpisodesSeen(Drama drama, List<Episode> rows) async {
-    episodeSeenIds[drama.key] = rows.map((e) => e.id).toSet();
-    await _persistence.persist(cache: false);
-    notifyListeners();
-  }
+  Future<void> markEpisodesSeen(Drama drama, List<Episode> rows) =>
+      _change((save) async {
+        _episodeSeenIds[drama.key] = Set.unmodifiable(rows.map((e) => e.id));
+        await save();
+        notifyListeners();
+      });
 
   Future<bool> checkFavoriteUpdates() async {
     if (checkingUpdates) return false;
@@ -215,7 +227,7 @@ class RecordStore extends ChangeNotifier {
     notifyListeners();
     var failures = 0;
     try {
-      for (final drama in favorites.values.toList()) {
+      for (final drama in _favorites.values.toList()) {
         if (generation != _updateGeneration) break;
         try {
           await _loadEpisodes(drama, refresh: true);
@@ -224,9 +236,9 @@ class RecordStore extends ChangeNotifier {
         }
       }
       final results = <String, CatalogSearchResult>{};
-      for (final reminder in seasonReminders.values.toList()) {
+      for (final reminder in _seasonReminders.values.toList()) {
         if (generation != _updateGeneration) break;
-        if (seasonReminders[reminder.anchor.key]?.enabledAt !=
+        if (_seasonReminders[reminder.anchor.key]?.enabledAt !=
             reminder.enabledAt) {
           continue;
         }
@@ -259,7 +271,7 @@ class RecordStore extends ChangeNotifier {
     } finally {
       _updateLookup = null;
       checkingUpdates = false;
-      if (!_closed) notifyListeners();
+      notifyListeners();
     }
     if (generation != _updateGeneration) return false;
     if (failures > 0) throw ProviderException('$failures 部剧更新失败，已保留原有记录');
@@ -271,18 +283,18 @@ class RecordStore extends ChangeNotifier {
     _updateLookup?.cancel();
   }
 
-  Future<void> toggleFavorite(Drama drama) async {
-    if (favorites.containsKey(drama.key)) {
-      favorites.remove(drama.key);
+  Future<void> toggleFavorite(Drama drama) => _change((save) async {
+    if (_favorites.containsKey(drama.key)) {
+      _favorites.remove(drama.key);
     } else {
-      favorites[drama.key] = drama;
+      _favorites[drama.key] = drama;
     }
     notifyListeners();
-    await _persistence.persist(cache: false);
-  }
+    await save();
+  });
 
-  Future<void> saveWatch(WatchRecord record) async {
-    final previous = history[record.drama.key];
+  Future<void> saveWatch(WatchRecord record) => _change((save) async {
+    final previous = _history[record.drama.key];
     if (previous != null &&
         _persistence.persistenceError == null &&
         previous.episodeId == record.episodeId &&
@@ -296,22 +308,22 @@ class RecordStore extends ChangeNotifier {
         )) {
       return;
     }
-    history[record.drama.key] = record;
-    progress.notifyListeners();
-    await _persistence.persist(cache: false);
-  }
+    _history[record.drama.key] = record;
+    if (!_closed) progress.notifyListeners();
+    await save();
+  });
 
-  Future<void> removeHistory(String key) async {
-    history.remove(key);
+  Future<void> removeHistory(String key) => _change((save) async {
+    _history.remove(key);
     notifyListeners();
-    await _persistence.persist(cache: false);
-  }
+    await save();
+  });
 
   String exportBackup() => const JsonEncoder.withIndent('  ').convert(
     RecordBackup(
-      favorites.values.toList(),
-      history.values.toList(),
-      seasonReminders: seasonReminders.values.toList(),
+      _favorites.values.toList(),
+      _history.values.toList(),
+      seasonReminders: _seasonReminders.values.toList(),
     ).toJson(),
   );
 
@@ -328,43 +340,27 @@ class RecordStore extends ChangeNotifier {
   }
 
   Future<void> importBackup(RecordBackup backup) async {
-    if ({
-          ...seasonReminders.keys,
-          ...backup.seasonReminders.map((r) => r.anchor.key),
-        }.length >
-        1000) {
-      throw const FormatException('合并后的新季提醒超过上限，原记录未修改');
-    }
-    final oldFavorites = Map<String, Drama>.of(favorites);
-    final oldHistory = Map<String, WatchRecord>.of(history);
-    final oldReminders = Map<String, SeasonReminder>.of(seasonReminders);
-    mergeBackup(backup);
-    final installedReminders = Map<String, SeasonReminder>.of(seasonReminders);
-    try {
-      await _persistence.persist(cache: false);
-    } catch (_) {
-      favorites
-        ..clear()
-        ..addAll(oldFavorites);
-      history
-        ..clear()
-        ..addAll(oldHistory);
-      for (final entry in installedReminders.entries) {
-        if (!identical(seasonReminders[entry.key], entry.value)) continue;
-        final previous = oldReminders[entry.key];
-        if (previous == null) {
-          seasonReminders.remove(entry.key);
-        } else {
-          seasonReminders[entry.key] = previous;
-        }
+    // Detach and validate the caller's collections before waiting in the queue.
+    final incoming = RecordBackup.fromJson(
+      Map<String, dynamic>.from(jsonDecode(jsonEncode(backup.toJson())) as Map),
+    );
+    await _change((save) async {
+      final candidate = _mergedBackup(incoming);
+      if (candidate.favorites.length > RecordBackup.maxRecords ||
+          candidate.history.length > RecordBackup.maxRecords ||
+          candidate.seasonReminders.length > RecordBackup.maxSeasonReminders) {
+        throw const FormatException('合并后的记录超过上限，原记录未修改');
       }
-      if (!_closed) notifyListeners();
-      rethrow;
-    }
-    notifyListeners();
+      await save(candidate: candidate);
+      _installBackup(candidate);
+      notifyListeners();
+    });
   }
 
-  void mergeBackup(RecordBackup backup) {
+  RecordBackup _mergedBackup(RecordBackup backup) {
+    final favorites = Map<String, Drama>.of(_favorites);
+    final history = Map<String, WatchRecord>.of(_history);
+    final reminders = Map<String, SeasonReminder>.of(_seasonReminders);
     for (final drama in backup.favorites) {
       favorites.putIfAbsent(drama.key, () => drama);
     }
@@ -375,39 +371,64 @@ class RecordStore extends ChangeNotifier {
       }
     }
     for (final reminder in backup.seasonReminders) {
-      final existing = seasonReminders[reminder.anchor.key];
+      final existing = reminders[reminder.anchor.key];
       if (existing == null || reminder.updatedAt.isAfter(existing.updatedAt)) {
-        seasonReminders[reminder.anchor.key] = reminder;
-        if (_lastReminderEnabledAt == null ||
-            reminder.enabledAt.isAfter(_lastReminderEnabledAt!)) {
-          _lastReminderEnabledAt = reminder.enabledAt;
-        }
+        reminders[reminder.anchor.key] = reminder;
+      }
+    }
+    return RecordBackup(
+      favorites.values.toList(),
+      history.values.toList(),
+      seasonReminders: reminders.values.toList(),
+    );
+  }
+
+  void _installBackup(RecordBackup backup) {
+    _favorites
+      ..clear()
+      ..addEntries(backup.favorites.map((d) => MapEntry(d.key, d)));
+    _history
+      ..clear()
+      ..addEntries(backup.history.map((r) => MapEntry(r.drama.key, r)));
+    _seasonReminders
+      ..clear()
+      ..addEntries(
+        backup.seasonReminders.map((r) => MapEntry(r.anchor.key, r)),
+      );
+    for (final reminder in backup.seasonReminders) {
+      if (_lastReminderEnabledAt == null ||
+          reminder.enabledAt.isAfter(_lastReminderEnabledAt!)) {
+        _lastReminderEnabledAt = reminder.enabledAt;
       }
     }
   }
 
   Map<String, dynamic> snapshot({bool reuseHistory = false}) => RecordBackup(
-    favorites.values.toList(),
-    history.values.toList(),
-    seasonReminders: seasonReminders.values.toList(),
+    _favorites.values.toList(),
+    _history.values.toList(),
+    seasonReminders: _seasonReminders.values.toList(),
   ).toJson(historyRows: reuseHistory ? _historyRows() : null);
 
   void restore(RecordBackup backup, Map<String, Set<String>> seen) {
-    episodeSeenIds.addAll(seen);
-    mergeBackup(backup);
+    if (_started || _closed) throw StateError('只能在记录初始化时恢复快照');
+    _episodeSeenIds.addAll({
+      for (final entry in seen.entries)
+        entry.key: Set.unmodifiable(entry.value),
+    });
+    _installBackup(_mergedBackup(backup));
     notifyListeners();
   }
 
-  void updateDrama(Drama updated) {
+  Future<void> updateDrama(Drama updated) => _change((save) async {
     final key = updated.key;
     var changed = false;
-    if (favorites.containsKey(key)) {
-      favorites[key] = updated;
+    if (_favorites.containsKey(key)) {
+      _favorites[key] = updated;
       changed = true;
     }
-    final record = history[key];
+    final record = _history[key];
     if (record != null) {
-      history[key] = WatchRecord(
+      _history[key] = WatchRecord(
         drama: updated,
         episodeId: record.episodeId,
         episodeIndex: record.episodeIndex,
@@ -417,16 +438,22 @@ class RecordStore extends ChangeNotifier {
       );
       changed = true;
     }
-    if (changed) notifyListeners();
-  }
+    if (changed) {
+      await save();
+      notifyListeners();
+    }
+  });
 
-  void episodesUpdated(Drama drama, List<Episode> baseline) {
-    episodeSeenIds.putIfAbsent(
-      drama.key,
-      () => baseline.map((e) => e.id).toSet(),
-    );
-    notifyListeners();
-  }
+  Future<void> episodesUpdated(Drama drama, List<Episode> baseline) =>
+      _change((save) async {
+        final changed = !_episodeSeenIds.containsKey(drama.key);
+        _episodeSeenIds.putIfAbsent(
+          drama.key,
+          () => Set.unmodifiable(baseline.map((e) => e.id)),
+        );
+        if (changed) await save();
+        notifyListeners();
+      });
 
   @override
   void dispose() {

@@ -283,6 +283,7 @@ class SeasonReminder {
 }
 
 class RecordBackup {
+  static const maxRecords = 100000, maxSeasonReminders = 1000;
   RecordBackup(this.favorites, this.history, {this.seasonReminders = const []});
   final List<Drama> favorites;
   final List<WatchRecord> history;
@@ -294,9 +295,9 @@ class RecordBackup {
     final favorites = json['favorites'] as List;
     final history = json['history'] as List;
     final reminders = json['seasonReminders'] as List;
-    if (favorites.length > 100000 ||
-        history.length > 100000 ||
-        reminders.length > 1000) {
+    if (favorites.length > maxRecords ||
+        history.length > maxRecords ||
+        reminders.length > maxSeasonReminders) {
       throw const FormatException('备份记录过多');
     }
     final parsedReminders = reminders

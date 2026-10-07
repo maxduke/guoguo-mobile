@@ -34,13 +34,18 @@ AppStore fixture() {
   final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
     ..offline = true;
   store.catalog.episodeCache[drama.key] = chapters();
-  store.records.history[drama.key] = WatchRecord(
-    drama: drama,
-    episodeId: 'e4',
-    episodeIndex: 4,
-    positionMs: 15000,
-    durationMs: 60000,
-    updatedAt: DateTime.now(),
+  store.records.restore(
+    RecordBackup([], [
+      WatchRecord(
+        drama: drama,
+        episodeId: 'e4',
+        episodeIndex: 4,
+        positionMs: 15000,
+        durationMs: 60000,
+        updatedAt: DateTime.now(),
+      ),
+    ]),
+    {},
   );
   return store;
 }
@@ -50,13 +55,18 @@ void main() {
     'continue card shows watched time when progressive total is unknown',
     (tester) async {
       final store = fixture();
-      store.records.history[drama.key] = WatchRecord(
-        drama: drama,
-        episodeId: 'e4',
-        episodeIndex: 4,
-        positionMs: 65000,
-        durationMs: 0,
-        updatedAt: DateTime.now(),
+      store.records.restore(
+        RecordBackup([], [
+          WatchRecord(
+            drama: drama,
+            episodeId: 'e4',
+            episodeIndex: 4,
+            positionMs: 65000,
+            durationMs: 0,
+            updatedAt: DateTime.now(),
+          ),
+        ]),
+        {},
       );
       final downloads = RangeDownloads(store);
       await tester.pumpWidget(
