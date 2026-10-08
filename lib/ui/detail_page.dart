@@ -106,6 +106,7 @@ class DetailPage extends StatefulWidget {
 class _DetailPageState extends State<DetailPage> {
   List<Episode> _episodes = const [];
   final _seriesKey = GlobalKey<RelatedSeriesSectionState>();
+  final _episodesKey = GlobalKey();
   bool _loading = false, _episodeFailed = false;
   bool _choosingDownloads = false, _enqueueing = false, _expanded = false;
   bool get _downloadBusy => _choosingDownloads || _enqueueing;
@@ -248,18 +249,19 @@ class _DetailPageState extends State<DetailPage> {
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
                                 SizedBox(
-                                  width: 300,
+                                  width: 260,
                                   child: SingleChildScrollView(
                                     child: _summary(true),
                                   ),
                                 ),
-                                const SizedBox(width: 32),
+                                const SizedBox(width: 24),
                                 Expanded(
-                                  child: _chapterList(
-                                    rows,
-                                    record,
-                                    resume.index,
-                                    shrinkWrap: false,
+                                  child: SingleChildScrollView(
+                                    child: _episodeContent(
+                                      rows,
+                                      record,
+                                      resume.index,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -269,12 +271,7 @@ class _DetailPageState extends State<DetailPage> {
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
                                   _summary(false),
-                                  _chapterList(
-                                    rows,
-                                    record,
-                                    resume.index,
-                                    shrinkWrap: true,
-                                  ),
+                                  _episodeContent(rows, record, resume.index),
                                 ],
                               ),
                             ),
@@ -363,43 +360,35 @@ class _DetailPageState extends State<DetailPage> {
 
   Widget _summary(bool wide) {
     final favorite = widget.store.records.favorites.containsKey(drama.key);
+    final facts = [
+      if (drama.episodes > 0) '${drama.episodes} 集',
+      if (drama.statusLabel.isNotEmpty) drama.statusLabel,
+      if (drama.vip == true) 'VIP',
+    ].join(' · ');
     final heading = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(drama.title, style: Theme.of(context).textTheme.headlineMedium),
-        const SizedBox(height: 12),
+        Text(drama.title, style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 6),
         Text(
           '${drama.source.label} · ${drama.category.isEmpty ? '短剧' : drama.category}',
-          style: TextStyle(color: Theme.of(context).colorScheme.primary),
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: Theme.of(context).colorScheme.primary,
+          ),
         ),
-      ],
-    );
-    final facts = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
+        if (facts.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(facts, style: Theme.of(context).textTheme.bodySmall),
+        ],
         const SizedBox(height: 8),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [
-            if (drama.episodes > 0) Chip(label: Text('${drama.episodes} 集')),
-            if (drama.statusLabel.isNotEmpty)
-              Chip(label: Text(drama.statusLabel)),
-            if (drama.vip == true) const Chip(label: Text('VIP')),
-          ],
-        ),
-        if (drama.vip == true)
-          const Text('部分分集需要站源授权，试看不作为完整正片', style: TextStyle(fontSize: 12)),
-        if (drama.date.isNotEmpty)
-          Text('上线 ${drama.date}', style: const TextStyle(fontSize: 12)),
-        const SizedBox(height: 12),
         OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
           onPressed: () => perform(
             context,
             () => widget.store.records.toggleFavorite(drama),
           ),
           icon: Icon(favorite ? Icons.bookmark : Icons.bookmark_add_outlined),
-          label: Text(favorite ? '已收藏' : '收藏这部剧'),
+          label: Text(favorite ? '已收藏' : '收藏'),
         ),
       ],
     );
@@ -407,70 +396,94 @@ class _DetailPageState extends State<DetailPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (wide) ...[
-          AspectRatio(aspectRatio: 3 / 4, child: Poster(drama, radius: 22)),
-          const SizedBox(height: 22),
+          SizedBox(width: 180, height: 240, child: Poster(drama, radius: 20)),
+          const SizedBox(height: 12),
           heading,
-          facts,
         ] else ...[
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(width: 96, height: 132, child: Poster(drama)),
-              const SizedBox(width: 16),
+              SizedBox(
+                width: 76,
+                height: 104,
+                child: Poster(drama, radius: 12),
+              ),
+              const SizedBox(width: 12),
               Expanded(child: heading),
             ],
           ),
-          facts,
         ],
-        const SizedBox(height: 24),
-        Text(
-          drama.description.isEmpty ? '好故事，从第一集开始。' : drama.description,
-          maxLines: _expanded
-              ? null
-              : wide
-              ? 12
-              : 4,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-            height: 1.7,
+        if (drama.vip == true) ...[
+          const SizedBox(height: 8),
+          const Text('部分分集需要站源授权，试看不作为完整正片', style: TextStyle(fontSize: 12)),
+        ],
+        if (drama.description.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text(
+            drama.description,
+            maxLines: _expanded ? null : 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              height: 1.5,
+            ),
           ),
-        ),
-        if (drama.description.isNotEmpty)
+        ],
+        if (_expanded && drama.date.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text('上线 ${drama.date}', style: const TextStyle(fontSize: 12)),
+        ],
+        if (drama.tags.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            drama.tags.join(' · '),
+            maxLines: _expanded ? null : 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+        if (drama.description.isNotEmpty ||
+            drama.tags.isNotEmpty ||
+            drama.date.isNotEmpty)
           TextButton(
             onPressed: () => setState(() => _expanded = !_expanded),
-            child: Text(_expanded ? '收起简介' : '展开简介'),
-          ),
-        if (drama.tags.isNotEmpty)
-          Wrap(
-            spacing: 6,
-            children: [
-              for (final tag in drama.tags.take(8)) Chip(label: Text(tag)),
-            ],
+            child: Text(_expanded ? '收起资料' : '展开资料'),
           ),
         if (widget.store.catalog.detailErrors[drama.key] != null)
           Text(
             widget.store.catalog.detailErrors[drama.key]!,
             style: const TextStyle(fontSize: 12),
           ),
-        const SizedBox(height: 24),
-        RelatedSeriesSection(
-          key: _seriesKey,
-          store: widget.store,
-          drama: drama,
-          onOpen: (row) =>
-              openDrama(context, widget.store, widget.downloads, row),
-        ),
+        const SizedBox(height: 20),
       ],
     );
   }
 
+  Widget _episodeContent(
+    List<Episode> rows,
+    WatchRecord? record,
+    int resumeIndex,
+  ) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      _chapterList(rows, record, resumeIndex),
+      const SizedBox(height: 24),
+      RelatedSeriesSection(
+        key: _seriesKey,
+        store: widget.store,
+        drama: drama,
+        onOpen: (row) =>
+            openDrama(context, widget.store, widget.downloads, row),
+      ),
+      const SizedBox(height: 24),
+    ],
+  );
+
   Widget _chapterList(
     List<Episode> rows,
     WatchRecord? record,
-    int resumeIndex, {
-    required bool shrinkWrap,
-  }) {
+    int resumeIndex,
+  ) {
     if (rows.isEmpty) {
       if (_episodeFailed) {
         return ListenableBuilder(
@@ -497,7 +510,7 @@ class _DetailPageState extends State<DetailPage> {
       return const Center(child: Text('暂无可播放分集'));
     }
     return Column(
-      mainAxisSize: shrinkWrap ? MainAxisSize.min : MainAxisSize.max,
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (!_loading &&
@@ -526,20 +539,10 @@ class _DetailPageState extends State<DetailPage> {
           ],
         ),
         const SizedBox(height: 12),
-        if (shrinkWrap)
-          ListenableBuilder(
-            listenable: widget.downloads,
-            builder: (context, _) =>
-                _episodeGrid(rows, resumeIndex, record, true),
-          )
-        else
-          Expanded(
-            child: ListenableBuilder(
-              listenable: widget.downloads,
-              builder: (context, _) =>
-                  _episodeGrid(rows, resumeIndex, record, false),
-            ),
-          ),
+        ListenableBuilder(
+          listenable: widget.downloads,
+          builder: (context, _) => _episodeGrid(rows, resumeIndex, record),
+        ),
       ],
     );
   }
@@ -548,11 +551,11 @@ class _DetailPageState extends State<DetailPage> {
     List<Episode> rows,
     int resumeIndex,
     WatchRecord? record,
-    bool shrinkWrap,
   ) => EpisodeGrid(
+    key: _episodesKey,
     episodes: rows,
     initialIndex: resumeIndex,
-    shrinkWrap: shrinkWrap,
+    shrinkWrap: true,
     onJump: (index) => _play(rows, index),
     builder: (context, index) => OutlinedButton(
       onPressed: () => _play(rows, index),
