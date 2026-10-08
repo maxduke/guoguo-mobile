@@ -1215,7 +1215,10 @@ void main() {
       await tester.tap(find.byTooltip('暂停'));
       await tester.pump();
       // Route a completed scrub through the actual UI callback and native channel.
-      tester.widget<Slider>(find.byType(Slider)).onChangeEnd!(4000);
+      final scrub = tester.widget<Slider>(find.byType(Slider));
+      scrub.onChangeStart!(scrub.value);
+      scrub.onChanged!(4000);
+      scrub.onChangeEnd!(4000);
       await tester.pumpAndSettle();
       expect(platform.seeks.last, 4000);
       expect(player.isPlaying(), isFalse);
@@ -1705,7 +1708,10 @@ void main() {
         if (replay) {
           await tester.tap(find.byTooltip('播放'));
         } else {
-          tester.widget<Slider>(find.byType(Slider)).onChangeEnd!(5000);
+          final scrub = tester.widget<Slider>(find.byType(Slider));
+          scrub.onChangeStart!(scrub.value);
+          scrub.onChanged!(5000);
+          scrub.onChangeEnd!(5000);
         }
         await tester.pumpAndSettle();
         expect(store.records.history.values.single.episodeCompleted, false);

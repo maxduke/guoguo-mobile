@@ -165,6 +165,7 @@ void main() {
     ProviderClient? provider,
     MediaPreparer Function()? preparerFactory,
     bool downloaded = true,
+    double playbackSpeed = 1,
   }) async {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     final native = NativeCastPlayer()..install();
@@ -173,6 +174,7 @@ void main() {
     final store =
         AppStore(storage: MemoryStorage(), provider: provider ?? NoNetwork())
           ..preferences.prefetch = false
+          ..preferences.playbackSpeed = playbackSpeed
           ..preferences.autoAdvance = autoAdvance;
     final downloads = LocalDownloads(store)..available = downloaded;
     addTearDown(() {
@@ -290,6 +292,124 @@ void main() {
           (_) => done.complete(),
         );
     await done.future;
+  }
+
+  for (final interruption in [
+    'slider cancel',
+    'background',
+    'lock',
+    'episode',
+    'AirPlay',
+    'overlap',
+  ]) {
+    testWidgets('player releases interaction after $interruption', (
+      tester,
+    ) async {
+      installAirPlay();
+      final (native, _, _, _, _) = await mount(
+        tester,
+        airPlayChannel: airPlayChannel,
+        playbackSpeed: 1.5,
+      );
+      final player = tester
+          .widget<BetterPlayer>(find.byType(BetterPlayer))
+          .controller;
+      final initialSeeks = native.seeks.length;
+      final slider = tester.getRect(find.byType(Slider));
+      final gesture = await tester.startGesture(
+        interruption == 'slider cancel'
+            ? slider.centerLeft + const Offset(40, 0)
+            : const Offset(400, 300),
+      );
+      if (interruption == 'slider cancel') {
+        await gesture.moveBy(const Offset(120, 0));
+        await tester.pump();
+        await gesture.cancel();
+      } else {
+        await tester.pump(const Duration(milliseconds: 600));
+        expect(player.videoPlayerController!.value.speed, 2);
+        switch (interruption) {
+          case 'background':
+            tester.binding.handleAppLifecycleStateChanged(
+              AppLifecycleState.paused,
+            );
+            await tester.pump();
+            tester.binding.handleAppLifecycleStateChanged(
+              AppLifecycleState.resumed,
+            );
+            await tester.pump();
+          case 'lock':
+            await tester.tap(find.byTooltip('更多播放设置'));
+            await tester.pumpAndSettle();
+            await tester.scrollUntilVisible(
+              find.text('锁定手势'),
+              180,
+              scrollable: find
+                  .descendant(
+                    of: find.byType(BottomSheet),
+                    matching: find.byType(Scrollable),
+                  )
+                  .last,
+            );
+            await tester.tap(find.text('锁定手势'));
+            await tester.pumpAndSettle();
+            expect(find.byTooltip('解锁手势'), findsOneWidget);
+            await tester.tap(find.byTooltip('解锁手势'));
+            await tester.pump();
+          case 'episode':
+            tester
+                .widget<EpisodePager>(find.byType(EpisodePager))
+                .controller
+                .jumpToPage(1);
+            await tester.pumpAndSettle();
+            expect(native.sources.last['uri'], 'file:///tmp/cast-two.mp4');
+            await tester.tapAt(const Offset(700, 150));
+            await tester.pump();
+          case 'AirPlay':
+            await tester.tap(find.byTooltip('AirPlay'));
+            await tester.pumpAndSettle();
+          case 'overlap':
+            final scrub = await tester.startGesture(
+              slider.centerLeft + const Offset(40, 0),
+            );
+            await scrub.moveBy(const Offset(120, 0));
+            await scrub.up();
+            await tester.pump(const Duration(seconds: 4));
+            expect(
+              tester
+                  .widget<AnimatedOpacity>(find.byType(AnimatedOpacity))
+                  .opacity,
+              1,
+            );
+            expect(player.videoPlayerController!.value.speed, 2);
+            expect(native.seeks.length, initialSeeks + 1);
+            await gesture.cancel();
+        }
+        if (interruption != 'overlap') {
+          await gesture.moveBy(const Offset(100, 0));
+          await gesture.up();
+          await tester.pump();
+          expect(native.seeks.length, initialSeeks);
+        }
+        if (interruption == 'AirPlay') {
+          expect(player.videoPlayerController!.value.speed, 1.5);
+          external = false;
+          await emitAirPlay(closed: true);
+          await tester.pumpAndSettle();
+        }
+      }
+      expect(player.videoPlayerController!.value.speed, 1.5);
+      if (interruption == 'slider cancel') {
+        expect(native.seeks.length, initialSeeks);
+      }
+      await tester.pump(const Duration(seconds: 3));
+      expect(
+        tester.widget<AnimatedOpacity>(find.byType(AnimatedOpacity)).opacity,
+        0,
+      );
+      expect(tester.takeException(), isNull);
+      await unmount(tester);
+    });
   }
 
   testWidgets('AirPlay owns CENC files independently of phone cache trimming', (

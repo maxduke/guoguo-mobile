@@ -129,7 +129,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   bool _loading = true;
   bool get _foreground => _lifecycle.foreground;
   bool get _pipActive => _lifecycle.pipActive;
-  bool _modal = false, _scrubbing = false;
+  bool _modal = false, _gestureScrubbing = false, _transportScrubbing = false;
+  bool get _scrubbing => _gestureScrubbing || _transportScrubbing;
   double _speed = 1;
   PlaybackFailure? _error;
   String _loadingPhase = '正在查找本地视频…';
@@ -792,6 +793,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _health.reset();
     _lifecycle.setForeground(state == AppLifecycleState.resumed);
     _casting.setForeground(state == AppLifecycleState.resumed);
+    _armHide();
     if (state == AppLifecycleState.resumed && _airplay != null) {
       unawaited(_airplay!.refreshRoute().catchError((Object _) {}));
     }
@@ -1158,7 +1160,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   void _armHide() {
     _hideTimer?.cancel();
-    if (_casting.blocksLocal ||
+    if (!mounted ||
+        !_foreground ||
+        _localBlocked ||
+        _locked ||
+        _loading ||
         !_controls ||
         _modal ||
         _scrubbing ||
@@ -1454,10 +1460,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     Widget build() {
       final value = controller?.value;
       return PlayerTransport(
+        mediaIdentity: _generation,
         duration: value?.duration?.inMilliseconds.toDouble() ?? 0,
         position: value?.position.inMilliseconds.toDouble() ?? 0,
         playing: value?.isPlaying == true,
-        enabled: !_localBlocked && !_loading && _active != null,
+        enabled:
+            (_controls || _error != null) &&
+            !_locked &&
+            !_localBlocked &&
+            !_loading &&
+            _active != null,
         speed: _speed,
         preparing:
             _active?.preparer.streaming == true && !_active!.preparer.complete,
@@ -1476,7 +1488,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           _armHide();
         },
         onScrub: (scrubbing) {
-          _scrubbing = scrubbing;
+          _transportScrubbing = scrubbing;
           _armHide();
         },
         onSeek: (position) {
@@ -1521,6 +1533,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             container: true,
             explicitChildNodes: true,
             child: PlayerGestures(
+              mediaIdentity: _generation,
               onTap: _tap,
               enabled:
                   !_localBlocked && !_locked && !_loading && _active != null,
@@ -1545,14 +1558,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                             .toDouble()) ??
                   0,
               onBoost: (boost) {
-                if (_active != null) {
+                if (mounted && _active != null) {
                   unawaited(_player.setSpeed(boost ? 2 : _speed));
                 }
-                _scrubbing = boost;
-                _armHide();
               },
               onScrub: (value) {
-                _scrubbing = value;
+                _gestureScrubbing = value;
                 _armHide();
               },
               onSeek: (value) {

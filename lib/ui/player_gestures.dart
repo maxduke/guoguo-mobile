@@ -13,6 +13,7 @@ class PlayerGestures extends StatefulWidget {
     required this.onBoost,
     required this.onScrub,
     this.enabled = true,
+    this.mediaIdentity,
   });
   final Widget child;
   final VoidCallback onTap;
@@ -20,6 +21,7 @@ class PlayerGestures extends StatefulWidget {
   final ValueChanged<double> onSeek;
   final ValueChanged<bool> onBoost, onScrub;
   final bool enabled;
+  final Object? mediaIdentity;
   @override
   State<PlayerGestures> createState() => _PlayerGesturesState();
 }
@@ -29,35 +31,46 @@ class _PlayerGesturesState extends State<PlayerGestures>
   double? _origin, _preview;
   double _distance = 0;
   bool _boost = false, _longGesture = false, _horizontalGesture = false;
+  bool _foreground = true;
   @override
   void initState() {
     super.initState();
+    _foreground =
+        WidgetsBinding.instance.lifecycleState == null ||
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
     WidgetsBinding.instance.addObserver(this);
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) _finish(commit: false);
+    _foreground = state == AppLifecycleState.resumed;
+    if (!_foreground) _finish(commit: false);
   }
 
   @override
   void didUpdateWidget(PlayerGestures oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!widget.enabled && oldWidget.enabled) _finish(commit: false);
+    if (!widget.enabled || widget.mediaIdentity != oldWidget.mediaIdentity) {
+      _finish(commit: false, rebuild: false);
+    }
   }
 
   void _start({bool boost = false}) {
-    if (widget.duration() <= 0) return;
+    if (!widget.enabled ||
+        !_foreground ||
+        _origin != null ||
+        widget.duration() <= 0) {
+      return;
+    }
     _origin = widget.position();
     _distance = 0;
     _longGesture = boost;
     _horizontalGesture = !boost;
+    widget.onScrub(true);
     if (boost) {
       _boost = true;
       widget.onBoost(true);
       HapticFeedback.selectionClick();
-    } else {
-      widget.onScrub(true);
     }
     setState(() {});
   }
@@ -69,7 +82,6 @@ class _PlayerGesturesState extends State<PlayerGestures>
     if (_boost) {
       _boost = false;
       widget.onBoost(false);
-      widget.onScrub(true);
     }
     final span = widget.duration().clamp(0, 120000);
     setState(
@@ -79,16 +91,18 @@ class _PlayerGesturesState extends State<PlayerGestures>
     );
   }
 
-  void _finish({bool commit = true}) {
+  void _finish({bool commit = true, bool rebuild = true}) {
     if (_origin == null) return;
-    if (_boost) widget.onBoost(false);
-    if (commit && _preview != null) widget.onSeek(_preview!);
-    widget.onScrub(false);
+    final boosted = _boost;
+    final preview = _preview;
     _origin = _preview = null;
     _boost = false;
     _longGesture = false;
     _horizontalGesture = false;
-    if (mounted) setState(() {});
+    if (boosted) widget.onBoost(false);
+    if (commit && preview != null) widget.onSeek(preview);
+    widget.onScrub(false);
+    if (rebuild && mounted) setState(() {});
   }
 
   String _time(double value) {
@@ -154,6 +168,7 @@ class _PlayerGesturesState extends State<PlayerGestures>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _finish(commit: false, rebuild: false);
     super.dispose();
   }
 }
