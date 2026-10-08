@@ -107,24 +107,34 @@ class PlayerMoreSheet extends StatelessWidget {
     child: ListView(
       shrinkWrap: true,
       children: [
-        ListTile(
-          leading: const Icon(Icons.video_library_outlined),
-          title: const Text('相关剧集'),
-          subtitle: const Text('按标题匹配同系列作品'),
-          onTap: () => onAction(PlayerMenuAction.related),
-        ),
+        if (qualities.length > 1)
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('清晰度', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    for (final value in qualities)
+                      ChoiceChip(
+                        label: Text('${value}P'),
+                        selected: value == quality,
+                        onSelected: (_) => onQuality(value),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
         SwitchListTile(
           title: const Text('自动播放下一集'),
           subtitle: const Text('关闭后，播完停在当前集'),
           value: autoAdvance,
           onChanged: onAutoAdvance,
-        ),
-        const ListTile(
-          leading: Icon(Icons.touch_app_outlined),
-          title: Text('播放手势'),
-          subtitle: Text(
-            '单击显示或隐藏控件；上下滑动切换分集；左右滑动调节进度。长按 2 倍速，按住后左右滑动可快进快退，松手跳转。',
-          ),
         ),
         ListTile(
           leading: const Icon(Icons.fit_screen),
@@ -158,21 +168,21 @@ class PlayerMoreSheet extends StatelessWidget {
           title: const Text('锁定手势'),
           onTap: () => onAction(PlayerMenuAction.lock),
         ),
-        if (qualities.length > 1)
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Wrap(
-              spacing: 8,
-              children: [
-                for (final value in qualities)
-                  ChoiceChip(
-                    label: Text('${value}P'),
-                    selected: value == quality,
-                    onSelected: (_) => onQuality(value),
-                  ),
-              ],
-            ),
-          ),
+        ListTile(
+          leading: const Icon(Icons.video_library_outlined),
+          title: const Text('相关剧集'),
+          subtitle: const Text('按标题匹配同系列作品'),
+          onTap: () => onAction(PlayerMenuAction.related),
+        ),
+        const ExpansionTile(
+          leading: Icon(Icons.touch_app_outlined),
+          title: Text('播放手势'),
+          childrenPadding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+          expandedCrossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('单击显示或隐藏控件；上下滑动切换分集；左右滑动调节进度。长按 2 倍速，按住后左右滑动可快进快退，松手跳转。'),
+          ],
+        ),
       ],
     ),
   );

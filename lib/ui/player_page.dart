@@ -73,6 +73,14 @@ class PlayerPage extends StatefulWidget {
   State<PlayerPage> createState() => _PlayerPageState();
 }
 
+typedef _PlayerMenuState = ({
+  int generation,
+  int index,
+  ResolvedMedia? media,
+  bool pipEnabled,
+  bool castEnabled,
+});
+
 class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   late final PageController _pages;
   late final PlaybackSessionController _session;
@@ -81,6 +89,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   final GlobalKey _playerKey = GlobalKey();
   late final PlaybackRecoveryController _recovery;
   late final PlaybackLifecycleController _lifecycle;
+  late final ValueNotifier<_PlayerMenuState> _menuState;
   late final CastSessionController _casting;
   AirPlaySession? _airplay;
   bool _airPlayReturning = false, _airPlayReturnPending = false;
@@ -225,6 +234,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         autoAdvance: () => widget.store.preferences.autoAdvance,
       )..addListener(_airPlayChanged);
     }
+    _menuState = ValueNotifier(_currentMenuState);
     _player.addEventsListener(_event);
     _healthTimer = Timer.periodic(
       const Duration(seconds: 2),
@@ -251,6 +261,26 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (mounted && index == _index && _loading) {
       setState(() => _loadingPhase = label);
     }
+  }
+
+  _PlayerMenuState get _currentMenuState {
+    final ready = !_loading && _active != null;
+    return (
+      generation: _generation,
+      index: _index,
+      media: ready && !_localBlocked ? _active?.media : null,
+      pipEnabled: ready && !_localBlocked,
+      castEnabled:
+          ready &&
+          !_pipActive &&
+          _airplay?.blocksLocal != true &&
+          !_airPlayOpening &&
+          !_airPlayReturnPending,
+    );
+  }
+
+  void _updateMenuState() {
+    if (mounted) _menuState.value = _currentMenuState;
   }
 
   void _finishAttempt(PlaybackResult result) {
@@ -352,6 +382,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _error = null;
       _controls = false;
     });
+    _updateMenuState();
     _session.retain({index - 1, index, index + 1});
     if (_pipActive && !_foreground) {
       unawaited(_activate());
@@ -371,6 +402,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _lifecycle.beginActivation(play);
     final generation = _session.invalidate();
     final index = _index;
+    _updateMenuState();
     final record = widget.store.records.history[widget.drama.key];
     var start =
         position ??
@@ -485,6 +517,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           unawaited(_recover());
         }
       }
+    } finally {
+      if (mounted && generation == _generation) _updateMenuState();
     }
   }
 
@@ -708,9 +742,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       default:
         break;
     }
+    _updateMenuState();
   }
 
-  void _setPipActive(bool active) => _lifecycle.setPipActive(active);
+  void _setPipActive(bool active) {
+    _lifecycle.setPipActive(active);
+    _updateMenuState();
+  }
 
   void _preferencesChanged() {
     if (!widget.store.preferences.prefetch) {
@@ -793,6 +831,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _health.reset();
     _lifecycle.setForeground(state == AppLifecycleState.resumed);
     _casting.setForeground(state == AppLifecycleState.resumed);
+    _updateMenuState();
     _armHide();
     if (state == AppLifecycleState.resumed && _airplay != null) {
       unawaited(_airplay!.refreshRoute().catchError((Object _) {}));
@@ -819,6 +858,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _error = null;
       _loadingPhase = '正在准备完整视频，保留播放进度…';
     });
+    _updateMenuState();
     return _recovery.compatible(generation, () async {
       try {
         await _player.pause();
@@ -843,6 +883,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           });
         }
         return false;
+      } finally {
+        _updateMenuState();
       }
     });
   }
@@ -920,6 +962,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _lastCastState = null;
     }
     setState(() => _controls = true);
+    _updateMenuState();
   }
 
   Future<void> _returnFromCast(CastHandoff handoff) async {
@@ -973,6 +1016,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       return;
     }
     _airPlayOpening = true;
+    _updateMenuState();
     final value = _player.videoPlayerController?.value;
     final position = _airPlayReturnPending
         ? airplay.position
@@ -993,6 +1037,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     } catch (_) {
       _airPlayOpening = false;
       _lifecycle.setExternalPlayback(airplay.blocksLocal);
+      _updateMenuState();
       return;
     }
     if (!mounted) return;
@@ -1028,6 +1073,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       }
     } finally {
       _airPlayOpening = false;
+      _updateMenuState();
     }
   }
 
@@ -1055,6 +1101,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _save(force: changed || airplay.ended || !airplay.engaged);
     }
     setState(() => _controls = true);
+    _updateMenuState();
     if (!airplay.engaged && _airPlayReturnPending && !_airPlayReturning) {
       unawaited(_returnFromAirPlay());
     } else if (unblocked &&
@@ -1278,79 +1325,103 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<void> _showMore() async {
+    if (_modal || !mounted) return;
+    _updateMenuState();
     PlayerMenuAction? requested;
-    final item = _active;
     await _sheet(
       ListenableBuilder(
-        listenable: widget.store.preferences,
-        builder: (context, _) => PlayerMoreSheet(
-          autoAdvance: widget.store.preferences.autoAdvance,
-          fill: _fill,
-          pipEnabled: item != null && !_localBlocked,
-          castEnabled: item != null && !_pipActive,
-          qualities: item?.media?.qualities ?? const [],
-          quality: item?.media?.quality,
-          onAutoAdvance: (value) => perform(
-            context,
-            () => widget.store.preferences.setPlayback(advance: value),
-          ),
-          onQuality: (quality) {
-            Navigator.pop(context);
-            _retry(quality: quality);
-          },
-          onAction: (action) {
-            final wasPlaying =
-                _player.videoPlayerController?.value.isPlaying == true;
-            final orientation = MediaQuery.orientationOf(context);
-            Navigator.pop(context);
-            switch (action) {
-              case PlayerMenuAction.related:
-              case PlayerMenuAction.cast:
-                requested = action;
-                break;
-              case PlayerMenuAction.fit:
-                setState(() => _fill = !_fill);
-                unawaited(_applyVideoFit());
-                break;
-              case PlayerMenuAction.orientation:
-                unawaited(
-                  SystemChrome.setPreferredOrientations(
-                    orientation == Orientation.portrait
-                        ? [
-                            DeviceOrientation.landscapeLeft,
-                            DeviceOrientation.landscapeRight,
-                          ]
-                        : [DeviceOrientation.portraitUp],
-                  ),
-                );
-                break;
-              case PlayerMenuAction.pip:
-                if (item != null) {
+        listenable: Listenable.merge([widget.store.preferences, _menuState]),
+        builder: (context, _) {
+          final menu = _menuState.value;
+          bool current() =>
+              mounted &&
+              context.mounted &&
+              ModalRoute.of(context)?.isCurrent == true &&
+              menu.generation == _generation &&
+              menu.index == _index;
+          return PlayerMoreSheet(
+            autoAdvance: widget.store.preferences.autoAdvance,
+            fill: _fill,
+            pipEnabled: menu.pipEnabled,
+            castEnabled: menu.castEnabled,
+            qualities: menu.media?.qualities ?? const [],
+            quality: menu.media?.quality,
+            onAutoAdvance: (value) {
+              if (!current()) return;
+              perform(
+                context,
+                () => widget.store.preferences.setPlayback(advance: value),
+              );
+            },
+            onQuality: (quality) {
+              if (!current() ||
+                  _loading ||
+                  _recovering ||
+                  _localBlocked ||
+                  _active?.media?.qualities.contains(quality) != true) {
+                return;
+              }
+              Navigator.pop(context);
+              unawaited(_retry(quality: quality));
+            },
+            onAction: (action) {
+              if (!current()) return;
+              final available = _currentMenuState;
+              if (action == PlayerMenuAction.pip && !available.pipEnabled ||
+                  action == PlayerMenuAction.cast && !available.castEnabled) {
+                return;
+              }
+              final wasPlaying =
+                  _player.videoPlayerController?.value.isPlaying == true;
+              final orientation = MediaQuery.orientationOf(context);
+              Navigator.pop(context);
+              switch (action) {
+                case PlayerMenuAction.related:
+                case PlayerMenuAction.cast:
+                  requested = action;
+                  break;
+                case PlayerMenuAction.fit:
+                  setState(() => _fill = !_fill);
+                  unawaited(_applyVideoFit());
+                  break;
+                case PlayerMenuAction.orientation:
+                  unawaited(
+                    SystemChrome.setPreferredOrientations(
+                      orientation == Orientation.portrait
+                          ? [
+                              DeviceOrientation.landscapeLeft,
+                              DeviceOrientation.landscapeRight,
+                            ]
+                          : [DeviceOrientation.portraitUp],
+                    ),
+                  );
+                  break;
+                case PlayerMenuAction.pip:
                   perform(
                     this.context,
                     () => _enterPictureInPicture(wasPlaying),
                   );
-                }
-                break;
-              case PlayerMenuAction.download:
-                perform(
-                  this.context,
-                  () => widget.downloads.enqueue(
-                    widget.drama,
-                    widget.episodes[_index],
-                    widget.episodeIndices?[_index] ?? _index,
-                  ),
-                );
-                break;
-              case PlayerMenuAction.lock:
-                setState(() {
-                  _locked = true;
-                  _controls = false;
-                });
-                break;
-            }
-          },
-        ),
+                  break;
+                case PlayerMenuAction.download:
+                  perform(
+                    this.context,
+                    () => widget.downloads.enqueue(
+                      widget.drama,
+                      widget.episodes[menu.index],
+                      widget.episodeIndices?[menu.index] ?? menu.index,
+                    ),
+                  );
+                  break;
+                case PlayerMenuAction.lock:
+                  setState(() {
+                    _locked = true;
+                    _controls = false;
+                  });
+                  break;
+              }
+            },
+          );
+        },
       ),
     );
     if (!mounted) return;
@@ -1786,6 +1857,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       }().catchError((Object _) {}),
     );
     _pages.dispose();
+    _menuState.dispose();
     unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
     super.dispose();
