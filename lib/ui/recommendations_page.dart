@@ -20,8 +20,9 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
   String genre = 'short_play', session = '';
   int offset = 0, generation = 0;
   bool loading = false, hasMore = true;
+  bool? failedMore;
   String? error;
-  List<Drama> rows = [];
+  List<Drama> rows = const [];
 
   @override
   void initState() {
@@ -29,27 +30,38 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
     _load();
   }
 
-  Future<void> _load({bool reset = false}) async {
-    if (loading && !reset) return;
-    final request = ++generation;
-    if (reset) {
-      rows = [];
+  void _selectGenre(String value) {
+    if (!mounted || value == genre) return;
+    setState(() {
+      genre = value;
+      rows = const [];
       offset = 0;
       session = '';
       hasMore = true;
-    }
+      loading = false;
+    });
+    _load();
+  }
+
+  Future<void> _load({bool more = false}) async {
+    if (!mounted || loading || (more && !hasMore)) return;
+    final request = ++generation;
+    final previous = more ? rows : const <Drama>[];
+    final requestOffset = more ? offset : 0;
+    final requestSession = more ? session : '';
     setState(() {
       loading = true;
       error = null;
+      failedMore = null;
     });
     try {
       if (widget.store.offline) throw const ProviderException('当前离线，请联网后获取推荐');
       final result = await widget.store.provider.call('recommendations', {
         'recommendation': {
           'genre': genre,
-          'offset': offset,
-          'sessionId': session,
-          'seen': rows.reversed.take(540).map((d) => d.id).toList(),
+          'offset': requestOffset,
+          'sessionId': requestSession,
+          'seen': previous.reversed.take(540).map((d) => d.id).toList(),
         },
       });
       if (!mounted || request != generation) return;
@@ -59,18 +71,35 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
       if (incoming.any((d) => d.source != DramaSource.hongguo)) {
         throw const FormatException('推荐站源不匹配');
       }
+      final nextOffset = result['nextOffset'] as int;
+      final nextSession = result['sessionId'] as String? ?? '';
+      final nextHasMore = result['hasMore'] as bool? ?? false;
+      final nextRows = List<Drama>.unmodifiable(
+        {
+          for (final d in [...previous, ...incoming]) d.key: d,
+        }.values,
+      );
       await widget.store.catalog.saveRecommendations(incoming);
       if (!mounted || request != generation) return;
       setState(() {
-        rows = {
-          for (final d in [...rows, ...incoming]) d.key: d,
-        }.values.toList();
-        offset = result['nextOffset'] as int;
-        session = result['sessionId'] as String? ?? '';
-        hasMore = result['hasMore'] == true;
+        rows = nextRows;
+        offset = nextOffset;
+        session = nextSession;
+        hasMore = nextHasMore;
       });
-    } catch (e) {
-      if (mounted && request == generation) setState(() => error = '$e');
+    } catch (_) {
+      if (mounted && request == generation) {
+        setState(() {
+          failedMore = more;
+          error = widget.store.offline
+              ? '当前离线，联网后可重试推荐'
+              : rows.isEmpty
+              ? '推荐暂时无法加载，请重试'
+              : more
+              ? '更多推荐暂时无法加载，已保留现有内容'
+              : '推荐刷新失败，已保留现有内容';
+        });
+      }
     } finally {
       if (mounted && request == generation) setState(() => loading = false);
     }
@@ -81,7 +110,7 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
     appBar: AppBar(title: const Text('发现 · 红果')),
     body: SafeArea(
       child: RefreshIndicator(
-        onRefresh: () => _load(reset: true),
+        onRefresh: () => _load(),
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
@@ -112,10 +141,7 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
                           ChoiceChip(
                             label: Text(entry.value),
                             selected: genre == entry.key,
-                            onSelected: (_) {
-                              setState(() => genre = entry.key);
-                              _load(reset: true);
-                            },
+                            onSelected: (_) => _selectGenre(entry.key),
                           ),
                       ],
                     ),
@@ -138,7 +164,9 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
                     children: [
                       Text(error!),
                       TextButton.icon(
-                        onPressed: () => _load(),
+                        onPressed: loading
+                            ? null
+                            : () => _load(more: failedMore ?? false),
                         icon: const Icon(Icons.refresh),
                         label: const Text('重试'),
                       ),
@@ -201,7 +229,9 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(22, 0, 22, 32),
                   child: FilledButton.tonalIcon(
-                    onPressed: loading || !hasMore ? null : () => _load(),
+                    onPressed: loading || !hasMore || error != null
+                        ? null
+                        : () => _load(more: true),
                     icon: const Icon(Icons.auto_awesome_outlined),
                     label: Text(
                       loading
