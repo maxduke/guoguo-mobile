@@ -21,6 +21,7 @@ const catalogCacheKeys = {
   'pages',
   'hasMore',
   'searchCache',
+  'discoveryCache',
   'catalogs',
   'episodeUpdatedAt',
   'episodes',

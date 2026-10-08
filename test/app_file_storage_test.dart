@@ -4,7 +4,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guoguo_mobile/data/app_store.dart';
+import 'package:guoguo_mobile/data/discovery_cache.dart';
 import 'package:guoguo_mobile/data/storage.dart';
+import 'package:guoguo_mobile/domain/discovery.dart';
 import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/platform/provider_client.dart';
 
@@ -71,6 +73,69 @@ void main() {
   });
   tearDown(() => directory.delete(recursive: true));
   File file(String name) => File('${directory.path}/$name');
+
+  test(
+    'discovery columns roundtrip through the cache file without rewriting records',
+    () async {
+      final store = makeStore(AppFileStorage(directory));
+      addTearDown(store.dispose);
+      await store.records.saveWatch(watch(42));
+      final recordBytes = await file('records.json').readAsBytes();
+      await store.catalog.saveRecommendationColumn(
+        RecommendationGenre.shortPlay,
+        [season, anchor],
+        store.now(),
+      );
+      await store.catalog.saveDiscoveryBoards(DramaSource.hongguo, const [
+        DiscoveryBoard('hot', '热播榜'),
+      ]);
+      await store.catalog.saveRankingColumn(
+        DramaSource.hongguo,
+        'hot',
+        CachedDiscoveryColumn(
+          [
+            const DiscoveryRow(season, rank: 8),
+            const DiscoveryRow(anchor, rank: 3),
+          ],
+          savedAt: store.now(),
+          kind: DiscoveryKind.ranking,
+        ),
+      );
+      expect(await file('records.json').readAsBytes(), recordBytes);
+      final durable =
+          jsonDecode(await file('records.json').readAsString()) as Map;
+      expect(durable.keys, isNot(contains('discoveryCache')));
+      final cached =
+          jsonDecode(await file('catalog-cache.json').readAsString()) as Map;
+      expect((cached['cache'] as Map)['discoveryCache'], isNotNull);
+      final restored = makeStore(AppFileStorage(directory));
+      addTearDown(restored.dispose);
+      await restored.load();
+      expect(
+        restored.catalog.discoveryCache
+            .recommendations(RecommendationGenre.shortPlay)!
+            .rows
+            .map((row) => row.drama.id),
+        ['b', 'a'],
+      );
+      expect(
+        restored.catalog.discoveryCache
+            .boards(DramaSource.hongguo)!
+            .boards
+            .single
+            .id,
+        'hot',
+      );
+      expect(
+        restored.catalog.discoveryCache
+            .ranking(DramaSource.hongguo, 'hot')!
+            .rows
+            .map((row) => row.rank),
+        [8, 3],
+      );
+      expect(restored.records.history[anchor.key]!.positionMs, 42);
+    },
+  );
 
   test(
     'fresh install ignores old state and writes only current partitions',

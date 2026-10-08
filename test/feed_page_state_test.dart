@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guoguo_mobile/data/app_store.dart';
+import 'package:guoguo_mobile/data/discovery_cache.dart';
+import 'package:guoguo_mobile/domain/discovery.dart';
 import 'package:guoguo_mobile/data/storage.dart';
 import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/platform/provider_client.dart';
@@ -18,12 +20,12 @@ enum _Feed {
   final String method, current, other, more;
 }
 
-Drama _drama(String id, {String? title, bool? vip}) => Drama(
-  id: id,
-  source: DramaSource.hongguo,
-  title: title ?? '条目$id',
-  vip: vip,
-);
+Drama _drama(
+  String id, {
+  String? title,
+  bool? vip,
+  DramaSource source = DramaSource.hongguo,
+}) => Drama(id: id, source: source, title: title ?? '条目$id', vip: vip);
 
 Map<String, dynamic> _page(
   _Feed feed,
@@ -86,6 +88,49 @@ class _Provider implements ProviderClient {
   }
 }
 
+class _FailingCacheStorage implements PartitionedStorage {
+  final records = MemoryStorage();
+  @override
+  String? get cacheReadError => null;
+  @override
+  Future<Map<String, dynamic>?> read() => records.read();
+  @override
+  Future<void> writeRecords(Map<String, dynamic> value) => records.write(value);
+  @override
+  Future<void> writeCache(Map<String, dynamic> value) async =>
+      throw StateError('cache disk full');
+  @override
+  Future<void> write(Map<String, dynamic> value) async =>
+      throw StateError('unexpected whole-document write');
+}
+
+Future<void> _seedColumn(_Feed feed, AppStore store) async {
+  final rows = [_drama('cached-2'), _drama('cached-1')];
+  if (feed == _Feed.recommendations) {
+    await store.catalog.saveRecommendationColumn(
+      RecommendationGenre.shortPlay,
+      rows,
+      store.now(),
+    );
+  } else {
+    await store.catalog.saveDiscoveryBoards(DramaSource.hongguo, const [
+      DiscoveryBoard('a', '热播榜'),
+      DiscoveryBoard('b', '新剧榜'),
+    ]);
+    await store.catalog.saveRankingColumn(
+      DramaSource.hongguo,
+      'a',
+      CachedDiscoveryColumn(
+        [DiscoveryRow(rows[0], rank: 9), DiscoveryRow(rows[1], rank: 2)],
+        savedAt: store.now(),
+        kind: DiscoveryKind.catalog,
+        description: '目录顺序，不代表官方排名',
+        warning: '站源缓存说明',
+      ),
+    );
+  }
+}
+
 class _Fixture {
   _Fixture(this.feed, this.store, this.provider);
   final _Feed feed;
@@ -118,15 +163,20 @@ Future<_Fixture> _mount(
   DramaSource source = DramaSource.hongguo,
   Size size = const Size(1024, 1600),
   double textScale = 1,
+  FutureOr<void> Function(AppStore)? seed,
+  LocalStorage? storage,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   final provider = _Provider(manualBoards: manualBoards);
-  final store = AppStore(storage: MemoryStorage(), provider: provider)
-    ..offline = offline;
+  final store = AppStore(
+    storage: storage ?? MemoryStorage(),
+    provider: provider,
+  )..offline = offline;
   store.catalog.source = source;
+  await seed?.call(store);
   addTearDown(() async {
     await tester.pumpWidget(const SizedBox());
     for (final request in provider.requests) {
@@ -177,6 +227,219 @@ void _expectFirstPage(_Fixture fixture) {
 }
 
 void main() {
+  for (final feed in _Feed.values) {
+    testWidgets(
+      '${feed.name} cached refresh failure fits a narrow screen with large text',
+      (tester) async {
+        final fixture = await _mount(
+          tester,
+          feed,
+          size: const Size(320, 640),
+          textScale: 1.6,
+          seed: (store) => _seedColumn(feed, store),
+        );
+        fixture.latest.result.completeError(StateError('network failed'));
+        await tester.pumpAndSettle();
+        expect(find.textContaining('缓存 · 上次获取'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      '${feed.name} displays an ordered cache before refreshing and keeps it on failure',
+      (tester) async {
+        final fixture = await _mount(
+          tester,
+          feed,
+          seed: (store) => _seedColumn(feed, store),
+        );
+        expect(_ids(tester), ['cached-2', 'cached-1']);
+        expect(find.textContaining('缓存 · 上次获取'), findsOneWidget);
+        _expectFirstPage(fixture);
+        if (feed == _Feed.rankings) {
+          expect(find.text('目录顺序，不代表官方排名'), findsOneWidget);
+          expect(find.text('站源缓存说明'), findsOneWidget);
+          expect(find.text('9'), findsNothing);
+        }
+        fixture.latest.result.completeError(StateError('network failed'));
+        await tester.pumpAndSettle();
+        expect(_ids(tester), ['cached-2', 'cached-1']);
+        expect(find.textContaining('缓存 · 上次获取'), findsOneWidget);
+        expect(find.text('这轮推荐已看完'), findsNothing);
+        _retry(tester)();
+        _expectFirstPage(fixture);
+        await fixture.finish(
+          tester,
+          [_drama('fresh')],
+          more: true,
+          next: 37,
+          session: 'new-session',
+        );
+        expect(_ids(tester), ['fresh']);
+        expect(find.textContaining('缓存 · 上次获取'), findsNothing);
+        await tester.tap(find.text(feed.more));
+        if (feed == _Feed.recommendations) {
+          expect(fixture.latest.args['offset'], 37);
+          expect(fixture.latest.args['sessionId'], 'new-session');
+          expect(fixture.latest.args['seen'], ['fresh']);
+        } else {
+          expect(fixture.latest.args['page'], 2);
+        }
+        await fixture.finish(tester, [_drama('next')]);
+        expect(_ids(tester), ['fresh', 'next']);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      '${feed.name} switching back uses its own cache and ignores late responses',
+      (tester) async {
+        final fixture = await _mount(
+          tester,
+          feed,
+          seed: (store) => _seedColumn(feed, store),
+        );
+        final stale = fixture.latest;
+        await tester.tap(find.text(feed.other));
+        await tester.pump();
+        await fixture.finish(tester, [_drama('other')]);
+        stale.result.complete(_page(feed, [_drama('late')]));
+        await tester.pumpAndSettle();
+        expect(_ids(tester), ['other']);
+        await tester.tap(find.text(feed.current));
+        await tester.pump();
+        expect(_ids(tester), ['cached-2', 'cached-1']);
+        _expectFirstPage(fixture);
+        await fixture.finish(tester, [_drama('fresh')]);
+        expect(_ids(tester), ['fresh']);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      '${feed.name} successful pages advance even when cache storage fails',
+      (tester) async {
+        final fixture = await _mount(
+          tester,
+          feed,
+          storage: _FailingCacheStorage(),
+        );
+        await fixture.finish(tester, [_drama('1')], more: true, next: 37);
+        expect(_ids(tester), ['1']);
+        expect(fixture.store.cachePersistenceError, isNotNull);
+        expect(find.text('重试'), findsNothing);
+        await tester.tap(find.text(feed.more));
+        expect(
+          fixture.latest.args[feed == _Feed.recommendations
+              ? 'offset'
+              : 'page'],
+          feed == _Feed.recommendations ? 37 : 2,
+        );
+        await fixture.finish(tester, [_drama('2')]);
+        expect(_ids(tester), ['1', '2']);
+        expect(find.text('重试'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      '${feed.name} replacing a store invalidates its pending request and cached column',
+      (tester) async {
+        final fixture = await _mount(
+          tester,
+          feed,
+          seed: (store) => _seedColumn(feed, store),
+        );
+        final stale = fixture.latest;
+        final provider = _Provider();
+        final replacement = AppStore(
+          storage: MemoryStorage(),
+          provider: provider,
+        );
+        addTearDown(replacement.dispose);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: feed == _Feed.recommendations
+                ? RecommendationsPage(store: replacement, onOpen: (_) {})
+                : RankingsPage(store: replacement, onOpen: (_) {}),
+          ),
+        );
+        await tester.pump();
+        expect(_ids(tester), isEmpty);
+        final request = provider.requests.last;
+        expect(request.method, feed.method);
+        stale.result.complete(_page(feed, [_drama('late')]));
+        request.result.complete(_page(feed, [_drama('replacement')]));
+        await tester.pumpAndSettle();
+        expect(_ids(tester), ['replacement']);
+        expect(
+          fixture.store.catalog.discoveryCache.toJson().toString(),
+          isNot(contains('late')),
+        );
+        expect(
+          replacement.catalog.discoveryCache.toJson().toString(),
+          isNot(contains('late')),
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
+  testWidgets(
+    'cached rankings survive board discovery failure and retry the board list',
+    (tester) async {
+      final fixture = await _mount(
+        tester,
+        _Feed.rankings,
+        manualBoards: true,
+        seed: (store) => _seedColumn(_Feed.rankings, store),
+      );
+      expect(_ids(tester), ['cached-2', 'cached-1']);
+      expect(fixture.pages, isEmpty);
+      fixture.provider.requests.single.result.completeError(
+        StateError('boards failed'),
+      );
+      await tester.pumpAndSettle();
+      expect(_ids(tester), ['cached-2', 'cached-1']);
+      _retry(tester)();
+      expect(fixture.provider.requests.last.method, 'boards');
+      fixture.provider.requests.last.result.complete(_boards);
+      await tester.pump();
+      _expectFirstPage(fixture);
+      await fixture.finish(tester, [_drama('fresh')]);
+      expect(_ids(tester), ['fresh']);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'ranking source mismatch cannot replace good rows or their cache',
+    (tester) async {
+      final fixture = await _mount(tester, _Feed.rankings);
+      await fixture.finish(tester, [_drama('good')], more: true);
+      await tester.tap(find.text('加载更多'));
+      await fixture.finish(tester, [
+        _drama('foreign', source: DramaSource.huangguo),
+      ]);
+      expect(_ids(tester), ['good']);
+      expect(find.text('重试'), findsOneWidget);
+      expect(
+        fixture.store.catalog.discoveryCache
+            .ranking(DramaSource.hongguo, 'a')!
+            .rows
+            .single
+            .drama
+            .id,
+        'good',
+      );
+      _retry(tester)();
+      expect(fixture.latest.args['page'], 2);
+      await fixture.finish(tester, [_drama('next')]);
+      expect(_ids(tester), ['good', 'next']);
+    },
+  );
+
   for (final feed in _Feed.values) {
     testWidgets('${feed.name} refresh retains content and retries page one', (
       tester,
@@ -471,7 +734,10 @@ void main() {
       fixture.latest.result.complete(
         _page(
           _Feed.rankings,
-          [_drama('1'), _drama('vip', vip: true)],
+          [
+            _drama('1', source: DramaSource.huangdou),
+            _drama('vip', vip: true, source: DramaSource.huangdou),
+          ],
           more: true,
           kind: 'catalog',
           description: '目录顺序，不代表官方排名',
@@ -489,7 +755,7 @@ void main() {
       expect(_ids(tester), ['1', 'vip']);
       expect(fixture.pages, hasLength(1));
       await tester.tap(find.text('加载更多'));
-      await fixture.finish(tester, [_drama('2')]);
+      await fixture.finish(tester, [_drama('2', source: DramaSource.huangdou)]);
       expect(_ids(tester), ['1', 'vip', '2']);
       expect(find.text('站点暂不可用，显示上次取得的榜单，请稍后刷新。'), findsNothing);
       expect(tester.takeException(), isNull);

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import '../data/app_store.dart';
 import '../domain/models.dart';
+import '../domain/discovery.dart';
 import '../platform/provider_client.dart';
 import 'components.dart';
+import 'discovery_cache_status.dart';
 
 class RecommendationsPage extends StatefulWidget {
   const RecommendationsPage({
@@ -17,7 +19,10 @@ class RecommendationsPage extends StatefulWidget {
 }
 
 class _RecommendationsPageState extends State<RecommendationsPage> {
-  String genre = 'short_play', session = '';
+  RecommendationGenre genre = RecommendationGenre.shortPlay;
+  String session = '';
+  DateTime? updatedAt;
+  bool cachedOnly = false;
   int offset = 0, generation = 0;
   bool loading = false, hasMore = true;
   bool? failedMore;
@@ -27,25 +32,48 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
   @override
   void initState() {
     super.initState();
+    _restoreColumn();
     _load();
   }
 
-  void _selectGenre(String value) {
+  @override
+  void didUpdateWidget(RecommendationsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store == widget.store) return;
+    generation++;
+    _restoreColumn();
+    _load();
+  }
+
+  void _restoreColumn() {
+    final cached = widget.store.catalog.discoveryCache.recommendations(genre);
+    rows =
+        cached?.rows.map((row) => row.drama).toList(growable: false) ??
+        const [];
+    updatedAt = cached?.savedAt;
+    cachedOnly = cached != null;
+    offset = 0;
+    session = '';
+    hasMore = true;
+    loading = false;
+    error = null;
+    failedMore = null;
+  }
+
+  void _selectGenre(RecommendationGenre value) {
     if (!mounted || value == genre) return;
     setState(() {
       genre = value;
-      rows = const [];
-      offset = 0;
-      session = '';
-      hasMore = true;
-      loading = false;
+      _restoreColumn();
     });
     _load();
   }
 
   Future<void> _load({bool more = false}) async {
-    if (!mounted || loading || (more && !hasMore)) return;
+    if (!mounted || loading || (more && (!hasMore || cachedOnly))) return;
     final request = ++generation;
+    final requestStore = widget.store;
+    final requestGenre = genre;
     final previous = more ? rows : const <Drama>[];
     final requestOffset = more ? offset : 0;
     final requestSession = more ? session : '';
@@ -55,10 +83,10 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
       failedMore = null;
     });
     try {
-      if (widget.store.offline) throw const ProviderException('当前离线，请联网后获取推荐');
-      final result = await widget.store.provider.call('recommendations', {
+      if (requestStore.offline) throw const ProviderException('当前离线，请联网后获取推荐');
+      final result = await requestStore.provider.call('recommendations', {
         'recommendation': {
-          'genre': genre,
+          'genre': requestGenre.id,
           'offset': requestOffset,
           'sessionId': requestSession,
           'seen': previous.reversed.take(540).map((d) => d.id).toList(),
@@ -72,6 +100,7 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
         throw const FormatException('推荐站源不匹配');
       }
       final nextOffset = result['nextOffset'] as int;
+      if (nextOffset < 0) throw const FormatException('推荐游标不正确');
       final nextSession = result['sessionId'] as String? ?? '';
       final nextHasMore = result['hasMore'] as bool? ?? false;
       final nextRows = List<Drama>.unmodifiable(
@@ -79,10 +108,17 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
           for (final d in [...previous, ...incoming]) d.key: d,
         }.values,
       );
-      await widget.store.catalog.saveRecommendations(incoming);
+      final fetchedAt = requestStore.now();
+      await requestStore.catalog.saveRecommendationColumn(
+        requestGenre,
+        nextRows,
+        fetchedAt,
+      );
       if (!mounted || request != generation) return;
       setState(() {
         rows = nextRows;
+        updatedAt = fetchedAt;
+        cachedOnly = false;
         offset = nextOffset;
         session = nextSession;
         hasMore = nextHasMore;
@@ -91,7 +127,7 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
       if (mounted && request == generation) {
         setState(() {
           failedMore = more;
-          error = widget.store.offline
+          error = requestStore.offline
               ? '当前离线，联网后可重试推荐'
               : rows.isEmpty
               ? '推荐暂时无法加载，请重试'
@@ -133,15 +169,11 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
                     Wrap(
                       spacing: 10,
                       children: [
-                        for (final entry in const {
-                          'short_play': '真人剧',
-                          'comic_series': '漫剧',
-                          'ai_series': 'AI 剧',
-                        }.entries)
+                        for (final entry in RecommendationGenre.values)
                           ChoiceChip(
-                            label: Text(entry.value),
-                            selected: genre == entry.key,
-                            onSelected: (_) => _selectGenre(entry.key),
+                            label: Text(entry.label),
+                            selected: genre == entry,
+                            onSelected: (_) => _selectGenre(entry),
                           ),
                       ],
                     ),
@@ -154,6 +186,13 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
                 ),
               ),
             ),
+            if (updatedAt != null)
+              SliverToBoxAdapter(
+                child: DiscoveryCacheStatus(
+                  savedAt: updatedAt!,
+                  cached: cachedOnly,
+                ),
+              ),
             if (loading)
               const SliverToBoxAdapter(child: LinearProgressIndicator()),
             if (error != null)
@@ -229,13 +268,16 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(22, 0, 22, 32),
                   child: FilledButton.tonalIcon(
-                    onPressed: loading || !hasMore || error != null
+                    onPressed:
+                        loading || cachedOnly || !hasMore || error != null
                         ? null
                         : () => _load(more: true),
                     icon: const Icon(Icons.auto_awesome_outlined),
                     label: Text(
                       loading
                           ? '正在寻找…'
+                          : cachedOnly
+                          ? '刷新后可继续推荐'
                           : hasMore
                           ? '继续推荐'
                           : '这轮推荐已看完',

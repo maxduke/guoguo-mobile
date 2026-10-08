@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../domain/models.dart';
+import '../domain/discovery.dart';
 import '../domain/user_input_exception.dart';
 import '../domain/series_title.dart';
 import '../domain/catalog_query.dart';
 import '../platform/provider_client.dart';
 import 'record_store.dart';
 import 'search_cache.dart';
+import 'discovery_cache.dart';
 import 'series_lookup.dart';
 import 'store_persistence.dart';
 
@@ -76,6 +78,7 @@ class CatalogStore extends ChangeNotifier {
   final Set<SeriesLookup> _seriesLookups = {};
 
   final searchCache = SearchCache();
+  late final discoveryCache = DiscoveryCache(now: now);
 
   final Map<String, Future<CatalogSearchResult>> _searchRequests = {};
 
@@ -280,6 +283,7 @@ class CatalogStore extends ChangeNotifier {
       hasMore.addAll(loadedMore);
       episodeUpdatedAt.addAll(loadedTimes);
       searchCache.restore(searches);
+      discoveryCache.restore(state['discoveryCache']);
     } catch (_) {
       return '目录缓存无法读取，可联网重新加载';
     }
@@ -303,6 +307,7 @@ class CatalogStore extends ChangeNotifier {
       for (final entry in hasMore.entries) entry.key.name: entry.value,
     },
     'searchCache': searchCache.toJson(),
+    'discoveryCache': discoveryCache.toJson(),
     'catalogs': {
       for (final entry in catalogs.entries)
         entry.key.name: entry.value.map((v) => v.toJson()).toList(),
@@ -532,9 +537,39 @@ class CatalogStore extends ChangeNotifier {
   }
 
   Future<void> saveRecommendations(List<Drama> incoming) async {
+    if (_closed) return;
     _mergeCatalog(DramaSource.hongguo, incoming);
-    await _persistence.persist(records: false);
-    notifyListeners();
+    await _saveCache();
+    if (!_closed) notifyListeners();
+  }
+
+  Future<void> saveRecommendationColumn(
+    RecommendationGenre genre,
+    List<Drama> rows,
+    DateTime savedAt,
+  ) async {
+    if (_closed) return;
+    discoveryCache.putRecommendations(genre, rows, savedAt);
+    await saveRecommendations(rows);
+  }
+
+  Future<void> saveRankingColumn(
+    DramaSource source,
+    String board,
+    CachedDiscoveryColumn column,
+  ) async {
+    if (_closed) return;
+    discoveryCache.putRanking(source, board, column);
+    await _saveCache();
+  }
+
+  Future<void> saveDiscoveryBoards(
+    DramaSource source,
+    List<DiscoveryBoard> boards,
+  ) async {
+    if (_closed) return;
+    discoveryCache.putBoards(source, boards, now());
+    await _saveCache();
   }
 
   List<Drama> relatedTo(Drama anchor, {int limit = 200}) =>

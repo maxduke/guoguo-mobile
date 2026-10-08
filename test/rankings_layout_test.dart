@@ -45,6 +45,7 @@ void main() {
         storage: MemoryStorage(),
         provider: _RankingProvider(),
       );
+      store.catalog.source = DramaSource.huangdou;
       Drama? opened;
       await tester.pumpWidget(
         MaterialApp(
