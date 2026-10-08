@@ -13,6 +13,7 @@ import '../data/app_store.dart';
 import '../data/library_exchange.dart';
 import '../data/download_store.dart';
 import '../data/cover_cache.dart';
+import '../domain/user_input_exception.dart';
 import 'components.dart';
 import 'playback_diagnostics_page.dart';
 
@@ -35,6 +36,22 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   bool _clearing = false;
+  bool _backingUp = false;
+
+  Future<void> _backup(BuildContext context, {required bool importing}) async {
+    if (_backingUp) return;
+    setState(() => _backingUp = true);
+    try {
+      if (importing) {
+        await _import(context);
+      } else {
+        await _export(context);
+      }
+    } finally {
+      if (mounted) setState(() => _backingUp = false);
+    }
+  }
+
   Future<void> _export(BuildContext context) async {
     final box = context.findRenderObject() as RenderBox?;
     final origin = box == null
@@ -43,6 +60,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final directory = await getTemporaryDirectory();
     final file = File('${directory.path}/guoguo-records.json');
     await file.writeAsString(store.records.exportBackup(), flush: true);
+    if (!context.mounted) return;
     await SharePlus.instance.share(
       ShareParams(
         files: [XFile(file.path, mimeType: 'application/json')],
@@ -60,9 +78,15 @@ class _SettingsPageState extends State<SettingsPage> {
     if (selected == null) return;
     final length = await selected.length();
     if (length == null || length > 20 * 1024 * 1024) {
-      throw const FormatException('备份文件超过 20 MB 或无法读取大小');
+      throw const UserInputException('备份文件超过 20 MB 或无法读取大小');
     }
-    final raw = utf8.decode(await selected.readAsBytes());
+    final bytes = await selected.readAsBytes();
+    final String raw;
+    try {
+      raw = utf8.decode(bytes);
+    } on FormatException {
+      throw const UserInputException('备份损坏或格式不兼容，原记录未修改');
+    }
     final backup = store.records.inspectBackup(raw);
     if (!context.mounted) return;
     final confirmed = await showDialog<bool>(
@@ -84,7 +108,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
       ),
     );
-    if (confirmed == true) {
+    if (confirmed == true && context.mounted) {
       await store.records.importBackup(backup);
       if (context.mounted) {
         ScaffoldMessenger.of(
@@ -110,7 +134,7 @@ class _SettingsPageState extends State<SettingsPage> {
         if (selected == null) return;
         final length = await selected.length();
         if (length == null || length > LibraryExchange.maxBytes) {
-          throw const FormatException('剧库文件超过 32 MB 或无法读取');
+          throw const UserInputException('剧库文件超过 32 MB 或无法读取');
         }
         copied = File(
           '${directory.path}/.guoguo-import-${DateTime.now().microsecondsSinceEpoch}',
@@ -121,7 +145,7 @@ class _SettingsPageState extends State<SettingsPage> {
           await for (final chunk in selected.readAsByteStream()) {
             copiedBytes += chunk.length;
             if (copiedBytes > LibraryExchange.maxBytes) {
-              throw const FormatException('剧库文件超过 32 MB');
+              throw const UserInputException('剧库文件超过 32 MB');
             }
             sink.add(chunk);
           }
@@ -150,7 +174,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
         );
-        if (confirmed != true) return;
+        if (confirmed != true || !context.mounted) return;
         final result = await exchange.merge(preview);
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -177,8 +201,11 @@ class _SettingsPageState extends State<SettingsPage> {
         );
       }
     } finally {
-      if (copied != null && await copied.exists()) await copied.delete();
-      if (mounted) setState(() => _exchangingLibrary = false);
+      try {
+        if (copied != null && await copied.exists()) await copied.delete();
+      } finally {
+        if (mounted) setState(() => _exchangingLibrary = false);
+      }
     }
   }
 
@@ -279,7 +306,12 @@ class _SettingsPageState extends State<SettingsPage> {
                       title: const Text('导出记录备份'),
                       subtitle: const Text('收藏、观看历史和新季提醒，不含视频文件'),
                       trailing: const Icon(Icons.chevron_right),
-                      onTap: () => perform(context, () => _export(context)),
+                      enabled: !_backingUp,
+                      onTap: () => perform(
+                        context,
+                        () => _backup(context, importing: false),
+                        failureMessage: '备份导出失败，请检查可用空间后重试',
+                      ),
                     ),
                     const Divider(height: 1, indent: 56),
                     ListTile(
@@ -287,8 +319,14 @@ class _SettingsPageState extends State<SettingsPage> {
                       title: const Text('导入记录备份'),
                       subtitle: const Text('先预览，再合并到当前设备'),
                       trailing: const Icon(Icons.chevron_right),
-                      onTap: () => perform(context, () => _import(context)),
+                      enabled: !_backingUp,
+                      onTap: () => perform(
+                        context,
+                        () => _backup(context, importing: true),
+                        failureMessage: '备份导入失败，原记录未修改，请稍后重试',
+                      ),
                     ),
+                    if (_backingUp) const LinearProgressIndicator(),
                   ],
                 ),
               ),
@@ -305,6 +343,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       onTap: () => perform(
                         context,
                         () => _library(context, importing: true),
+                        failureMessage: '剧库导入失败，请检查文件后重试',
                       ),
                     ),
                     const Divider(height: 1, indent: 56),
@@ -316,6 +355,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       onTap: () => perform(
                         context,
                         () => _library(context, importing: false),
+                        failureMessage: '剧库导出失败，请检查可用空间后重试',
                       ),
                     ),
                     if (_exchangingLibrary) const LinearProgressIndicator(),

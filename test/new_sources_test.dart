@@ -225,7 +225,7 @@ void main() {
       expect(provider.calls.last['page'], 2);
       provider.pending[3].completeError(const ProviderException('offline'));
       await failed;
-      expect(store.catalog.libraryError, contains('offline'));
+      expect(store.catalog.libraryError, '更多短剧加载失败，请重试');
       expect(store.catalog.library.single.title, 'romance-one');
       final retry = store.catalog.loadMore();
       expect(provider.calls.last['page'], 2);

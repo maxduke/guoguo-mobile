@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 
 import 'source_selector.dart';
 import '../domain/models.dart';
+import '../domain/user_input_exception.dart';
 import '../data/cover_cache.dart';
+import '../platform/provider_client.dart';
 
 class Poster extends StatelessWidget {
   const Poster(this.drama, {super.key, this.radius = 16});
@@ -263,15 +265,21 @@ class EmptyState extends StatelessWidget {
 
 Future<void> perform(
   BuildContext context,
-  Future<void> Function() action,
-) async {
+  Future<void> Function() action, {
+  String failureMessage = '操作未完成，请稍后重试',
+}) async {
   try {
     await action();
   } catch (error) {
     if (context.mounted) {
+      final message = switch (error) {
+        UserInputException() => error.message,
+        ProviderException() => error.userMessage,
+        _ => failureMessage,
+      };
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('$error')));
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 }

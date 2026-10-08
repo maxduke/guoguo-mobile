@@ -13,6 +13,33 @@ void main() {
   tearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
   test(
+    'native failures separate diagnostic details from display messages',
+    () async {
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'initialize') return null;
+        final method = (jsonDecode(call.arguments as String) as Map)['method'];
+        if (method == 'coreInfo') return jsonEncode({'protocol': 3});
+        throw PlatformException(
+          code: 'provider',
+          message: 'https://private.invalid?token=secret',
+        );
+      });
+      final provider = NativeProviderClient();
+      await provider.initialize('/providers');
+      await expectLater(
+        provider.call('catalog'),
+        throwsA(
+          isA<ProviderException>().having(
+            (e) => e.userMessage,
+            'display message',
+            '站源暂时不可用，请稍后重试',
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
     'calls wait for initialization and protocol verification; concurrent initialization is shared',
     () async {
       final native = Completer<void>(), protocol = Completer<void>();
