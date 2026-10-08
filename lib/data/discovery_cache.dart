@@ -47,6 +47,10 @@ class DiscoveryCache {
   final _columns = <String, CachedDiscoveryColumn>{};
   final _boards = <DramaSource, CachedDiscoveryBoards>{};
 
+  Iterable<Drama> get dramas => _columns.values
+      .where((entry) => _validDate(entry.savedAt))
+      .expand((entry) => entry.rows.map((row) => row.drama));
+
   String _recommendationKey(RecommendationGenre genre) =>
       'recommendations|${genre.id}';
   String _rankingKey(DramaSource source, String board) =>

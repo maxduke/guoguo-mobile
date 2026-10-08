@@ -99,7 +99,7 @@ void main() {
   );
 
   testWidgets(
-    'progress and favorites update locally without rebuilding the app or catalog search',
+    'progress and favorites update locally without rebuilding the app or catalog header',
     (tester) async {
       tester.view.physicalSize = const Size(1024, 1200);
       tester.view.devicePixelRatio = 1;
@@ -114,7 +114,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
-      final search = tester.widget<TextField>(find.byType(TextField));
+      final search = tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, '搜索剧名'),
+      );
       final heading = tester.widget<Text>(find.text('发现好剧'));
       expect(find.textContaining('已看 1%'), findsOneWidget);
 
@@ -122,7 +124,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('已看 42%'), findsOneWidget);
       expect(tester.widget<MaterialApp>(find.byType(MaterialApp)), same(app));
-      expect(tester.widget<TextField>(find.byType(TextField)), same(search));
+      expect(
+        tester.widget<OutlinedButton>(
+          find.widgetWithText(OutlinedButton, '搜索剧名'),
+        ),
+        same(search),
+      );
       expect(tester.widget<Text>(find.text('发现好剧')), same(heading));
 
       await store.records.toggleFavorite(drama);
@@ -131,7 +138,12 @@ void main() {
         tester.widget<DramaCard>(find.byType(DramaCard).first).favorite,
         true,
       );
-      expect(tester.widget<TextField>(find.byType(TextField)), same(search));
+      expect(
+        tester.widget<OutlinedButton>(
+          find.widgetWithText(OutlinedButton, '搜索剧名'),
+        ),
+        same(search),
+      );
       await store.preferences.setPlayback(speed: 1.5);
       await tester.pumpAndSettle();
       expect(tester.widget<MaterialApp>(find.byType(MaterialApp)), same(app));
@@ -139,7 +151,9 @@ void main() {
       await store.catalog.refresh();
       await tester.pumpAndSettle();
       expect(
-        tester.widget<TextField>(find.byType(TextField)),
+        tester.widget<OutlinedButton>(
+          find.widgetWithText(OutlinedButton, '搜索剧名'),
+        ),
         isNot(same(search)),
       );
       expect(tester.widget<MaterialApp>(find.byType(MaterialApp)), same(app));

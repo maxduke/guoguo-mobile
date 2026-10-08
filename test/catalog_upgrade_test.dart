@@ -2,13 +2,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guoguo_mobile/data/app_store.dart';
-import 'package:guoguo_mobile/data/download_store.dart';
 import 'package:guoguo_mobile/data/storage.dart';
 import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/domain/catalog_query.dart';
 import 'package:guoguo_mobile/platform/provider_client.dart';
 import 'package:guoguo_mobile/ui/episode_grid.dart';
-import 'package:guoguo_mobile/ui/home_page.dart';
+import 'package:guoguo_mobile/ui/search_page.dart';
 
 class UpgradeProvider implements ProviderClient {
   final calls = <String>[];
@@ -160,10 +159,9 @@ void main() {
     final provider = UpgradeProvider()..gate = Completer();
     final store = AppStore(storage: MemoryStorage(), provider: provider);
     store.catalog.catalogs[DramaSource.hongguo] = [drama];
-    final downloads = DownloadStore(store);
     await tester.pumpWidget(
       MaterialApp(
-        home: HomePage(store: store, downloads: downloads, autoLoad: false),
+        home: SearchPage(store: store, onOpen: (_) {}, autofocus: false),
       ),
     );
     await tester.enterText(find.byType(TextField), '普通');
@@ -181,7 +179,6 @@ void main() {
     expect(find.text('过期联想'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
-    downloads.dispose();
     store.dispose();
   });
 
@@ -191,10 +188,9 @@ void main() {
     final provider = UpgradeProvider()..gate = Completer();
     final store = AppStore(storage: MemoryStorage(), provider: provider);
     store.catalog.catalogs[DramaSource.hongguo] = [drama];
-    final downloads = DownloadStore(store);
     await tester.pumpWidget(
       MaterialApp(
-        home: HomePage(store: store, downloads: downloads, autoLoad: false),
+        home: SearchPage(store: store, onOpen: (_) {}, autofocus: false),
       ),
     );
     await tester.enterText(find.byType(TextField), '旧关键词');
@@ -210,9 +206,9 @@ void main() {
     });
     await tester.pump();
     expect(find.text('旧警告'), findsNothing);
-    expect(find.text('联网结果'), findsNothing);
+    expect(find.text('旧结果'), findsNothing);
+    expect(find.text('本地匹配'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
-    downloads.dispose();
     store.dispose();
   });
 

@@ -8,7 +8,7 @@ import '../data/download_store.dart';
 import '../domain/models.dart';
 import '../domain/catalog_query.dart';
 import 'components.dart';
-import 'catalog_search_controller.dart';
+import 'search_page.dart';
 import 'source_selector.dart';
 import 'detail_page.dart';
 import 'personal_page.dart';
@@ -44,7 +44,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _resuming = false;
   }
 
-  late CatalogSearchController _search;
   String _category = '全部';
   CatalogSort _sort = CatalogSort.recommended;
   AppStore get store => widget.store;
@@ -52,7 +51,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _search = CatalogSearchController(store.catalog);
     _loadInitialCatalog();
   }
 
@@ -71,8 +69,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != store) {
       oldWidget.store.records.cancelUpdateChecks();
-      _search.dispose();
-      _search = CatalogSearchController(store.catalog);
       _category = '全部';
       _loadInitialCatalog();
     }
@@ -93,7 +89,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void dispose() {
     store.records.cancelUpdateChecks();
     WidgetsBinding.instance.removeObserver(this);
-    _search.dispose();
     super.dispose();
   }
 
@@ -108,18 +103,29 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (state != AppLifecycleState.resumed) store.records.cancelUpdateChecks();
   }
 
-  void _resetCategory(String text) {
-    if (_resuming) setState(_cancelResume);
-    if (text.trim().isNotEmpty && _category != '全部') {
-      setState(() => _category = '全部');
+  Future<void> _openSearch() async {
+    setState(_cancelResume);
+    final owner = store, downloads = widget.downloads;
+    final initialSource = owner.catalog.source;
+    owner.records.cancelUpdateChecks();
+    await Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (routeContext) => SearchPage(
+          store: owner,
+          onOpen: (drama) {
+            owner.records.cancelUpdateChecks();
+            openDrama(routeContext, owner, downloads, drama);
+          },
+        ),
+      ),
+    );
+    if (mounted && store == owner && widget.downloads == downloads) {
+      if (owner.catalog.source != initialSource) {
+        setState(() => _category = '全部');
+      }
+      _loadInitialCatalog();
     }
-  }
-
-  Future<void> _submit(String text) {
-    if (_resuming) setState(_cancelResume);
-    if (text != _search.input.text) _resetCategory(text);
-    FocusScope.of(context).unfocus();
-    return _search.submit(text);
   }
 
   @override
@@ -229,7 +235,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               index: _tab,
               children: [
                 ListenableBuilder(
-                  listenable: Listenable.merge([store.catalog, store, _search]),
+                  listenable: Listenable.merge([store.catalog, store]),
                   builder: (context, _) => _library(wide),
                 ),
                 PersonalPage(
@@ -301,8 +307,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Widget _library(bool wide) {
     final rows = queryCatalog(
-      _search.results ?? store.catalog.library,
-      query: _search.results == null ? _search.query : '',
+      store.catalog.library,
       category: store.catalog.source.remoteCategories ? '全部' : _category,
       hideVip:
           store.catalog.source == DramaSource.huangdou && store.catalog.hideVip,
@@ -323,7 +328,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           if (notification.depth == 0 &&
               notification is ScrollUpdateNotification &&
               notification.metrics.extentAfter < 700 &&
-              _search.query.isEmpty &&
               !store.catalog.libraryCanRetry) {
             unawaited(store.catalog.loadMore());
           }
@@ -389,119 +393,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     },
                   ),
                   const SizedBox(height: 18),
-                  TextField(
-                    controller: _search.input,
-                    onChanged: _resetCategory,
-                    onSubmitted: _submit,
-                    textInputAction: TextInputAction.search,
-                    decoration: InputDecoration(
-                      hintText: '搜索${store.catalog.source.label}短剧，找到下一部心动',
-                      prefixIcon: const Icon(Icons.search_rounded),
-                      suffixIcon: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (_search.input.text.isNotEmpty)
-                            IconButton(
-                              tooltip: '清空搜索',
-                              icon: const Icon(Icons.close_rounded),
-                              onPressed: _search.input.clear,
-                            ),
-                          if (_search.loading)
-                            const Padding(
-                              padding: EdgeInsets.all(15),
-                              child: SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              ),
-                            )
-                          else
-                            IconButton(
-                              tooltip: store.catalog.source.onlineSearch
-                                  ? '联网搜索'
-                                  : '筛选缓存',
-                              icon: const Icon(Icons.arrow_forward_rounded),
-                              onPressed: () => _submit(_search.input.text),
-                            ),
-                        ],
-                      ),
-                    ),
+                  OutlinedButton.icon(
+                    onPressed: _openSearch,
+                    icon: const Icon(Icons.search),
+                    label: const Text('搜索剧名'),
                   ),
-                  if (_search.query.isNotEmpty &&
-                      (!store.catalog.source.onlineSearch || store.offline))
-                    Padding(
-                      padding: const EdgeInsets.only(top: 10),
-                      child: Text(
-                        store.offline
-                            ? '离线搜索 · 仅显示已缓存的短剧'
-                            : '${store.catalog.source.label}暂不支持联网搜索，当前筛选已加载内容',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ),
-                  if (_search.suggestions.isNotEmpty)
-                    Card(
-                      margin: const EdgeInsets.only(top: 8),
-                      child: Column(
-                        children: [
-                          for (final suggestion in _search.suggestions.take(6))
-                            ListTile(
-                              dense: true,
-                              leading: const Icon(Icons.search, size: 18),
-                              title: Text(
-                                suggestion,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              trailing: const Icon(Icons.north_west, size: 16),
-                              onTap: () => _submit(suggestion),
-                            ),
-                        ],
-                      ),
-                    ),
-                  if (_search.query.isEmpty &&
-                      store.catalog.source.onlineSearch &&
-                      store.catalog.recentSearches.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 12),
-                      child: Wrap(
-                        spacing: 8,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          for (final query in store.catalog.recentSearches.take(
-                            5,
-                          ))
-                            ActionChip(
-                              label: Text(query),
-                              onPressed: () => _submit(query),
-                            ),
-                          IconButton(
-                            tooltip: '清除搜索记录',
-                            onPressed: () =>
-                                perform(context, store.catalog.clearSearches),
-                            icon: const Icon(Icons.delete_outline, size: 18),
-                          ),
-                        ],
-                      ),
-                    ),
-                  if (_search.notice != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 12),
-                      child: _Notice(_search.notice!, Icons.info_outline),
-                    ),
-                  if (_search.error != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 12),
-                      child: _Notice(
-                        _search.error!,
-                        Icons.info_outline_rounded,
-                      ),
-                    ),
-                  if (_search.query.isEmpty) ...[const SizedBox(height: 16)],
-                  if (!wide &&
-                      _search.query.isEmpty &&
-                      store.catalog.source == DramaSource.hongguo) ...[
+                  const SizedBox(height: 16),
+                  if (!wide && store.catalog.source == DramaSource.hongguo) ...[
                     Card(
                       margin: const EdgeInsets.only(bottom: 18),
                       clipBehavior: Clip.antiAlias,
@@ -551,32 +449,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       ),
                     ),
                   ],
-                  if (_search.query.isEmpty)
-                    ListenableBuilder(
-                      listenable: Listenable.merge([
-                        store.records,
-                        store.records.progress,
-                      ]),
-                      builder: (context, _) {
-                        final recent = store.records.continuable;
-                        return recent.isEmpty
-                            ? const SizedBox.shrink()
-                            : Column(
-                                children: [
-                                  _continueCard(recent.first),
-                                  const SizedBox(height: 22),
-                                ],
-                              );
-                      },
-                    ),
+                  ListenableBuilder(
+                    listenable: Listenable.merge([
+                      store.records,
+                      store.records.progress,
+                    ]),
+                    builder: (context, _) {
+                      final recent = store.records.continuable;
+                      return recent.isEmpty
+                          ? const SizedBox.shrink()
+                          : Column(
+                              children: [
+                                _continueCard(recent.first),
+                                const SizedBox(height: 22),
+                              ],
+                            );
+                    },
+                  ),
                   Row(
                     children: [
                       Text(
-                        _search.query.isEmpty
-                            ? '全部短剧'
-                            : _search.results == null
-                            ? '本地匹配'
-                            : '联网结果',
+                        '全部短剧',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const Spacer(),
@@ -617,11 +510,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             () => store.catalog.setHideVip(value),
                           ),
                         ),
-                      if (_category != '全部' && _search.query.isNotEmpty)
-                        TextButton(
-                          onPressed: () => setState(() => _category = '全部'),
-                          child: const Text('清除分类筛选'),
-                        ),
                     ],
                   ),
                   if (store.catalog.source == DramaSource.huangdou &&
@@ -630,8 +518,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       '部分剧集会员状态待识别，打开详情后更新',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
-                  if (store.catalog.source.remoteCategories &&
-                      _search.query.isEmpty)
+                  if (store.catalog.source.remoteCategories)
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: Row(
@@ -658,10 +545,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         ],
                       ),
                     ),
-                  if (_search.query.isEmpty &&
-                      store.catalog.categoryErrors.containsKey(
-                        store.catalog.source,
-                      ))
+                  if (store.catalog.categoryErrors.containsKey(
+                    store.catalog.source,
+                  ))
                     _Notice(
                       store.catalog.categoryErrors[store.catalog.source]!,
                       Icons.cloud_off_outlined,
@@ -690,8 +576,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         ],
                       ),
                     ),
-                  if (_search.query.isEmpty &&
-                      store.catalog.libraryError != null)
+                  if (store.catalog.libraryError != null)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       child: _Notice(
@@ -713,32 +598,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             if (rows.isEmpty)
               SliverToBoxAdapter(
                 child: EmptyState(
-                  icon: _search.loading || (loading && _search.query.isEmpty)
+                  icon: loading
                       ? Icons.travel_explore
                       : Icons.movie_filter_outlined,
-                  title: _search.loading
-                      ? '正在搜索…'
-                      : _search.query.isNotEmpty
-                      ? '暂时没有找到'
-                      : loading
-                      ? '正在找寻好故事'
-                      : '你的下一部好剧，在这里',
-                  message: _search.loading
-                      ? '正在查找当前站源，结果会陆续显示'
-                      : _search.query.isNotEmpty
-                      ? store.offline || !store.catalog.source.onlineSearch
-                            ? '换个关键词，或清空搜索查看已缓存的短剧'
-                            : _search.error != null
-                            ? '请检查网络后重试，或换个关键词'
-                            : '换个关键词，或点击搜索联网查找'
-                      : loading
+                  title: loading ? '正在找寻好故事' : '你的下一部好剧，在这里',
+                  message: loading
                       ? '首次加载需要一点时间，内容会保存在设备上'
                       : '轻点更新，加载${store.catalog.source.label}剧库',
                   action:
-                      loading ||
-                          _search.query.isNotEmpty ||
-                          store.offline ||
-                          store.catalog.libraryCanRetry
+                      loading || store.offline || store.catalog.libraryCanRetry
                       ? null
                       : FilledButton.icon(
                           onPressed: () => store.catalog.refresh(),
@@ -781,28 +649,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   },
                 ),
               ),
-            if (_search.query.isNotEmpty &&
-                store.catalog.source.onlineSearch &&
-                (_search.hasMore || _search.error != null))
-              SliverToBoxAdapter(
-                child: Center(
-                  child: OutlinedButton(
-                    onPressed: _search.loading
-                        ? null
-                        : _search.error != null
-                        ? _search.retry
-                        : _search.loadMore,
-                    child: Text(
-                      _search.loading
-                          ? '正在搜索…'
-                          : _search.error != null
-                          ? '重试搜索'
-                          : '加载更多结果',
-                    ),
-                  ),
-                ),
-              ),
-            if (store.catalog.library.isNotEmpty && _search.query.isEmpty)
+            if (store.catalog.library.isNotEmpty)
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 24),

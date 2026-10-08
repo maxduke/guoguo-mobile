@@ -21,6 +21,7 @@ class CatalogSearchController extends ChangeNotifier {
   List<String> _suggestions = const [];
   String? _error, _notice;
   bool _loading = false, _hasMore = false, _closed = false;
+  bool _fromCache = false;
   int _page = 0, _generation = 0;
   Timer? _suggestionTimer;
   ({DramaSource source, String query, String id})? _request;
@@ -32,6 +33,7 @@ class CatalogSearchController extends ChangeNotifier {
   String? get notice => _notice;
   bool get loading => _loading;
   bool get hasMore => _hasMore;
+  bool get fromCache => _fromCache;
 
   void _cancel() {
     _suggestionTimer?.cancel();
@@ -67,6 +69,7 @@ class CatalogSearchController extends ChangeNotifier {
     _suggestions = const [];
     _error = _notice = null;
     _loading = false;
+    _fromCache = false;
     notifyListeners();
     if (_query.isEmpty ||
         _source != DramaSource.hongguo ||
@@ -111,6 +114,7 @@ class CatalogSearchController extends ChangeNotifier {
     final page = more ? _page + 1 : 1;
     // Every update for this page uses the same completed-page snapshot.
     final previous = more ? _results ?? const <Drama>[] : const <Drama>[];
+    final previousFromCache = _fromCache;
     if (!more) {
       _page = 0;
       _hasMore = false;
@@ -120,7 +124,7 @@ class CatalogSearchController extends ChangeNotifier {
     final request = (
       source: source,
       query: query,
-      id: 'home-$generation-${DateTime.now().microsecondsSinceEpoch}',
+      id: 'search-$generation-${DateTime.now().microsecondsSinceEpoch}',
     );
     _query = query;
     _suggestions = const [];
@@ -130,9 +134,13 @@ class CatalogSearchController extends ChangeNotifier {
       _results = null;
       _page = 0;
       _hasMore = false;
+      _fromCache = false;
     }
     notifyListeners();
-    if (!_loading) return;
+    if (!_loading) {
+      await catalog.rememberSearch(query);
+      return;
+    }
     _request = request;
     try {
       final result = await catalog.searchCatalog(
@@ -144,12 +152,14 @@ class CatalogSearchController extends ChangeNotifier {
         onPartial: (partial) {
           if (!current()) return;
           _results = _merge(previous, partial.items);
-          _notice = '正在补全结果…';
+          _fromCache = partial.fromCache;
+          _notice = partial.fromCache ? '显示缓存结果，正在更新…' : '正在补全结果…';
           notifyListeners();
         },
       );
       if (!current()) return;
       _results = _merge(previous, result.items);
+      _fromCache = result.fromCache;
       _page = page;
       _hasMore = result.hasMore;
       _notice = result.warning.isNotEmpty
@@ -161,7 +171,10 @@ class CatalogSearchController extends ChangeNotifier {
           : null;
     } catch (_) {
       if (current()) {
-        if (more) _results = previous;
+        if (more) {
+          _results = previous;
+          _fromCache = previousFromCache;
+        }
         _error = '搜索暂时失败，请检查网络后重试';
       }
     } finally {
