@@ -413,8 +413,11 @@ class CatalogStore extends ChangeNotifier {
     final key = '${target.name}|$query|$page';
     final cached = searchCache.read(key, now());
     if (cached != null && !refresh) {
-      onPartial?.call(cached.result);
-      if (cached.fresh || isOffline()) return cached.result;
+      onPartial?.call(cached.cachedResult);
+      if (cached.fresh || isOffline()) {
+        if (rememberQuery) await rememberSearch(query);
+        return cached.cachedResult;
+      }
     }
     if (isOffline()) throw const ProviderException('当前离线，可继续搜索已缓存的短剧');
     // Independent owners with progress/cancellation must not share request IDs.
@@ -513,8 +516,13 @@ class CatalogStore extends ChangeNotifier {
         if (recentSearches.length > 10) recentSearches.removeLast();
       }
       _mergeCatalog(target, result.items);
-      await _persistence.persist();
+      try {
+        await _persistence.persist();
+      } catch (_) {
+        // AppStore reports saving failures independently of valid results.
+      }
       if (isActive?.call() == false) throw const SeriesLookupCancelled();
+      if (_closed) return result;
       notifyListeners();
       return result;
     } finally {
@@ -695,6 +703,40 @@ class CatalogStore extends ChangeNotifier {
     recentSearches.clear();
     notifyListeners();
     await _persistence.persist(cache: false);
+  }
+
+  Future<void> rememberSearch(String query) async {
+    query = query.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (_closed || query.isEmpty) return;
+    recentSearches.remove(query);
+    recentSearches.insert(0, query);
+    if (recentSearches.length > 10) recentSearches.removeLast();
+    notifyListeners();
+    try {
+      await _persistence.persist(cache: false);
+    } catch (_) {
+      // Saving a recent query cannot make available search results unusable.
+    }
+  }
+
+  List<Drama> cachedDramas(DramaSource target) {
+    final rows = <String, Drama>{};
+    for (final drama in [
+      ...catalogs[target] ?? [],
+      ...searchCache.dramas,
+      ...discoveryCache.dramas,
+      ...records.favorites.values,
+      ...records.history.values.map((record) => record.drama),
+      ...records.seasonReminders.values.expand(
+        (reminder) => [
+          reminder.anchor,
+          ...reminder.seasons.values.map((notice) => notice.drama),
+        ],
+      ),
+    ]) {
+      if (drama.source == target) rows.putIfAbsent(drama.key, () => drama);
+    }
+    return List.unmodifiable(rows.values);
   }
 
   Future<List<String>> suggestions(String query) async {

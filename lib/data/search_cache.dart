@@ -9,10 +9,11 @@ class CatalogSearchResult {
     this.limited = false,
     this.hasMore = false,
     this.total = 0,
+    this.fromCache = false,
   });
   final List<Drama> items;
   final String warning;
-  final bool limited, hasMore;
+  final bool limited, hasMore, fromCache;
   final int total;
 }
 
@@ -27,6 +28,14 @@ class CachedSearch {
   final DateTime savedAt;
   final int bytes;
   final bool fresh;
+  CatalogSearchResult get cachedResult => CatalogSearchResult(
+    result.items,
+    warning: result.warning,
+    limited: result.limited,
+    hasMore: result.hasMore,
+    total: result.total,
+    fromCache: true,
+  );
   Map<String, dynamic> toJson() => {
     'savedAt': savedAt.toIso8601String(),
     'items': result.items.map((row) => row.toJson()).toList(),

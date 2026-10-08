@@ -289,7 +289,7 @@ void main() {
   });
 
   testWidgets(
-    'home dependency replacement releases pending continuation and rebinds search',
+    'home dependency replacement releases pending continuation and uses current dependencies',
     (tester) async {
       final previousProvider = _Provider();
       final previous = _store(previousProvider);
@@ -309,17 +309,10 @@ void main() {
       );
       await tester.pumpWidget(app(previous, previousDownloads));
       await tester.pumpAndSettle();
-      final oldInput = tester
-          .widget<TextField>(find.byType(TextField))
-          .controller;
       await tester.tap(find.byTooltip('继续观看 故事0'));
       await tester.pump();
       await tester.pumpWidget(app(current, currentDownloads));
       await tester.pumpAndSettle();
-      expect(
-        tester.widget<TextField>(find.byType(TextField)).controller,
-        isNot(same(oldInput)),
-      );
       previousProvider.pending.completeError(StateError('secret'));
       await tester.pumpAndSettle();
       expect(find.textContaining('secret'), findsNothing);

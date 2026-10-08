@@ -114,6 +114,8 @@ void main() {
       expect(lastSource.hitTestable(), findsOneWidget);
       await tester.tap(find.byTooltip('关闭站源选择'));
       await tester.pumpAndSettle();
+      await tester.tap(find.text('搜索剧名'));
+      await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), '样本');
       await tester.testTextInput.receiveAction(TextInputAction.search);
       await tester.pump();
@@ -154,6 +156,8 @@ void main() {
         GuoguoApp(store: store, downloads: downloads, autoLoad: false),
       );
       await tester.pumpAndSettle();
+      await tester.tap(find.text('搜索剧名'));
+      await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), '迟到');
       await tester.testTextInput.receiveAction(TextInputAction.search);
       await tester.pump();
@@ -181,18 +185,28 @@ void main() {
         ),
       );
       expect(store.catalog.source, DramaSource.wuguo);
-      expect(provider.calls.last['method'], 'catalog');
-      provider.pending.last.complete(page('伍果目录', source: DramaSource.wuguo));
       await tester.pumpAndSettle();
       previous.complete(page('旧源结果'));
       await tester.pumpAndSettle();
-      expect(store.catalog.library.single.title, '伍果目录');
-      expect(find.text('伍果目录'), findsWidgets);
+      expect(provider.calls.last['method'], 'search');
       expect(find.text('旧源结果'), findsNothing);
       expect(
         tester.widget<TextField>(find.byType(TextField)).controller!.text,
         isEmpty,
       );
+      await tester.tap(find.byType(BackButton));
+      await tester.pumpAndSettle();
+      // This fixture disables startup loading; the directory still has its
+      // own explicit refresh, separate from changing the search scope.
+      expect(provider.calls.last['method'], 'search');
+      await tester.tap(find.byTooltip('更新当前站源'));
+      await tester.pump();
+      expect(provider.calls.last['method'], 'catalog');
+      expect(provider.calls.last['source'], 'wuguo');
+      provider.pending.last.complete(page('伍果目录', source: DramaSource.wuguo));
+      await tester.pumpAndSettle();
+      expect(store.catalog.library.single.title, '伍果目录');
+      expect(find.text('伍果目录'), findsWidgets);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
     },
