@@ -43,12 +43,14 @@ class CatalogStore extends ChangeNotifier {
     required this.records,
     required this.now,
     required this.isOffline,
+    required this.onSourceSelected,
   }) : _persistence = persistence;
   final StorePersistence _persistence;
   final ProviderClient provider;
   final RecordStore records;
   final DateTime Function() now;
   final bool Function() isOffline;
+  final void Function(DramaSource) onSourceSelected;
   bool _closed = false;
 
   static const episodeFreshness = Duration(hours: 6);
@@ -130,6 +132,12 @@ class CatalogStore extends ChangeNotifier {
 
   String? get libraryError =>
       source.remoteCategories ? _activeSlice?.error : sourceErrors[source];
+
+  String? directoryNotice(DramaSource target) =>
+      (target.remoteCategories
+          ? _slices[_sliceKey(target, selectedCategories[target] ?? '')]?.error
+          : sourceErrors[target]) ??
+      categoryErrors[target];
 
   bool get libraryCanRetry => source.remoteCategories
       ? _activeSlice?.retryMore != null
@@ -327,7 +335,9 @@ class CatalogStore extends ChangeNotifier {
   };
 
   Future<void> selectSource(DramaSource next) async {
+    if (_closed) return;
     source = next;
+    onSourceSelected(next);
     notifyListeners();
     await _persistence.persist(cache: false);
   }

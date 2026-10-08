@@ -230,6 +230,8 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         SourceSelector(
+                          preferences: store.preferences,
+                          catalog: store.catalog,
                           value: widget.source,
                           onChanged: (source) {
                             if (source != null) {

@@ -155,6 +155,8 @@ class _LibraryPageState extends State<LibraryPage> {
                             crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               SourceSelector(
+                                preferences: store.preferences,
+                                catalog: store.catalog,
                                 value: source,
                                 onChanged: (target) {
                                   if (target == null) return;

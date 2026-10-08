@@ -131,6 +131,8 @@ class _SearchPageState extends State<SearchPage> {
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           SourceSelector(
+                            preferences: store.preferences,
+                            catalog: store.catalog,
                             value: source,
                             onChanged: (target) {
                               if (target == null) return;

@@ -72,6 +72,23 @@ class DiscoveryCache {
       _read(_recommendationKey(genre));
   CachedDiscoveryColumn? ranking(DramaSource source, String board) =>
       _read(_rankingKey(source, board));
+
+  DateTime? lastContentRetrieval(DramaSource source) {
+    DateTime? latest;
+    for (final entry in _columns.entries) {
+      if (!entry.key.startsWith('rankings|${source.name}|') &&
+          !(source == DramaSource.hongguo &&
+              entry.key.startsWith('recommendations|'))) {
+        continue;
+      }
+      final savedAt = entry.value.savedAt;
+      if (_validDate(savedAt) && (latest == null || savedAt.isAfter(latest))) {
+        latest = savedAt;
+      }
+    }
+    return latest;
+  }
+
   CachedDiscoveryBoards? boards(DramaSource source) {
     final entry = _boards[source];
     if (entry != null && !_validDate(entry.savedAt)) {
