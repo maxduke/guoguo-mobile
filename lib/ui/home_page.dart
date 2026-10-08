@@ -206,6 +206,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   store: store,
                   downloads: widget.downloads,
                   onOpen: _open,
+                  active: _tab == 2,
                 ),
               ],
             ),

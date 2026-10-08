@@ -8,9 +8,68 @@ import '../domain/models.dart';
 import 'components.dart';
 import 'player_page.dart';
 
-enum _TaskFilter { all, pending, complete, failed, paused }
+enum _TaskFilter {
+  all('全部'),
+  pending('未完成'),
+  complete('已完成'),
+  failed('失败'),
+  paused('暂停');
 
-enum _Sort { recent, largest, title }
+  const _TaskFilter(this.label);
+  final String label;
+
+  bool matches(DownloadEntry entry) => switch (this) {
+    all => true,
+    pending => !entry.complete,
+    complete => entry.complete,
+    failed => entry.canRetry,
+    paused => entry.canResume,
+  };
+}
+
+enum _Sort {
+  recent('最近添加'),
+  largest('占用从大到小'),
+  title('剧名排序');
+
+  const _Sort(this.label);
+  final String label;
+}
+
+class _DownloadGroup {
+  _DownloadGroup(List<DownloadEntry> entries, this.bytes)
+    : entries = List.unmodifiable(
+        entries..sort((a, b) => a.index.compareTo(b.index)),
+      ),
+      recent = entries
+          .map((e) => e.id)
+          .reduce((a, b) => a.compareTo(b) > 0 ? a : b),
+      completed = entries.where((e) => e.complete).length;
+
+  final List<DownloadEntry> entries;
+  final int? bytes;
+  final String recent;
+  final int completed;
+  Drama get drama => entries.first.drama;
+  String get size => bytes == null ? '待统计' : formatDownloadBytes(bytes!);
+}
+
+class _DownloadView {
+  const _DownloadView({
+    required this.entries,
+    required this.groups,
+    required this.counts,
+    required this.sourceCount,
+    required this.completedCount,
+    required this.sourceBytes,
+  });
+
+  final List<DownloadEntry> entries;
+  final List<_DownloadGroup> groups;
+  final Map<_TaskFilter, int> counts;
+  final int sourceCount, completedCount;
+  final int? sourceBytes;
+}
 
 class DownloadsPage extends StatefulWidget {
   const DownloadsPage({
@@ -18,10 +77,12 @@ class DownloadsPage extends StatefulWidget {
     required this.store,
     required this.downloads,
     required this.onOpen,
+    this.active = true,
   });
   final AppStore store;
   final DownloadStore downloads;
   final ValueChanged<Drama> onOpen;
+  final bool active;
   @override
   State<DownloadsPage> createState() => _DownloadsPageState();
 }
@@ -35,6 +96,12 @@ class _DownloadsPageState extends State<DownloadsPage> {
   final Set<String> _selected = {};
   final Set<String> _collapsed = {};
   bool _defaultFilterSet = false;
+  String? _openingEntry;
+  int _playGeneration = 0;
+
+  bool get _locked => _busy || _openingEntry != null;
+  bool get _interactive =>
+      mounted && widget.active && ModalRoute.of(context)?.isCurrent != false;
 
   @override
   void initState() {
@@ -57,7 +124,35 @@ class _DownloadsPageState extends State<DownloadsPage> {
   }
 
   void _downloadsChanged() {
-    if (!_defaultFilterSet && mounted) setState(_setDefaultFilter);
+    if (!mounted) return;
+    if (!_defaultFilterSet) setState(_setDefaultFilter);
+    if (_selected.isNotEmpty) {
+      _selected.retainAll(
+        widget.downloads.entries.where(_visible).map((e) => e.id),
+      );
+    }
+  }
+
+  @override
+  void didUpdateWidget(DownloadsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.downloads != widget.downloads) {
+      oldWidget.downloads.removeListener(_downloadsChanged);
+      widget.downloads.addListener(_downloadsChanged);
+      _defaultFilterSet = false;
+      _filter = _TaskFilter.pending;
+      _focusedDrama = null;
+      _setDefaultFilter();
+      _selected.clear();
+      _collapsed.clear();
+      unawaited(widget.downloads.refreshUsage());
+    }
+    if ((oldWidget.active && !widget.active) ||
+        oldWidget.downloads != widget.downloads ||
+        oldWidget.store != widget.store) {
+      ++_playGeneration;
+      _openingEntry = null;
+    }
   }
 
   @override
@@ -66,13 +161,49 @@ class _DownloadsPageState extends State<DownloadsPage> {
     super.dispose();
   }
 
-  bool _matches(DownloadEntry entry, _TaskFilter filter) => switch (filter) {
-    _TaskFilter.all => true,
-    _TaskFilter.pending => !entry.complete,
-    _TaskFilter.complete => entry.complete,
-    _TaskFilter.failed => entry.canRetry,
-    _TaskFilter.paused => entry.canResume,
-  };
+  bool _inScope(DownloadEntry entry) =>
+      (_source == null || entry.drama.source == _source) &&
+      (_space || _focusedDrama == null || entry.drama.key == _focusedDrama);
+
+  bool _visible(DownloadEntry entry) =>
+      _inScope(entry) && (_space || _filter.matches(entry));
+
+  _DownloadView _view() {
+    final sourceEntries = widget.downloads.entries
+        .where((e) => _source == null || e.drama.source == _source)
+        .toList();
+    final scoped = sourceEntries.where(_inScope).toList();
+    final entries = scoped.where((e) => _space || _filter.matches(e)).toList();
+    final byDrama = <String, List<DownloadEntry>>{};
+    for (final entry in entries) {
+      byDrama.putIfAbsent(entry.drama.key, () => []).add(entry);
+    }
+    final groups = byDrama.values
+        .map(
+          (entries) =>
+              _DownloadGroup(entries, widget.downloads.bytesFor(entries)),
+        )
+        .toList();
+    groups.sort((a, b) {
+      final order = switch (_sort) {
+        _Sort.largest => (b.bytes ?? -1).compareTo(a.bytes ?? -1),
+        _Sort.title => a.drama.title.compareTo(b.drama.title),
+        _Sort.recent => b.recent.compareTo(a.recent),
+      };
+      return order != 0 ? order : a.drama.key.compareTo(b.drama.key);
+    });
+    return _DownloadView(
+      entries: List.unmodifiable(entries),
+      groups: List.unmodifiable(groups),
+      counts: Map.unmodifiable({
+        for (final filter in _TaskFilter.values)
+          filter: scoped.where(filter.matches).length,
+      }),
+      sourceCount: sourceEntries.length,
+      completedCount: sourceEntries.where((e) => e.complete).length,
+      sourceBytes: widget.downloads.bytesFor(sourceEntries),
+    );
+  }
 
   void _toggle(DownloadEntry entry) => setState(() {
     _selecting = true;
@@ -94,7 +225,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
   }
 
   Future<void> _remove(List<DownloadEntry> entries) async {
-    if (_busy || entries.isEmpty) return;
+    if (!_interactive || _locked || entries.isEmpty) return;
     setState(() {
       _busy = true;
       _confirming = true;
@@ -167,7 +298,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
     Future<void> Function(DownloadEntry) action,
     String label,
   ) async {
-    if (_busy || entries.isEmpty) return;
+    if (!_interactive || _locked || entries.isEmpty) return;
     setState(() => _busy = true);
     try {
       await _apply(entries, action, label);
@@ -177,11 +308,17 @@ class _DownloadsPageState extends State<DownloadsPage> {
   }
 
   Future<void> _play(DownloadEntry entry) async {
-    await perform(context, () async {
-      if (await widget.downloads.localFile(entry.drama, entry.episode) ==
-          null) {
+    if (!_interactive || _locked || !entry.complete) return;
+    final generation = ++_playGeneration;
+    bool current() => _interactive && generation == _playGeneration;
+    setState(() => _openingEntry = entry.id);
+    try {
+      final file = await widget.downloads.localFile(entry.drama, entry.episode);
+      if (!mounted || !current()) return;
+      if (file == null) {
         await widget.downloads.reload();
-        throw StateError('视频文件已不存在，请重新下载');
+        if (current()) _playNotice('视频文件已不存在，请重新下载');
+        return;
       }
       // Only queue downloaded episodes, so swiping never unexpectedly uses data.
       final queue =
@@ -190,13 +327,17 @@ class _DownloadsPageState extends State<DownloadsPage> {
               .toList()
             ..sort((a, b) => a.index.compareTo(b.index));
       final index = queue.indexWhere((e) => e.id == entry.id);
-      if (!mounted || index < 0) return;
+      if (index < 0) {
+        _playNotice('视频文件已不存在，请重新下载');
+        return;
+      }
+      final store = widget.store, downloads = widget.downloads;
       await Navigator.push(
         context,
         MaterialPageRoute<void>(
           builder: (_) => PlayerPage(
-            store: widget.store,
-            downloads: widget.downloads,
+            store: store,
+            downloads: downloads,
             drama: entry.drama,
             episodes: queue.map((e) => e.episode).toList(),
             initialIndex: index,
@@ -205,60 +346,36 @@ class _DownloadsPageState extends State<DownloadsPage> {
           ),
         ),
       );
-    });
+    } catch (_) {
+      if (current()) _playNotice('视频暂时无法打开，请重试');
+    } finally {
+      if (mounted && generation == _playGeneration) {
+        setState(() => _openingEntry = null);
+      }
+    }
+  }
+
+  void _playNotice(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: Listenable.merge([widget.downloads, widget.store.preferences]),
     builder: (context, _) {
-      final sourceEntries = widget.downloads.entries
-          .where((e) => _source == null || e.drama.source == _source)
-          .toList();
-      final scoped = sourceEntries
-          .where(
-            (e) =>
-                _space || _focusedDrama == null || e.drama.key == _focusedDrama,
-          )
-          .toList();
-      final entries = scoped
-          .where((e) => _space || _matches(e, _filter))
-          .toList();
-      _selected.retainAll(entries.map((e) => e.id));
+      final view = _view();
+      final entries = view.entries;
+      final groups = view.groups;
       final chosen = entries.where((e) => _selected.contains(e.id)).toList();
-      final byDrama = <String, List<DownloadEntry>>{};
-      for (final entry in entries) {
-        byDrama.putIfAbsent(entry.drama.key, () => []).add(entry);
-      }
-      final groups = byDrama.values.toList();
-      groups.sort((a, b) {
-        final order = switch (_sort) {
-          _Sort.largest => (widget.downloads.bytesFor(b) ?? -1).compareTo(
-            widget.downloads.bytesFor(a) ?? -1,
-          ),
-          _Sort.title => a.first.drama.title.compareTo(b.first.drama.title),
-          _Sort.recent =>
-            b
-                .map((e) => e.id)
-                .reduce((a, b) => a.compareTo(b) > 0 ? a : b)
-                .compareTo(
-                  a
-                      .map((e) => e.id)
-                      .reduce((a, b) => a.compareTo(b) > 0 ? a : b),
-                ),
-        };
-        return order != 0
-            ? order
-            : a.first.drama.key.compareTo(b.first.drama.key);
-      });
-      final items = <Object>[];
-      for (final group in groups) {
-        group.sort((a, b) => a.index.compareTo(b.index));
-        items.add(group);
-        if (!_space && !_collapsed.contains(group.first.drama.key)) {
-          items.addAll(group);
-        }
-      }
+      final items = <Object>[
+        for (final group in groups) ...[
+          group,
+          if (!_space && !_collapsed.contains(group.drama.key))
+            ...group.entries,
+        ],
+      ];
       final retryable = entries.where((e) => e.canRetry).toList();
       return RefreshIndicator(
         onRefresh: () async {
@@ -284,7 +401,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
                         ),
                       ),
                       TextButton.icon(
-                        onPressed: _busy
+                        onPressed: _locked
                             ? null
                             : () => setState(() {
                                 _selecting = !_selecting;
@@ -305,7 +422,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
                       ButtonSegment(value: true, label: Text('按剧空间')),
                     ],
                     selected: {_space},
-                    onSelectionChanged: _busy
+                    onSelectionChanged: _locked
                         ? null
                         : (value) => setState(() {
                             _space = value.first;
@@ -320,7 +437,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
                   const SizedBox(height: 12),
                   SourceFilter(
                     value: _source,
-                    onChanged: _busy
+                    onChanged: _locked
                         ? (_) {}
                         : (value) => setState(() {
                             _source = value;
@@ -341,12 +458,14 @@ class _DownloadsPageState extends State<DownloadsPage> {
                             const Text('已保存文件占用'),
                             const SizedBox(height: 4),
                             Text(
-                              _size(sourceEntries),
+                              view.sourceBytes == null
+                                  ? '待统计'
+                                  : formatDownloadBytes(view.sourceBytes!),
                               style: Theme.of(context).textTheme.headlineMedium,
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              '${groups.length} 部剧 · ${sourceEntries.where((e) => e.complete).length} 集已完成 / ${sourceEntries.length} 集任务',
+                              '${groups.length} 部剧 · ${view.completedCount} 集已完成 / ${view.sourceCount} 集任务',
                             ),
                             const SizedBox(height: 6),
                             const Text(
@@ -374,16 +493,10 @@ class _DownloadsPageState extends State<DownloadsPage> {
                               padding: const EdgeInsets.only(right: 8),
                               child: ChoiceChip(
                                 label: Text(
-                                  '${switch (filter) {
-                                    _TaskFilter.all => '全部',
-                                    _TaskFilter.pending => '未完成',
-                                    _TaskFilter.complete => '已完成',
-                                    _TaskFilter.failed => '失败',
-                                    _TaskFilter.paused => '暂停',
-                                  }} ${scoped.where((e) => _matches(e, filter)).length}',
+                                  '${filter.label} ${view.counts[filter]}',
                                 ),
                                 selected: _filter == filter,
-                                onSelected: _busy
+                                onSelected: _locked
                                     ? null
                                     : (_) => setState(() {
                                         _defaultFilterSet = true;
@@ -400,7 +513,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
                         alignment: Alignment.centerLeft,
                         child: ActionChip(
                           label: const Text('正在查看单部剧 · 显示全部'),
-                          onPressed: _busy
+                          onPressed: _locked
                               ? null
                               : () => setState(() {
                                   _focusedDrama = null;
@@ -421,33 +534,23 @@ class _DownloadsPageState extends State<DownloadsPage> {
                       ),
                       PopupMenuButton<_Sort>(
                         tooltip: '排序',
-                        enabled: !_busy,
+                        enabled: !_locked,
                         initialValue: _sort,
                         onSelected: (value) => setState(() => _sort = value),
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(
-                            value: _Sort.largest,
-                            child: Text('占用从大到小'),
-                          ),
-                          PopupMenuItem(
-                            value: _Sort.recent,
-                            child: Text('最近添加'),
-                          ),
-                          PopupMenuItem(
-                            value: _Sort.title,
-                            child: Text('剧名排序'),
-                          ),
+                        itemBuilder: (_) => [
+                          for (final sort in const [
+                            _Sort.largest,
+                            _Sort.recent,
+                            _Sort.title,
+                          ])
+                            PopupMenuItem(value: sort, child: Text(sort.label)),
                         ],
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 12),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text(switch (_sort) {
-                                _Sort.largest => '占用从大到小',
-                                _Sort.recent => '最近添加',
-                                _Sort.title => '剧名排序',
-                              }),
+                              Text(_sort.label),
                               const Icon(Icons.arrow_drop_down),
                             ],
                           ),
@@ -460,7 +563,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
                     Align(
                       alignment: Alignment.centerLeft,
                       child: TextButton.icon(
-                        onPressed: _busy
+                        onPressed: _locked
                             ? null
                             : () => _batch(
                                 retryable,
@@ -472,6 +575,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
                       ),
                     ),
                   if ((_busy && !_confirming) ||
+                      _openingEntry != null ||
                       widget.downloads.measuringUsage)
                     const LinearProgressIndicator(),
                   if (widget.downloads.initializing)
@@ -522,8 +626,8 @@ class _DownloadsPageState extends State<DownloadsPage> {
                 itemCount: items.length,
                 itemBuilder: (_, index) => switch (items[index]) {
                   final DownloadEntry entry => _entry(entry),
-                  final List<DownloadEntry> episodes =>
-                    _space ? _storageGroup(episodes) : _group(episodes),
+                  final _DownloadGroup group =>
+                    _space ? _storageGroup(group) : _group(group),
                   _ => const SizedBox.shrink(),
                 },
               ),
@@ -545,7 +649,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
       spacing: 8,
       children: [
         TextButton(
-          onPressed: _busy || entries.isEmpty
+          onPressed: _locked || entries.isEmpty
               ? null
               : () => setState(() {
                   if (_selected.length == entries.length) {
@@ -561,24 +665,24 @@ class _DownloadsPageState extends State<DownloadsPage> {
           ),
         ),
         TextButton(
-          onPressed: _busy || chosen.isEmpty ? null : () => _remove(chosen),
+          onPressed: _locked || chosen.isEmpty ? null : () => _remove(chosen),
           child: Text('删除 (${chosen.length})'),
         ),
         if (!_space) ...[
           TextButton(
-            onPressed: _busy || pausable.isEmpty
+            onPressed: _locked || pausable.isEmpty
                 ? null
                 : () => _batch(pausable, widget.downloads.pause, '暂停'),
             child: Text('暂停 (${pausable.length})'),
           ),
           TextButton(
-            onPressed: _busy || resumable.isEmpty
+            onPressed: _locked || resumable.isEmpty
                 ? null
                 : () => _batch(resumable, widget.downloads.resume, '恢复'),
             child: Text('恢复 (${resumable.length})'),
           ),
           TextButton(
-            onPressed: _busy || retryable.isEmpty
+            onPressed: _locked || retryable.isEmpty
                 ? null
                 : () => _batch(retryable, widget.downloads.retry, '重试'),
             child: Text('重试 (${retryable.length})'),
@@ -595,18 +699,19 @@ class _DownloadsPageState extends State<DownloadsPage> {
         : episodes.any((e) => _selected.contains(e.id))
         ? null
         : false,
-    onChanged: _busy ? null : (_) => _toggleGroup(episodes),
+    onChanged: _locked ? null : (_) => _toggleGroup(episodes),
   );
 
-  Widget _storageGroup(List<DownloadEntry> episodes) {
-    final drama = episodes.first.drama;
+  Widget _storageGroup(_DownloadGroup group) {
+    final episodes = group.entries;
+    final drama = group.drama;
     return Card(
       key: ValueKey('storage-${drama.key}'),
       margin: const EdgeInsets.only(bottom: 10),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onLongPress: _busy ? null : () => _toggleGroup(episodes),
-        onTap: _busy
+        onLongPress: _locked ? null : () => _toggleGroup(episodes),
+        onTap: _locked
             ? null
             : () {
                 if (_selecting) {
@@ -638,12 +743,12 @@ class _DownloadsPageState extends State<DownloadsPage> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '${drama.source.label} · 已完成 ${episodes.where((e) => e.complete).length}/${episodes.length} 集',
+                      '${drama.source.label} · 已完成 ${group.completed}/${episodes.length} 集',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      _size(episodes),
+                      group.size,
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
                         color: Theme.of(context).colorScheme.primary,
@@ -655,7 +760,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
               if (!_selecting)
                 IconButton(
                   tooltip: '删除整部剧下载',
-                  onPressed: _busy ? null : () => _remove(episodes),
+                  onPressed: _locked ? null : () => _remove(episodes),
                   icon: const Icon(Icons.delete_outline),
                 ),
             ],
@@ -665,8 +770,9 @@ class _DownloadsPageState extends State<DownloadsPage> {
     );
   }
 
-  Widget _group(List<DownloadEntry> episodes) {
-    final drama = episodes.first.drama;
+  Widget _group(_DownloadGroup group) {
+    final episodes = group.entries;
+    final drama = group.drama;
     final collapsed = _collapsed.contains(drama.key);
     return ListTile(
       contentPadding: EdgeInsets.zero,
@@ -678,19 +784,21 @@ class _DownloadsPageState extends State<DownloadsPage> {
         style: const TextStyle(fontWeight: FontWeight.w700),
       ),
       subtitle: Text(
-        '${drama.source.label} · ${episodes.length} 集 · ${_size(episodes)}',
+        '${drama.source.label} · ${episodes.length} 集 · ${group.size}',
       ),
       trailing: Icon(collapsed ? Icons.expand_more : Icons.expand_less),
-      onTap: () => setState(() {
-        if (!_collapsed.add(drama.key)) _collapsed.remove(drama.key);
-      }),
-      onLongPress: () => widget.onOpen(drama),
+      onTap: _locked
+          ? null
+          : () => setState(() {
+              if (!_collapsed.add(drama.key)) _collapsed.remove(drama.key);
+            }),
+      onLongPress: _locked ? null : () => widget.onOpen(drama),
     );
   }
 
   Widget _entry(DownloadEntry entry) => Dismissible(
     key: ValueKey(entry.id),
-    direction: _selecting || _busy || entry.processing
+    direction: _selecting || _locked || entry.processing
         ? DismissDirection.none
         : DismissDirection.endToStart,
     confirmDismiss: (_) async {
@@ -713,8 +821,8 @@ class _DownloadsPageState extends State<DownloadsPage> {
       margin: const EdgeInsets.only(bottom: 8),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onLongPress: _busy ? null : () => _toggle(entry),
-        onTap: _busy
+        onLongPress: _locked ? null : () => _toggle(entry),
+        onTap: _locked
             ? null
             : _selecting
             ? () => _toggle(entry)
@@ -728,7 +836,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
               if (_selecting)
                 Checkbox(
                   value: _selected.contains(entry.id),
-                  onChanged: _busy ? null : (_) => _toggle(entry),
+                  onChanged: _locked ? null : (_) => _toggle(entry),
                 ),
               SizedBox(
                 width: 52,
@@ -793,13 +901,22 @@ class _DownloadsPageState extends State<DownloadsPage> {
                     if (entry.complete)
                       IconButton(
                         tooltip: '播放第 ${entry.episode.number} 集',
-                        onPressed: _busy ? null : () => _play(entry),
-                        icon: const Icon(Icons.play_circle_fill_rounded),
+                        onPressed: _locked ? null : () => _play(entry),
+                        icon: _openingEntry == entry.id
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  semanticsLabel: '正在检查视频',
+                                ),
+                              )
+                            : const Icon(Icons.play_circle_fill_rounded),
                       )
                     else if (entry.canRetry)
                       IconButton(
                         tooltip: '重试第 ${entry.episode.number} 集',
-                        onPressed: _busy
+                        onPressed: _locked
                             ? null
                             : () =>
                                   _batch([entry], widget.downloads.retry, '重试'),
@@ -807,7 +924,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
                       ),
                     PopupMenuButton<String>(
                       tooltip: '管理下载',
-                      enabled: !_busy && !entry.processing,
+                      enabled: !_locked && !entry.processing,
                       onSelected: (value) {
                         switch (value) {
                           case 'delete':
