@@ -134,6 +134,8 @@ private struct AirPlayMedia {
     let url: URL
     let title: String
     let hasNext: Bool
+    let nextTitle: String?
+    let nextNotice: String?
     init?(_ args: [String: Any]) {
         guard let id = args["id"] as? String, !id.isEmpty,
               let address = args["url"] as? String, let url = URL(string: address),
@@ -143,6 +145,8 @@ private struct AirPlayMedia {
         self.id = id
         self.url = url
         title = args["title"] as? String ?? "视频"
+        nextTitle = args["nextTitle"] as? String
+        nextNotice = args["nextNotice"] as? String
         hasNext = args["hasNext"] as? Bool ?? true
     }
 }
@@ -253,9 +257,10 @@ private final class AirPlayNativeSession: NSObject {
         controller.navigationItem.leftBarButtonItem = UIBarButtonItem(title: "完成", style: .done, target: self, action: #selector(done))
         let picker = AVRoutePickerView(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
         picker.prioritizesVideoDevices = true
-        let next = UIBarButtonItem(title: "下一集", style: .plain, target: self, action: #selector(nextEpisode))
+        let next = UIBarButtonItem(title: media.nextTitle ?? "下一集", style: .plain, target: self, action: #selector(nextEpisode))
         next.isEnabled = media.hasNext
         nextButton = next
+        controller.navigationItem.prompt = media.nextNotice
         controller.navigationItem.rightBarButtonItems = [next, UIBarButtonItem(customView: picker)]
         navigation.disappeared = { [weak self] in self?.close(animated: false) {} }
         installObservers()
@@ -421,6 +426,8 @@ private final class AirPlayNativeSession: NSObject {
             }
             controller.title = record.1.title
             nextButton?.isEnabled = record.1.hasNext
+            nextButton?.title = record.1.nextTitle ?? "下一集"
+            if error == nil { controller.navigationItem.prompt = record.1.nextNotice }
             if changed { ready(current) }
         }
         releaseDetachedItems()

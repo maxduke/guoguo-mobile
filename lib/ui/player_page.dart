@@ -21,6 +21,7 @@ import 'package:flutter/services.dart';
 import '../data/app_store.dart';
 import '../data/download_store.dart';
 import '../domain/models.dart';
+import '../domain/episode_queue.dart';
 import '../domain/playback_diagnostic.dart';
 import '../domain/playback_policy.dart';
 import '../platform/episode_buffer.dart' show EpisodeCancelled;
@@ -110,6 +111,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   StreamSubscription<List<ConnectivityResult>>? _network;
   int _index = 0;
   bool _episodeCompleted = false;
+  int? get _nextAdjacentEpisode => nextAdjacentEpisodeIndex(
+    _index,
+    widget.episodes.length,
+    episodeIndices: widget.localOnly ? widget.episodeIndices : null,
+  );
+  bool get _offlineGap =>
+      widget.localOnly &&
+      _index + 1 < widget.episodes.length &&
+      _nextAdjacentEpisode == null;
   int get _generation => _session.generation;
   bool _controls = false, _locked = false, _fill = false;
   bool _loading = true;
@@ -197,6 +207,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         loadSource: _airPlaySource,
         retainSources: (indices) => _airPlayMedia?.retain(indices),
         episodeCount: widget.episodes.length,
+        episodeIndices: widget.localOnly ? widget.episodeIndices : null,
+        episodeNumbers: widget.episodes
+            .map((episode) => episode.number)
+            .toList(),
         autoAdvance: () => widget.store.preferences.autoAdvance,
       )..addListener(_airPlayChanged);
     }
@@ -621,12 +635,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           unawaited(_recover());
           break;
         }
-        _episodeCompleted = true;
+        setState(() => _episodeCompleted = true);
         _save();
         if (!_foreground && !_pipActive) break;
-        if (widget.store.preferences.autoAdvance &&
-            _index + 1 < widget.episodes.length) {
-          _goTo(_index + 1);
+        final next = _nextAdjacentEpisode;
+        if (widget.store.preferences.autoAdvance && next != null) {
+          _goTo(next);
         } else {
           _playIntent = false;
           _health.reset();
@@ -1353,6 +1367,35 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                 style: const TextStyle(color: Colors.white70),
               ),
             ),
+          if (selected &&
+              !_loading &&
+              _error == null &&
+              _episodeCompleted &&
+              _offlineGap &&
+              !_locked &&
+              !_localBlocked)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      '下一集未下载，已停止连播',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      onPressed: () => _goTo(_index + 1),
+                      child: Text(
+                        '播放已下载的第 ${widget.episodes[_index + 1].number} 集',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           if (selected && _error != null)
             Center(
               child: Padding(
@@ -1392,7 +1435,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     await _player.seekTo(target);
     if (!mounted || index != _index || generation != _generation) return;
     if (_episodeCompleted && target < duration) {
-      _episodeCompleted = false;
+      setState(() => _episodeCompleted = false);
       _savePosition(target, duration);
     }
   }

@@ -6,6 +6,7 @@ import 'package:background_downloader/background_downloader.dart';
 import '../data/app_store.dart';
 import '../data/download_store.dart';
 import '../domain/models.dart';
+import '../domain/episode_queue.dart';
 import '../domain/watch_resume.dart';
 import 'components.dart';
 import 'episode_grid.dart';
@@ -54,11 +55,12 @@ Future<void> continueDrama(
     // A downloaded successor may skip several episodes. Advance only to the
     // adjacent original slot; otherwise replay the saved episode from zero.
     index = episodes.indexWhere((e) => e.id == record.episodeId);
-    if (record.episodeCompleted &&
-        index + 1 < episodes.length &&
-        indices![index + 1] == indices[index] + 1) {
-      index++;
-    }
+    final next = nextAdjacentEpisodeIndex(
+      index,
+      episodes.length,
+      episodeIndices: indices,
+    );
+    if (record.episodeCompleted && next != null) index = next;
   } else {
     index = WatchResume(record, episodes).index;
   }

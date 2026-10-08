@@ -1,4 +1,5 @@
 import 'models.dart';
+import 'episode_queue.dart';
 
 enum WatchStatus { watching, nextEpisode, waiting, completed, episodeCompleted }
 
@@ -12,8 +13,9 @@ class WatchResume {
     var resumeIndex = saved < 0 ? 0 : saved;
     var state = WatchStatus.watching;
     if (record != null && record.episodeCompleted) {
-      if (saved >= 0 && saved + 1 < rows.length) {
-        resumeIndex = saved + 1;
+      final next = nextAdjacentEpisodeIndex(saved, rows.length);
+      if (next != null) {
+        resumeIndex = next;
         state = WatchStatus.nextEpisode;
       } else if (saved >= 0 && record.drama.status == 'ongoing') {
         state = WatchStatus.waiting;
