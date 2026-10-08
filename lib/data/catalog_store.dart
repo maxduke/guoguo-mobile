@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../domain/models.dart';
+import '../domain/user_input_exception.dart';
 import '../domain/series_title.dart';
 import '../domain/catalog_query.dart';
 import '../platform/provider_client.dart';
@@ -19,6 +20,7 @@ class _CatalogSlice {
   int page = 0;
   bool more = false, loading = false;
   String? error;
+  bool? retryMore;
   Map<String, dynamic> toJson() => {
     'items': items.map((d) => d.toJson()).toList(),
     'page': page,
@@ -80,6 +82,7 @@ class CatalogStore extends ChangeNotifier {
   int _searchSerial = 0;
 
   final Map<DramaSource, String> sourceErrors = {};
+  final Map<DramaSource, bool> _retryCatalogMore = {};
 
   final Set<DramaSource> loadingSources = {};
 
@@ -122,13 +125,33 @@ class CatalogStore extends ChangeNotifier {
   String? get libraryError =>
       source.remoteCategories ? _activeSlice?.error : sourceErrors[source];
 
+  bool get libraryCanRetry => source.remoteCategories
+      ? _activeSlice?.retryMore != null
+      : _retryCatalogMore.containsKey(source);
+
+  bool get categoriesLoading => _loadingCategories.contains(source);
+
+  Future<void> retryLibrary() async {
+    final target = source;
+    if (target.remoteCategories) {
+      final category = selectedCategory;
+      final more = _activeSlice?.retryMore;
+      if (more != null) await _loadCategory(target, category, more: more);
+    } else {
+      final more = _retryCatalogMore[target];
+      if (more != null) await _loadCatalog(target, more: more);
+    }
+  }
+
   Future<void> loadCategories([DramaSource? selected]) async {
     final target = selected ?? source;
-    if (!target.remoteCategories ||
+    if (_closed ||
+        !target.remoteCategories ||
         isOffline() ||
         !_loadingCategories.add(target)) {
       return;
     }
+    notifyListeners();
     try {
       final result = await provider.call('categories', {'source': target.name});
       if (_closed) return;
@@ -136,9 +159,9 @@ class CatalogStore extends ChangeNotifier {
           .map((v) => SourceCategory(v['id'] as String, v['name'] as String))
           .toList();
       categoryErrors.remove(target);
-      await _persistence.persist(records: false);
-    } catch (error) {
-      categoryErrors[target] = '$error';
+      await _saveCache();
+    } catch (_) {
+      if (!_closed) categoryErrors[target] = '分类暂时无法加载，请重试';
     } finally {
       _loadingCategories.remove(target);
       notifyListeners();
@@ -160,7 +183,7 @@ class CatalogStore extends ChangeNotifier {
     String category, {
     required bool more,
   }) async {
-    if (isOffline()) return;
+    if (_closed || isOffline()) return;
     final slice = _slices.putIfAbsent(
       _sliceKey(target, category),
       _CatalogSlice.new,
@@ -168,6 +191,7 @@ class CatalogStore extends ChangeNotifier {
     if (slice.loading || (more && !slice.more)) return;
     slice.loading = true;
     slice.error = null;
+    slice.retryMore = null;
     notifyListeners();
     try {
       final page = more ? slice.page + 1 : 1;
@@ -178,18 +202,26 @@ class CatalogStore extends ChangeNotifier {
       });
       if (_closed) return;
       final rows = _parseRows(result, target);
+      final hasMore = result['hasMore'] as bool? ?? false;
+      final warning = result['warning'] as String? ?? '';
       slice.items = {
         for (final row in [...(more ? slice.items : <Drama>[]), ...rows])
           row.key: row,
       }.values.toList();
       slice.page = page;
-      slice.more = result['hasMore'] == true;
-      final warning = result['warning'] as String? ?? '';
+      slice.more = hasMore;
       slice.error = warning.isEmpty ? null : warning;
       _mergeCatalog(target, rows);
-      await _persistence.persist(records: false);
-    } catch (error) {
-      slice.error = '$error';
+      await _saveCache();
+    } catch (_) {
+      if (!_closed) {
+        slice.retryMore = more;
+        slice.error = more
+            ? '更多短剧加载失败，请重试'
+            : slice.items.isEmpty
+            ? '剧库暂时无法加载，请稍后重试'
+            : '剧库更新失败，已保留现有内容';
+      }
     } finally {
       slice.loading = false;
       notifyListeners();
@@ -300,25 +332,7 @@ class CatalogStore extends ChangeNotifier {
       ]);
       return;
     }
-    if (!loadingSources.add(target)) return;
-    sourceErrors.remove(target);
-    notifyListeners();
-    try {
-      final response = await provider.call('catalog', {'source': target.name});
-      if (_closed) return;
-      final incoming = _parseRows(response, target);
-      _mergeCatalog(target, incoming);
-      catalogPages[target] = 1;
-      hasMore[target] = response['hasMore'] == true;
-      final warning = response['warning'] as String? ?? '';
-      if (warning.isNotEmpty) sourceErrors[target] = warning;
-      await _persistence.persist(records: false);
-    } catch (error) {
-      sourceErrors[target] = '$error';
-    } finally {
-      loadingSources.remove(target);
-      notifyListeners();
-    }
+    await _loadCatalog(target, more: false);
   }
 
   Future<void> loadMore() async {
@@ -327,31 +341,52 @@ class CatalogStore extends ChangeNotifier {
       await _loadCategory(target, selectedCategory, more: true);
       return;
     }
-    if (isOffline() || hasMore[target] != true) return;
+    await _loadCatalog(target, more: true);
+  }
+
+  Future<void> _loadCatalog(DramaSource target, {required bool more}) async {
+    if (_closed || isOffline() || (more && hasMore[target] != true)) return;
     if (!loadingSources.add(target)) return;
+    sourceErrors.remove(target);
+    _retryCatalogMore.remove(target);
     notifyListeners();
     try {
-      final page = (catalogPages[target] ?? 1) + 1;
+      final page = more ? (catalogPages[target] ?? 1) + 1 : 1;
       final response = await provider.call('catalog', {
         'source': target.name,
-        'page': page,
+        if (more) 'page': page,
       });
+      if (_closed) return;
       final rows = _parseRows(response, target);
+      final nextMore = response['hasMore'] as bool? ?? false;
+      final warning = response['warning'] as String? ?? '';
       _mergeCatalog(target, rows);
       catalogPages[target] = page;
-      hasMore[target] = response['hasMore'] == true;
-      final warning = response['warning'] as String? ?? '';
-      if (warning.isNotEmpty) {
-        sourceErrors[target] = warning;
-      } else {
-        sourceErrors.remove(target);
+      hasMore[target] = nextMore;
+      if (warning.isNotEmpty) sourceErrors[target] = warning;
+      await _saveCache();
+    } catch (_) {
+      if (!_closed) {
+        _retryCatalogMore[target] = more;
+        sourceErrors[target] = more
+            ? '更多短剧加载失败，请重试'
+            : (catalogs[target] ?? []).isEmpty
+            ? '剧库暂时无法加载，请稍后重试'
+            : '剧库更新失败，已保留现有内容';
       }
-      await _persistence.persist(records: false);
-    } catch (error) {
-      sourceErrors[target] = '$error';
     } finally {
       loadingSources.remove(target);
       notifyListeners();
+    }
+  }
+
+  Future<void> _saveCache() async {
+    if (_closed) return;
+    try {
+      await _persistence.persist(records: false);
+    } catch (_) {
+      // AppStore reports storage failures separately. A successful response
+      // has already advanced the cursor and must not become a request retry.
     }
   }
 
@@ -787,7 +822,7 @@ class CatalogStore extends ChangeNotifier {
     var imported = 0, mergedCount = 0;
     for (final row in rows) {
       if (row.id.isEmpty || row.title.isEmpty) {
-        throw const FormatException('剧库包含无效条目');
+        throw const UserInputException('剧库包含无效条目');
       }
       grouped.putIfAbsent(row.source, () => []).add(row);
     }

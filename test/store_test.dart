@@ -117,7 +117,7 @@ void main() {
     provider.requests['hongguo']!.completeError(const ProviderException('离线'));
     await future;
     expect(store.catalog.library.single.key, red.key);
-    expect(store.catalog.sourceErrors[DramaSource.hongguo], '离线');
+    expect(store.catalog.sourceErrors[DramaSource.hongguo], '剧库更新失败，已保留现有内容');
   });
   test('default network policy is Wi-Fi only and survives restart', () async {
     final storage = MemoryStorage();

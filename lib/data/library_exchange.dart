@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:isolate';
 
 import '../domain/models.dart';
+import '../domain/user_input_exception.dart';
 import 'app_store.dart';
 import 'storage.dart';
 
@@ -24,7 +25,7 @@ class LibraryExchange {
 
   Future<LibraryImportPreview> inspect(File file) async {
     if (await file.length() > maxBytes) {
-      throw const FormatException('剧库文件超过 32 MB');
+      throw const UserInputException('剧库文件超过 32 MB');
     }
     final response = await store.provider.call('libraryImport', {
       'path': file.absolute.path,
@@ -36,7 +37,7 @@ class LibraryExchange {
       final normalized = File(itemsPath);
       try {
         if (await normalized.length() > maxBytes) {
-          throw const FormatException('剧库内容超过 32 MB');
+          throw const UserInputException('剧库内容超过 32 MB');
         }
         items = await _readLibraryItems(itemsPath);
       } finally {
@@ -47,7 +48,7 @@ class LibraryExchange {
           .map((row) => Drama.fromJson(Map<String, dynamic>.from(row as Map)))
           .toList();
     }
-    if (items.length > 200000) throw const FormatException('剧库条目超过 20 万条');
+    if (items.length > 200000) throw const UserInputException('剧库条目超过 20 万条');
     return LibraryImportPreview(
       items,
       response['skipped'] as int? ?? 0,
@@ -65,7 +66,7 @@ class LibraryExchange {
       for (final drama in store.catalog.catalogs.values.expand((rows) => rows))
         drama.key: drama,
     }.values.toList();
-    if (rows.length > 200000) throw const FormatException('剧库条目超过 20 万条');
+    if (rows.length > 200000) throw const UserInputException('剧库条目超过 20 万条');
     final document = {
       'app': 'guoguo',
       'kind': 'library',
@@ -89,7 +90,7 @@ class LibraryExchange {
     };
     final text = await encodeJsonInBackground(document);
     if (utf8.encode(text).length > maxBytes) {
-      throw const FormatException('剧库内容超过 32 MB');
+      throw const UserInputException('剧库内容超过 32 MB');
     }
     final input = await File(
       '${directory.path}/.guoguo-library-${DateTime.now().microsecondsSinceEpoch}.json',

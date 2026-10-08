@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import '../domain/models.dart';
+import '../domain/user_input_exception.dart';
 import '../domain/watch_resume.dart';
 import '../domain/catalog_query.dart';
 import '../domain/series_title.dart';
@@ -346,13 +347,13 @@ class RecordStore extends ChangeNotifier {
 
   RecordBackup inspectBackup(String raw) {
     if (utf8.encode(raw).length > 20 * 1024 * 1024) {
-      throw const FormatException('备份文件超过 20 MB');
+      throw const UserInputException('备份文件超过 20 MB');
     }
     try {
       final decoded = Map<String, dynamic>.from(jsonDecode(raw) as Map);
       return RecordBackup.fromJson(decoded);
     } catch (_) {
-      throw const FormatException('备份损坏或格式不兼容，原记录未修改');
+      throw const UserInputException('备份损坏或格式不兼容，原记录未修改');
     }
   }
 
@@ -366,7 +367,7 @@ class RecordStore extends ChangeNotifier {
       if (candidate.favorites.length > RecordBackup.maxRecords ||
           candidate.history.length > RecordBackup.maxRecords ||
           candidate.seasonReminders.length > RecordBackup.maxSeasonReminders) {
-        throw const FormatException('合并后的记录超过上限，原记录未修改');
+        throw const UserInputException('合并后的记录超过上限，原记录未修改');
       }
       await save(candidate: candidate);
       _installBackup(candidate);

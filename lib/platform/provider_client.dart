@@ -75,14 +75,20 @@ class NativeProviderClient implements ProviderClient {
     } on MissingPluginException {
       throw const ProviderException('站源组件未安装，请安装包含站源核心的完整版本');
     } on PlatformException catch (error) {
-      throw ProviderException(error.message ?? '站源暂时不可用，请稍后重试');
+      throw ProviderException(
+        error.message ?? '站源暂时不可用，请稍后重试',
+        userMessage: '站源暂时不可用，请稍后重试',
+      );
     }
   }
 }
 
 class ProviderException implements Exception {
-  const ProviderException(this.message);
+  const ProviderException(this.message, {String? userMessage})
+    : _userMessage = userMessage;
   final String message;
+  final String? _userMessage;
+  String get userMessage => _userMessage ?? message;
   @override
   String toString() => message;
 }

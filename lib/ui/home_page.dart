@@ -286,7 +286,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               notification is ScrollUpdateNotification &&
               notification.metrics.extentAfter < 700 &&
               _search.query.isEmpty &&
-              store.catalog.libraryError == null) {
+              !store.catalog.libraryCanRetry) {
             unawaited(store.catalog.loadMore());
           }
           return false;
@@ -616,15 +616,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                 ),
                               ),
                             ),
-                          if (store.catalog.categoryErrors.containsKey(
-                            store.catalog.source,
-                          ))
-                            TextButton(
-                              onPressed: () => store.catalog.loadCategories(),
-                              child: const Text('重试加载分类'),
-                            ),
                         ],
                       ),
+                    ),
+                  if (_search.query.isEmpty &&
+                      store.catalog.categoryErrors.containsKey(
+                        store.catalog.source,
+                      ))
+                    _Notice(
+                      store.catalog.categoryErrors[store.catalog.source]!,
+                      Icons.cloud_off_outlined,
+                      onRetry: store.offline || store.catalog.categoriesLoading
+                          ? null
+                          : () => store.catalog.loadCategories(),
+                      retryLabel: '重试加载分类',
                     ),
                   if (!store.catalog.source.remoteCategories &&
                       categories.length > 1)
@@ -646,12 +651,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         ],
                       ),
                     ),
-                  if (store.catalog.libraryError != null)
+                  if (_search.query.isEmpty &&
+                      store.catalog.libraryError != null)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       child: _Notice(
                         store.catalog.libraryError!,
                         Icons.cloud_off_outlined,
+                        onRetry:
+                            store.catalog.library.isEmpty &&
+                                store.catalog.libraryCanRetry &&
+                                !store.offline &&
+                                !loading
+                            ? store.catalog.retryLibrary
+                            : null,
                       ),
                     ),
                   const SizedBox(height: 12),
@@ -682,7 +695,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       : loading
                       ? '首次加载需要一点时间，内容会保存在设备上'
                       : '轻点更新，加载${store.catalog.source.label}剧库',
-                  action: loading || _search.query.isNotEmpty
+                  action:
+                      loading ||
+                          _search.query.isNotEmpty ||
+                          store.offline ||
+                          store.catalog.libraryCanRetry
                       ? null
                       : FilledButton.icon(
                           onPressed: () => store.catalog.refresh(),
@@ -754,16 +771,25 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     child: Column(
                       children: [
                         Text(
-                          '已加载 ${store.catalog.library.length} 部 · ${store.catalog.libraryHasMore ? "继续下滑加载" : "当前来源已返回完毕"}',
+                          '已加载 ${store.catalog.library.length} 部 · ${store.catalog.libraryCanRetry
+                              ? "等待重试"
+                              : store.catalog.libraryHasMore
+                              ? "继续下滑加载"
+                              : "当前来源已返回完毕"}',
                         ),
                         const SizedBox(height: 8),
                         const Text(
                           '已加载数量不代表全站总量',
                           style: TextStyle(fontSize: 12),
                         ),
-                        if (store.catalog.libraryHasMore)
+                        if (store.catalog.libraryHasMore ||
+                            store.catalog.libraryCanRetry)
                           OutlinedButton.icon(
-                            onPressed: loading ? null : store.catalog.loadMore,
+                            onPressed: loading || store.offline
+                                ? null
+                                : store.catalog.libraryCanRetry
+                                ? store.catalog.retryLibrary
+                                : store.catalog.loadMore,
                             icon: loading
                                 ? const SizedBox(
                                     width: 16,
@@ -772,8 +798,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                       strokeWidth: 2,
                                     ),
                                   )
-                                : const Icon(Icons.expand_more),
-                            label: Text(loading ? '正在加载…' : '加载更多短剧'),
+                                : Icon(
+                                    store.catalog.libraryCanRetry
+                                        ? Icons.refresh
+                                        : Icons.expand_more,
+                                  ),
+                            label: Text(
+                              loading
+                                  ? '正在加载…'
+                                  : store.catalog.libraryCanRetry
+                                  ? '重试加载剧库'
+                                  : '加载更多短剧',
+                            ),
                           ),
                       ],
                     ),
