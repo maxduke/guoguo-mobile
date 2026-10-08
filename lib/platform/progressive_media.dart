@@ -229,7 +229,20 @@ class ProgressiveMedia {
     try {
       var bytes = 0;
       await for (final entity in directory.list(followLinks: false)) {
-        if (entity is File) bytes += await entity.length();
+        if (entity is File) {
+          try {
+            bytes += await entity.length();
+          } on FileSystemException {
+            // FFmpeg's temp_file publication can rename a listed temporary
+            // file before its size is read. Its final path is counted on the
+            // next inspection; other filesystem errors still fail preparation.
+            if (!entity.path.endsWith('.tmp') ||
+                await FileSystemEntity.type(entity.path, followLinks: false) !=
+                    FileSystemEntityType.notFound) {
+              rethrow;
+            }
+          }
+        }
       }
       if (_closed) return;
       if (bytes > maxBytes ||

@@ -158,7 +158,10 @@ void main() {
         if (replay) {
           await tester.tap(find.byTooltip('播放'));
         } else {
-          tester.widget<Slider>(find.byType(Slider)).onChangeEnd!(10000);
+          final scrub = tester.widget<Slider>(find.byType(Slider));
+          scrub.onChangeStart!(scrub.value);
+          scrub.onChanged!(10000);
+          scrub.onChangeEnd!(10000);
         }
         await tester.pumpAndSettle();
         expect(find.text('下一集未下载，已停止连播'), findsNothing);

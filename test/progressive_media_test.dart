@@ -34,6 +34,38 @@ class _Job implements MediaExecution {
   }
 }
 
+/// Publish a real temporary file after listing it but before its size is read.
+class _RenamingDirectory implements Directory {
+  _RenamingDirectory(this.directory, this.temporaryName);
+
+  final Directory directory;
+  final String temporaryName;
+  int renames = 0;
+
+  @override
+  String get path => directory.path;
+
+  @override
+  Stream<FileSystemEntity> list({
+    bool recursive = false,
+    bool followLinks = true,
+  }) async* {
+    final entities = await directory
+        .list(recursive: recursive, followLinks: followLinks)
+        .toList();
+    for (final entity in entities) {
+      if (entity is File && entity.path == '$path/$temporaryName') {
+        await entity.rename(entity.path.substring(0, entity.path.length - 4));
+        renames++;
+      }
+      yield entity;
+    }
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 const _openPlaylist = '''#EXTM3U
 #EXT-X-VERSION:7
 #EXT-X-TARGETDURATION:2
@@ -98,6 +130,67 @@ void main() {
   );
   tearDown(() async {
     if (await dir.exists()) await dir.delete(recursive: true);
+  });
+
+  for (final name in ['index.m3u8', 'segment_00002.m4s']) {
+    test(
+      'atomic $name publication does not fail resource inspection',
+      () async {
+        await _writeReady(dir);
+        await File('${dir.path}/$name').copy('${dir.path}/$name.tmp');
+        final directory = _RenamingDirectory(dir, '$name.tmp');
+        final job = _Job();
+        final media = ProgressiveMedia(directory, job);
+        addTearDown(media.close);
+
+        expect(await media.start(), startsWith('http://127.0.0.1:'));
+        expect(directory.renames, 1);
+        expect(media.failure, isNull);
+        expect(media.timeline.value.duration, const Duration(seconds: 6));
+        expect(media.complete, isFalse);
+        expect(job.cancellations, 0);
+
+        await _writeReady(dir, ended: true);
+        job.finish();
+        await media.finished;
+        expect(media.complete, isTrue);
+        expect(media.failure, isNull);
+      },
+    );
+  }
+
+  test('renamed fragment is counted by the next resource inspection', () async {
+    await _writeReady(dir);
+    await File(
+      '${dir.path}/segment_00003.m4s.tmp',
+    ).writeAsBytes(List.filled(1024, 1));
+    final directory = _RenamingDirectory(dir, 'segment_00003.m4s.tmp');
+    final job = _Job();
+    final media = ProgressiveMedia(directory, job, maxBytes: 512);
+    addTearDown(media.close);
+
+    expect(await media.start(), startsWith('http://127.0.0.1:'));
+    expect(directory.renames, 1);
+    await expectLater(
+      job.done.timeout(const Duration(seconds: 3)),
+      throwsA(isA<ProviderException>()),
+    );
+    expect(job.cancellations, 1);
+    expect(media.failure?.message, contains('资源限制'));
+  });
+
+  test('unpublished fragments count toward the resource budget', () async {
+    await _writeReady(dir);
+    await File(
+      '${dir.path}/segment_00003.m4s.tmp',
+    ).writeAsBytes(List.filled(1024, 1));
+    final job = _Job();
+    final media = ProgressiveMedia(dir, job, maxBytes: 512);
+    addTearDown(media.close);
+
+    await expectLater(media.start(), throwsA(isA<ProviderException>()));
+    expect(job.cancellations, 1);
+    expect(media.failure?.message, contains('资源限制'));
   });
 
   for (final target in [2, 4]) {
