@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'cast_session.dart';
 import 'provider_client.dart';
+import '../domain/episode_queue.dart';
 
 /// Media leases for a dedicated native queue, independent of the phone player.
 /// Only native item changes advance the episode; Flutter never drives its end.
@@ -14,6 +15,8 @@ class AirPlaySession extends ChangeNotifier {
     required this.retainSources,
     required this.episodeCount,
     required this.autoAdvance,
+    this.episodeIndices,
+    this.episodeNumbers,
     required this.relayFactory,
     this.channel = const MethodChannel('guoguo/airplay'),
   }) {
@@ -40,6 +43,7 @@ class AirPlaySession extends ChangeNotifier {
   final Future<CastSource> Function(int) loadSource;
   final void Function(Set<int>) retainSources;
   final int episodeCount;
+  final List<int>? episodeIndices, episodeNumbers;
   final bool Function() autoAdvance;
   final CastRelayHandle Function() relayFactory;
   final MethodChannel channel;
@@ -63,6 +67,37 @@ class AirPlaySession extends ChangeNotifier {
   String? error;
 
   bool get blocksLocal => engaged || routed || preparing;
+  bool get _canAutoAdvance =>
+      autoAdvance() &&
+      nextAdjacentEpisodeIndex(
+            index,
+            episodeCount,
+            episodeIndices: episodeIndices,
+          ) !=
+          null;
+
+  Map<String, dynamic> _item(int index, CastSource source, String url) {
+    final gap =
+        index + 1 < episodeCount &&
+        nextAdjacentEpisodeIndex(
+              index,
+              episodeCount,
+              episodeIndices: episodeIndices,
+            ) ==
+            null;
+    return {
+      'id': '$index',
+      'url': url,
+      'title': source.title,
+      'hasNext': index + 1 < episodeCount,
+      if (gap)
+        'nextTitle': episodeNumbers == null
+            ? '播放下一已下载集'
+            : '播放第 ${episodeNumbers![index + 1]} 集',
+      if (gap) 'nextNotice': '下一集未下载，不会自动跳集',
+    };
+  }
+
   void _notify() {
     if (!_disposed) notifyListeners();
   }
@@ -148,7 +183,7 @@ class AirPlaySession extends ChangeNotifier {
     // currentItem KVO is not proof that the receiver finished the old URL.
     // Native explicitly retains the outgoing item through the handoff.
     unawaited(_releaseUnused(revision));
-    if (state['needsNext'] == true && autoAdvance()) {
+    if (state['needsNext'] == true && _canAutoAdvance) {
       unawaited(_append('$index'));
     }
   }
@@ -232,12 +267,7 @@ class AirPlaySession extends ChangeNotifier {
         submitted = true;
         await channel.invokeMethod<void>('open', {
           'sessionId': _id,
-          'item': {
-            'id': '$initialIndex',
-            'url': url,
-            'title': source.title,
-            'hasNext': initialIndex + 1 < episodeCount,
-          },
+          'item': _item(initialIndex, source, url),
           'positionMs': initialPosition.inMilliseconds,
           'playing': initialPlaying,
           'speed': speed,
@@ -247,7 +277,7 @@ class AirPlaySession extends ChangeNotifier {
       preparing = false;
       _notify();
       // Prepare now, rather than waiting until the receiver reaches the end.
-      if (autoAdvance()) unawaited(_append('$initialIndex'));
+      if (_canAutoAdvance) unawaited(_append('$initialIndex'));
     } catch (failure) {
       if (!submitted) {
         if (lease != null && identical(_relays[initialIndex], lease)) {
@@ -270,7 +300,7 @@ class AirPlaySession extends ChangeNotifier {
         predecessor != index ||
         index + 1 >= episodeCount ||
         _queuedIndex != null ||
-        (!forced && (!autoAdvance() || _failedNext.contains(afterId)))) {
+        (!forced && (!_canAutoAdvance || _failedNext.contains(afterId)))) {
       return Future.value();
     }
     final revision = _revision;
@@ -300,12 +330,7 @@ class AirPlaySession extends ChangeNotifier {
           await channel.invokeMethod<void>('append', {
             'sessionId': _id,
             'afterId': afterId,
-            'item': {
-              'id': '$next',
-              'url': url,
-              'title': source.title,
-              'hasNext': next + 1 < episodeCount,
-            },
+            'item': _item(next, source, url),
           });
           accepted = true;
         });
