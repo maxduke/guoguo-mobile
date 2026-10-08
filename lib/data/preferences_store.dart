@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show ValueListenable;
 
+import '../domain/models.dart';
+
 class PreferencesStore extends ChangeNotifier {
   PreferencesStore({required Future<void> Function() save}) : _save = save;
   final Future<void> Function() _save;
@@ -16,6 +18,39 @@ class PreferencesStore extends ChangeNotifier {
   bool progressivePreparation = false;
 
   double playbackSpeed = 1;
+
+  final _favoriteSources = <DramaSource>{};
+  final _hiddenSources = <DramaSource>{};
+  final _recentSources = <DramaSource>[];
+  static const maxRecentSources = 6;
+  Set<DramaSource> get favoriteSources => Set.unmodifiable(_favoriteSources);
+  Set<DramaSource> get hiddenSources => Set.unmodifiable(_hiddenSources);
+  List<DramaSource> get recentSources => List.unmodifiable(_recentSources);
+
+  void rememberSource(DramaSource source) {
+    if (_recentSources.firstOrNull == source) return;
+    _recentSources.remove(source);
+    _recentSources.insert(0, source);
+    if (_recentSources.length > maxRecentSources) _recentSources.removeLast();
+    notifyListeners();
+  }
+
+  Future<void> saveSources() => _save();
+
+  Future<void> toggleFavoriteSource(DramaSource source) async {
+    if (!_favoriteSources.remove(source)) _favoriteSources.add(source);
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setSourceHidden(DramaSource source, bool hidden) async {
+    final changed = hidden
+        ? _hiddenSources.add(source)
+        : _hiddenSources.remove(source);
+    if (!changed) return;
+    notifyListeners();
+    await _save();
+  }
 
   Future<void> setTheme(ThemeMode mode) async {
     themeMode = mode;
@@ -52,6 +87,26 @@ class PreferencesStore extends ChangeNotifier {
   }
 
   void restore(Map<String, dynamic> state) {
+    List<DramaSource> sources(String key) {
+      final rows = state[key] as List? ?? [];
+      if (rows.length > DramaSource.values.length) {
+        throw const FormatException('站源偏好格式不正确');
+      }
+      return rows.map(DramaSource.parse).toSet().toList();
+    }
+
+    final favorites = sources('favoriteSources');
+    final hidden = sources('hiddenSources');
+    final recent = sources('recentSources').take(maxRecentSources).toList();
+    _favoriteSources
+      ..clear()
+      ..addAll(favorites);
+    _hiddenSources
+      ..clear()
+      ..addAll(hidden);
+    _recentSources
+      ..clear()
+      ..addAll(recent);
     themeMode = ThemeMode.values.firstWhere(
       (v) => v.name == state['theme'],
       orElse: () => ThemeMode.system,
@@ -76,6 +131,9 @@ class PreferencesStore extends ChangeNotifier {
     'autoAdvance': autoAdvance,
     'progressivePreparation': progressivePreparation,
     'playbackSpeed': playbackSpeed,
+    'favoriteSources': _favoriteSources.map((source) => source.name).toList(),
+    'hiddenSources': _hiddenSources.map((source) => source.name).toList(),
+    'recentSources': _recentSources.map((source) => source.name).toList(),
   };
 
   @override

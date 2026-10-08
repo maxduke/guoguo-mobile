@@ -33,6 +33,7 @@ class AppStore extends ChangeNotifier implements StorePersistence {
       records: records,
       now: this.now,
       isOffline: () => offline,
+      onSourceSelected: preferences.rememberSource,
     );
   }
   final LocalStorage storage;

@@ -1,5 +1,12 @@
 import 'package:flutter/material.dart';
 
+String formatDiscoveryTimestamp(DateTime savedAt) {
+  final date = savedAt.toLocal();
+  String two(int value) => value.toString().padLeft(2, '0');
+  return '${date.year}-${two(date.month)}-${two(date.day)} '
+      '${two(date.hour)}:${two(date.minute)}';
+}
+
 class DiscoveryCacheStatus extends StatelessWidget {
   const DiscoveryCacheStatus({
     super.key,
@@ -11,11 +18,7 @@ class DiscoveryCacheStatus extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final date = savedAt.toLocal();
-    String two(int value) => value.toString().padLeft(2, '0');
-    final time =
-        '${date.year}-${two(date.month)}-${two(date.day)} '
-        '${two(date.hour)}:${two(date.minute)}';
+    final time = formatDiscoveryTimestamp(savedAt);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 8),
       child: Text(

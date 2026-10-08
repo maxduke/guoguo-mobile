@@ -16,6 +16,7 @@ import 'widget_test.dart' show NoNetwork;
 import 'package:guoguo_mobile/platform/provider_client.dart';
 import 'package:guoguo_mobile/ui/rankings_page.dart';
 import 'package:guoguo_mobile/ui/library_page.dart';
+import 'package:guoguo_mobile/ui/source_selector.dart';
 import 'package:guoguo_mobile/ui/recommendations_page.dart';
 import 'package:guoguo_mobile/ui/downloads_page.dart';
 import 'package:guoguo_mobile/ui/theme.dart';
@@ -132,6 +133,49 @@ void main() {
           ).writeAsBytes(bytes!.buffer.asUint8List());
           image.dispose();
         });
+        await store.preferences.toggleFavoriteSource(DramaSource.hongguo);
+        await store.preferences.toggleFavoriteSource(DramaSource.wuguo);
+        await store.catalog.selectSource(DramaSource.yaguo);
+        await store.catalog.selectSource(DramaSource.hongguo);
+        await store.preferences.setSourceHidden(DramaSource.niuguo, true);
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: key,
+            child: GuoguoApp(
+              store: store,
+              downloads: downloads,
+              autoLoad: false,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.descendant(
+            of: find.byType(SourceSelector),
+            matching: find.byType(OutlinedButton),
+          ),
+        );
+        await tester.pumpAndSettle();
+        for (final name in ['source-picker', 'source-management']) {
+          if (name == 'source-management') {
+            await tester.tap(find.byTooltip('管理站源'));
+            await tester.pumpAndSettle();
+          }
+          expect(tester.takeException(), isNull);
+          await tester.runAsync(() async {
+            final boundary =
+                key.currentContext!.findRenderObject()!
+                    as RenderRepaintBoundary;
+            final image = await boundary.toImage();
+            final bytes = await image.toByteData(
+              format: ui.ImageByteFormat.png,
+            );
+            await File(
+              'build/home-previews/$name-${size.width < 500 ? 'phone' : 'tablet'}-${mode.name}.png',
+            ).writeAsBytes(bytes!.buffer.asUint8List());
+            image.dispose();
+          });
+        }
         await tester.pumpWidget(const SizedBox());
         downloads.dispose();
         store.dispose();
