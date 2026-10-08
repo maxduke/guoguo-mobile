@@ -55,13 +55,8 @@ class AppStartup extends ChangeNotifier {
       await _initializeCore();
       if (_disposed) return;
       coreReady = true;
-      // A core retry also releases download restoration and initial discovery.
+      // Feature pages start their own requests after observing core readiness.
       unawaited(downloads.initialize());
-      unawaited(
-        store.catalog.library.isEmpty
-            ? store.catalog.refresh()
-            : store.catalog.loadCategories(),
-      );
     } catch (error) {
       if (!_disposed) {
         coreError = error is ProviderException

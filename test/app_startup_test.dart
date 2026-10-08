@@ -7,6 +7,7 @@ import 'package:guoguo_mobile/data/app_store.dart';
 import 'package:guoguo_mobile/data/download_store.dart';
 import 'package:guoguo_mobile/data/storage.dart';
 import 'package:guoguo_mobile/domain/models.dart';
+import 'package:guoguo_mobile/domain/discovery.dart';
 import 'package:guoguo_mobile/main.dart';
 import 'package:guoguo_mobile/platform/provider_client.dart';
 
@@ -21,6 +22,13 @@ class StartupProvider implements ProviderClient {
     Map<String, dynamic> arguments = const {},
   ]) async {
     methods.add(method);
+    if (method == 'recommendations') {
+      return {
+        'items': [drama.toJson()],
+        'nextOffset': 1,
+        'hasMore': false,
+      };
+    }
     if (method == 'categories') return {'items': <dynamic>[]};
     if (method == 'catalog') {
       return catalogGate == null
@@ -119,6 +127,11 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       store.catalog.catalogs[DramaSource.hongguo] = [drama];
+      store.catalog.discoveryCache.putRecommendations(
+        RecommendationGenre.shortPlay,
+        [drama],
+        DateTime.now(),
+      );
       await store.records.toggleFavorite(drama);
       await store.preferences.setTheme(ThemeMode.dark);
       final core = Completer<void>(), network = Completer<bool>();
@@ -159,6 +172,11 @@ void main() {
     (tester) async {
       createFixture(tester: tester);
       store.catalog.catalogs[DramaSource.hongguo] = [drama];
+      store.catalog.discoveryCache.putRecommendations(
+        RecommendationGenre.shortPlay,
+        [drama],
+        DateTime.now(),
+      );
       await store.records.toggleFavorite(drama);
       var attempts = 0;
       final retry = Completer<void>();
@@ -378,26 +396,18 @@ void main() {
     },
   );
 
-  test(
-    'initial catalog responses arriving after disposal cannot write or notify',
-    () async {
-      createFixture();
-      provider.catalogGate = Completer<Map<String, dynamic>>();
-      final app = startup(core: () async {});
-      app.start();
-      await app.retryCore();
-      await Future<void>.delayed(Duration.zero);
-      expect(provider.methods, contains('catalog'));
-      app.dispose();
-      provider.catalogGate!.complete({
-        'items': [drama.toJson()],
-        'hasMore': false,
-      });
-      await Future<void>.delayed(Duration.zero);
-      expect(store.catalog.catalogs, isEmpty);
-      expect((store.storage as MemoryStorage).value, isNull);
-    },
-  );
+  test('startup readies the core without preloading content', () async {
+    createFixture();
+    final app = startup(core: () async {});
+    app.start();
+    await app.retryCore();
+    await Future<void>.delayed(Duration.zero);
+    expect(app.coreReady, isTrue);
+    expect(provider.methods, isEmpty);
+    expect(store.catalog.catalogs, isEmpty);
+    expect((store.storage as MemoryStorage).value, isNull);
+    app.dispose();
+  });
 
   test(
     'disposal in the same turn as start cannot install listeners or initialize the core',

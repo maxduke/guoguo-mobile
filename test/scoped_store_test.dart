@@ -4,6 +4,7 @@ import 'package:guoguo_mobile/data/app_store.dart';
 import 'package:guoguo_mobile/data/download_store.dart';
 import 'package:guoguo_mobile/data/storage.dart';
 import 'package:guoguo_mobile/domain/models.dart';
+import 'package:guoguo_mobile/domain/discovery.dart';
 import 'package:guoguo_mobile/main.dart';
 import 'package:guoguo_mobile/platform/provider_client.dart';
 import 'package:guoguo_mobile/ui/components.dart';
@@ -107,6 +108,11 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       final store = AppStore(storage: MemoryStorage(), provider: Provider());
       store.catalog.catalogs[DramaSource.hongguo] = [drama];
+      store.catalog.discoveryCache.putRecommendations(
+        RecommendationGenre.shortPlay,
+        [drama],
+        DateTime.now(),
+      );
       await store.records.saveWatch(watch(1000));
       final downloads = DownloadStore(store);
       await tester.pumpWidget(
@@ -117,7 +123,7 @@ void main() {
       final search = tester.widget<OutlinedButton>(
         find.widgetWithText(OutlinedButton, '搜索剧名'),
       );
-      final heading = tester.widget<Text>(find.text('发现好剧'));
+      final heading = tester.widget<Text>(find.text('真人剧推荐'));
       expect(find.textContaining('已看 1%'), findsOneWidget);
 
       await store.records.saveWatch(watch(42000));
@@ -130,7 +136,7 @@ void main() {
         ),
         same(search),
       );
-      expect(tester.widget<Text>(find.text('发现好剧')), same(heading));
+      expect(tester.widget<Text>(find.text('真人剧推荐')), same(heading));
 
       await store.records.toggleFavorite(drama);
       await tester.pumpAndSettle();

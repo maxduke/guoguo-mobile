@@ -48,6 +48,7 @@ class _SourceSelectorState extends State<SourceSelector> {
   @override
   Widget build(BuildContext context) => Align(
     alignment: Alignment.centerLeft,
+    widthFactor: 1,
     child: OutlinedButton.icon(
       onPressed: _open,
       icon: const Icon(Icons.grid_view_rounded, size: 20),

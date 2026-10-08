@@ -111,19 +111,22 @@ class CatalogStore extends ChangeNotifier {
       '${target.name}|$category';
 
   _CatalogSlice? get _activeSlice =>
-      _slices[_sliceKey(source, selectedCategory)];
+      _slices[_sliceKey(
+        source,
+        source.remoteCategories ? selectedCategory : '',
+      )];
 
-  List<Drama> get library => source.remoteCategories
-      ? _activeSlice?.items ?? []
-      : catalogs[source] ?? [];
+  List<Drama> get library =>
+      _activeSlice?.items ??
+      (source.remoteCategories ? const [] : catalogs[source] ?? []);
+
+  bool get libraryLoaded => (_activeSlice?.page ?? 0) > 0;
 
   bool get libraryLoading => source.remoteCategories
       ? _activeSlice?.loading == true
       : loadingSources.contains(source);
 
-  bool get libraryHasMore => source.remoteCategories
-      ? _activeSlice?.more == true
-      : hasMore[source] == true;
+  bool get libraryHasMore => libraryLoaded && _activeSlice?.more == true;
 
   String? get libraryError =>
       source.remoteCategories ? _activeSlice?.error : sourceErrors[source];
@@ -175,7 +178,8 @@ class CatalogStore extends ChangeNotifier {
     final target = source;
     selectedCategories[target] = category;
     notifyListeners();
-    if (!_slices.containsKey(_sliceKey(target, category))) {
+    final slice = _slices[_sliceKey(target, category)];
+    if (slice == null || (slice.page == 0 && slice.retryMore == null)) {
       await _loadCategory(target, category, more: false);
     }
     await _persistence.persist(cache: false);
@@ -350,7 +354,12 @@ class CatalogStore extends ChangeNotifier {
   }
 
   Future<void> _loadCatalog(DramaSource target, {required bool more}) async {
-    if (_closed || isOffline() || (more && hasMore[target] != true)) return;
+    final key = _sliceKey(target, '');
+    if (_closed ||
+        isOffline() ||
+        (more && ((_slices[key]?.page ?? 0) == 0 || hasMore[target] != true))) {
+      return;
+    }
     if (!loadingSources.add(target)) return;
     sourceErrors.remove(target);
     _retryCatalogMore.remove(target);
@@ -365,6 +374,14 @@ class CatalogStore extends ChangeNotifier {
       final rows = _parseRows(response, target);
       final nextMore = response['hasMore'] as bool? ?? false;
       final warning = response['warning'] as String? ?? '';
+      final slice = _slices.putIfAbsent(key, _CatalogSlice.new);
+      slice.items = {
+        if (more)
+          for (final row in slice.items) row.key: row,
+        for (final row in rows) row.key: row,
+      }.values.toList();
+      slice.page = page;
+      slice.more = nextMore;
       _mergeCatalog(target, rows);
       catalogPages[target] = page;
       hasMore[target] = nextMore;
@@ -895,6 +912,7 @@ class CatalogStore extends ChangeNotifier {
     final previous = Map<DramaSource, List<Drama>>.of(catalogs);
     final installed = <DramaSource, List<Drama>>{};
     final previousSlices = <String, List<Drama>?>{};
+    final installedSlices = <String, List<Drama>>{};
     final grouped = <DramaSource, List<Drama>>{};
     var imported = 0, mergedCount = 0;
     for (final row in rows) {
@@ -904,6 +922,7 @@ class CatalogStore extends ChangeNotifier {
       grouped.putIfAbsent(row.source, () => []).add(row);
     }
     for (final entry in grouped.entries) {
+      final importedKeys = <String>{};
       final merged = {
         for (final row in catalogs[entry.key] ?? <Drama>[]) row.key: row,
       };
@@ -917,6 +936,7 @@ class CatalogStore extends ChangeNotifier {
             row = Drama.fromJson({...row.toJson(), 'id': matches.single.id});
           }
         }
+        importedKeys.add(row.key);
         final old = merged[row.key];
         if (old == null) {
           imported++;
@@ -946,12 +966,14 @@ class CatalogStore extends ChangeNotifier {
       }
       catalogs[entry.key] = merged.values.toList();
       installed[entry.key] = catalogs[entry.key]!;
-      if (entry.key.remoteCategories) {
-        final key = _sliceKey(entry.key, '');
-        previousSlices[key] = _slices[key]?.items;
-        final slice = _slices.putIfAbsent(key, _CatalogSlice.new);
-        slice.items = catalogs[entry.key]!;
-      }
+      final key = _sliceKey(entry.key, '');
+      previousSlices[key] = _slices[key]?.items;
+      final slice = _slices.putIfAbsent(key, _CatalogSlice.new);
+      slice.items = {
+        for (final row in slice.items) row.key: merged[row.key] ?? row,
+        for (final key in importedKeys) key: merged[key]!,
+      }.values.toList();
+      installedSlices[key] = slice.items;
     }
     try {
       await _persistence.persist(records: false);
@@ -984,7 +1006,7 @@ class CatalogStore extends ChangeNotifier {
         final key = _sliceKey(entry.key, '');
         final slice = _slices[key];
         if (previousSlices.containsKey(key) && slice != null) {
-          if (identical(slice.items, entry.value) &&
+          if (identical(slice.items, installedSlices[key]) &&
               previousSlices[key] == null) {
             _slices.remove(key);
           } else {

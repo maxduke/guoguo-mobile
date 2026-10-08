@@ -39,6 +39,7 @@ class _Provider implements ProviderClient {
   final suggestions = <_Request>[];
   final cancellations = <Map<String, dynamic>>[];
   List<Drama> partial = [];
+  final catalogs = <DramaSource, List<Drama>>{};
   int polls = 0;
 
   @override
@@ -58,6 +59,11 @@ class _Provider implements ProviderClient {
         'source': args['source'],
         'query': args['query'],
       });
+    }
+    if (method == 'catalog') {
+      return Future.value(
+        _page(catalogs[DramaSource.parse(args['source'])] ?? []),
+      );
     }
     if (method == 'cancelSearch') cancellations.add(args);
     return Future.value({'items': []});
@@ -100,6 +106,7 @@ Future<({AppStore store, _Provider provider})> _mount(
   store.catalog.catalogs[source] = [
     _drama('local', source: source, title: '目标缓存', category: '分类'),
   ];
+  provider.catalogs[source] = store.catalog.catalogs[source]!;
   addTearDown(() async {
     await tester.pumpWidget(const SizedBox());
     for (final request in [...provider.searches, ...provider.suggestions]) {
@@ -732,9 +739,13 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await tester.tap(find.text('完整剧库'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('筛选'));
+      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(ChoiceChip, '分类'));
       await tester.pump();
-      await tester.tap(find.text('搜索剧名'));
+      await tester.tap(find.byTooltip('搜索剧名'));
       await tester.pumpAndSettle();
       expect(find.byType(SearchPage), findsOneWidget);
       await _submit(tester);
@@ -755,14 +766,18 @@ void main() {
         isTrue,
       );
       expect(find.byType(TextField), findsNothing);
-      await tester.tap(find.text('搜索剧名'));
+      await tester.tap(find.byTooltip('搜索剧名'));
       await tester.pumpAndSettle();
       store.catalog.catalogs[DramaSource.huangdou] = [
         _drama('target', source: DramaSource.huangdou, category: '新分类'),
       ];
+      provider.catalogs[DramaSource.huangdou] =
+          store.catalog.catalogs[DramaSource.huangdou]!;
       await store.catalog.selectSource(DramaSource.huangdou);
       await tester.pumpAndSettle();
       await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('筛选'));
       await tester.pumpAndSettle();
       expect(
         tester

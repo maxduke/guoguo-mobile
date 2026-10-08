@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/services.dart';
 import '../domain/models.dart';
+import '../domain/discovery.dart';
 
 abstract interface class ProviderClient {
   Future<Map<String, dynamic>> call(
@@ -94,6 +95,42 @@ class ProviderException implements Exception {
 }
 
 extension ProviderOperations on ProviderClient {
+  Future<List<DiscoveryBoard>> discoveryBoards(DramaSource source) async {
+    final result = await call('boards', {'source': source.name});
+    return List.unmodifiable(
+      (result['items'] as List).map(
+        (raw) => DiscoveryBoard.fromJson(raw as Map, source),
+      ),
+    );
+  }
+
+  Future<DiscoveryColumnResult> discoveryColumn(
+    DramaSource source,
+    String board, {
+    int page = 1,
+  }) async => DiscoveryColumnResult.fromJson(
+    await call('ranking', {'board': board, 'page': page}),
+    source,
+    board: board,
+    page: page,
+  );
+
+  Future<RecommendationBatch> recommendations(
+    RecommendationGenre genre, {
+    int offset = 0,
+    String sessionId = '',
+    List<String> seen = const [],
+  }) async => RecommendationBatch.fromJson(
+    await call('recommendations', {
+      'recommendation': {
+        'genre': genre.id,
+        'offset': offset,
+        'sessionId': sessionId,
+        'seen': seen,
+      },
+    }),
+  );
+
   Future<List<Episode>> chapters(Drama drama) async {
     final result = await call('chapters', {'id': drama.id});
     final rows = result['chapters'] as List? ?? [];

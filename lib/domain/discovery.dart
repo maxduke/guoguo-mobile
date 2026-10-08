@@ -73,3 +73,72 @@ class DiscoveryRow {
 
   Map<String, dynamic> toJson() => {'drama': drama.toJson(), 'rank': rank};
 }
+
+class RecommendationBatch {
+  const RecommendationBatch(
+    this.items, {
+    required this.nextOffset,
+    required this.sessionId,
+    required this.hasMore,
+  });
+  final List<Drama> items;
+  final int nextOffset;
+  final String sessionId;
+  final bool hasMore;
+
+  factory RecommendationBatch.fromJson(Map<String, dynamic> value) {
+    final rows = List<Drama>.unmodifiable(
+      (value['items'] as List).map(
+        (raw) => Drama.fromJson(Map<String, dynamic>.from(raw as Map)),
+      ),
+    );
+    final offset = value['nextOffset'] as int;
+    if (offset < 0 || rows.any((row) => row.source != DramaSource.hongguo)) {
+      throw const FormatException('推荐资料不匹配');
+    }
+    return RecommendationBatch(
+      rows,
+      nextOffset: offset,
+      sessionId: value['sessionId'] as String? ?? '',
+      hasMore: value['hasMore'] as bool? ?? false,
+    );
+  }
+}
+
+class DiscoveryColumnResult {
+  const DiscoveryColumnResult(
+    this.rows, {
+    required this.kind,
+    required this.description,
+    required this.hasMore,
+    this.warning,
+  });
+  final List<DiscoveryRow> rows;
+  final DiscoveryKind kind;
+  final String description;
+  final String? warning;
+  final bool hasMore;
+
+  factory DiscoveryColumnResult.fromJson(
+    Map<String, dynamic> value,
+    DramaSource source, {
+    required String board,
+    required int page,
+  }) {
+    final rows = List<DiscoveryRow>.unmodifiable(
+      (value['items'] as List).map((raw) => DiscoveryRow.fromJson(raw as Map)),
+    );
+    if ((value['boardId'] != null && value['boardId'] != board) ||
+        (value['page'] != null && value['page'] != page) ||
+        rows.any((row) => row.drama.source != source)) {
+      throw const FormatException('栏目资料不匹配');
+    }
+    return DiscoveryColumnResult(
+      rows,
+      kind: DiscoveryKind.parse(value['kind']),
+      description: value['description'] as String? ?? '',
+      warning: value['warning'] as String?,
+      hasMore: value['hasMore'] as bool? ?? false,
+    );
+  }
+}

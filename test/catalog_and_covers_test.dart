@@ -110,7 +110,8 @@ void main() {
         expect(restored.catalog.library.length, 3);
         await restored.catalog.refresh();
         expect(provider.requested, [1, 2, 3, 1]);
-        expect(restored.catalog.library.length, 3);
+        expect(restored.catalog.library.length, 2);
+        expect(restored.catalog.catalogs[source]!.length, 3);
         store.dispose();
         restored.dispose();
       },

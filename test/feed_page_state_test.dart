@@ -671,7 +671,7 @@ void main() {
         StateError('private-board-error'),
       );
       await tester.pumpAndSettle();
-      expect(find.text('榜单列表暂时无法加载，请重试'), findsOneWidget);
+      expect(find.text('栏目列表暂时无法加载，请重试'), findsOneWidget);
       expect(find.textContaining('private-board-error'), findsNothing);
       final retry = _retry(tester);
       retry();

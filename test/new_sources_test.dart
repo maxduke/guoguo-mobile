@@ -101,7 +101,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      expect(find.text('榜单'), findsOneWidget);
+      expect(find.text('查看全部栏目'), findsOneWidget);
       await tester.tap(
         find.descendant(
           of: find.byType(SourceSelector),
@@ -196,10 +196,10 @@ void main() {
       );
       await tester.tap(find.byType(BackButton));
       await tester.pumpAndSettle();
-      // This fixture disables startup loading; the directory still has its
-      // own explicit refresh, separate from changing the search scope.
+      // The discovery preview does not fetch the directory; entering the
+      // library loads only the newly selected source.
       expect(provider.calls.last['method'], 'search');
-      await tester.tap(find.byTooltip('更新当前站源'));
+      await tester.tap(find.text('完整剧库'));
       await tester.pump();
       expect(provider.calls.last['method'], 'catalog');
       expect(provider.calls.last['source'], 'wuguo');

@@ -398,7 +398,7 @@ void main() {
       expect(find.byTooltip('删除整部剧下载'), findsOneWidget);
       final route = ModalRoute.of(tester.element(find.byType(HomePage)))!;
       expect(route.popDisposition, RoutePopDisposition.doNotPop);
-      await tester.tap(find.text('剧库'));
+      await tester.tap(find.text('发现'));
       await tester.pumpAndSettle();
       expect(route.popDisposition, RoutePopDisposition.bubble);
       await tester.tap(find.text('下载'));
@@ -547,7 +547,7 @@ void main() {
       ], home: true);
       _play(tester, 1).onPressed!();
       await tester.pump();
-      await tester.tap(find.text('剧库'));
+      await tester.tap(find.text('发现'));
       await tester.pump();
       await tester.tap(find.text('下载'));
       await tester.pump();
