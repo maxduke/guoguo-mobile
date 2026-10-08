@@ -3,6 +3,25 @@ import '../data/app_store.dart';
 import '../domain/models.dart';
 import 'components.dart';
 
+class _RankingBoard {
+  const _RankingBoard(this.id, this.name);
+  final String id, name;
+
+  factory _RankingBoard.fromJson(Map<String, dynamic> value) =>
+      _RankingBoard(value['id'] as String, value['name'] as String);
+}
+
+class _RankingRow {
+  const _RankingRow(this.drama, this.rank);
+  final Drama drama;
+  final int rank;
+
+  factory _RankingRow.fromJson(Map<String, dynamic> value) => _RankingRow(
+    Drama.fromJson(Map<String, dynamic>.from(value['drama'] as Map)),
+    value['rank'] as int? ?? 0,
+  );
+}
+
 class RankingsPage extends StatefulWidget {
   const RankingsPage({super.key, required this.store, required this.onOpen});
   final AppStore store;
@@ -13,10 +32,12 @@ class RankingsPage extends StatefulWidget {
 
 class _RankingsPageState extends State<RankingsPage> {
   late final DramaSource source = widget.store.catalog.source;
-  List<Map<String, dynamic>> boards = [], rows = [];
-  String? selected, error;
+  List<_RankingBoard> boards = const [];
+  List<_RankingRow> rows = const [];
+  String? selected, error, warning;
   String kind = "ranking", description = "";
-  bool loading = true, hasMore = false;
+  bool loading = false, hasMore = false;
+  bool? failedMore;
   int page = 1, generation = 0;
   @override
   void initState() {
@@ -25,41 +46,66 @@ class _RankingsPageState extends State<RankingsPage> {
   }
 
   Future<void> _loadBoards() async {
+    if (!mounted || loading) return;
+    final request = ++generation;
+    setState(() {
+      loading = true;
+      error = null;
+    });
     try {
       final result = await widget.store.provider.call('boards', {
         'source': source.name,
       });
-      if (!mounted) return;
-      boards = (result['items'] as List)
-          .map((v) => Map<String, dynamic>.from(v as Map))
-          .toList();
-      if (boards.isEmpty) {
-        setState(() => loading = false);
-        return;
-      }
-      await _load(boards.first['id'] as String);
-    } catch (e) {
-      if (mounted) {
+      if (!mounted || request != generation) return;
+      final incoming = List<_RankingBoard>.unmodifiable(
+        (result['items'] as List).map(
+          (v) => _RankingBoard.fromJson(Map<String, dynamic>.from(v as Map)),
+        ),
+      );
+      setState(() {
+        boards = incoming;
+        loading = false;
+      });
+      if (boards.isNotEmpty) _selectBoard(boards.first.id);
+    } catch (_) {
+      if (mounted && request == generation) {
         setState(() {
-          error = '$e';
-          loading = false;
+          error = '榜单列表暂时无法加载，请重试';
         });
       }
+    } finally {
+      if (mounted && request == generation) setState(() => loading = false);
     }
   }
 
-  Future<void> _load(String board, {bool more = false}) async {
-    if (more && loading) return;
+  void _selectBoard(String board) {
+    if (!mounted || board == selected) return;
+    setState(() {
+      selected = board;
+      rows = const [];
+      page = 1;
+      hasMore = false;
+      kind = 'ranking';
+      description = '';
+      warning = null;
+      loading = false;
+    });
+    _load();
+  }
+
+  Future<void> _retry() =>
+      selected == null ? _loadBoards() : _load(more: failedMore ?? false);
+
+  Future<void> _load({bool more = false}) async {
+    final board = selected;
+    if (!mounted || board == null || loading || (more && !hasMore)) return;
     final request = ++generation;
     final nextPage = more ? page + 1 : 1;
+    final previous = more ? rows : const <_RankingRow>[];
     setState(() {
       loading = true;
       error = null;
-      selected = board;
-      if (!more) {
-        rows = [];
-        hasMore = false;
-      }
+      failedMore = null;
     });
     try {
       final result = await widget.store.provider.call('ranking', {
@@ -67,21 +113,37 @@ class _RankingsPageState extends State<RankingsPage> {
         'page': nextPage,
       });
       if (!mounted || request != generation) return;
+      final incoming = (result['items'] as List)
+          .map((v) => _RankingRow.fromJson(Map<String, dynamic>.from(v as Map)))
+          .toList();
+      final nextKind = result['kind'] as String? ?? 'ranking';
+      final nextDescription = result['description'] as String? ?? '';
+      final nextWarning = result['warning'] as String?;
+      final nextHasMore = result['hasMore'] as bool? ?? false;
+      final nextRows = List<_RankingRow>.unmodifiable(
+        {
+          for (final row in [...previous, ...incoming]) row.drama.key: row,
+        }.values,
+      );
       setState(() {
-        rows.addAll(
-          (result['items'] as List).map(
-            (v) => Map<String, dynamic>.from(v as Map),
-          ),
-        );
-        hasMore = result['hasMore'] == true;
-        kind = result['kind'] as String? ?? 'ranking';
-        description = result['description'] as String? ?? '';
+        rows = nextRows;
+        hasMore = nextHasMore;
+        kind = nextKind;
+        description = nextDescription;
+        warning = nextWarning?.isNotEmpty == true ? nextWarning : null;
         page = nextPage;
-        final warning = result['warning'] as String?;
-        if (warning != null && warning.isNotEmpty) error = warning;
       });
-    } catch (e) {
-      if (mounted && request == generation) setState(() => error = '$e');
+    } catch (_) {
+      if (mounted && request == generation) {
+        setState(() {
+          failedMore = more;
+          error = rows.isEmpty
+              ? '榜单暂时无法加载，请重试'
+              : more
+              ? '更多榜单内容暂时无法加载，已保留现有内容'
+              : '榜单刷新失败，已保留现有内容';
+        });
+      }
     } finally {
       if (mounted && request == generation) setState(() => loading = false);
     }
@@ -92,9 +154,7 @@ class _RankingsPageState extends State<RankingsPage> {
     listenable: Listenable.merge([widget.store.catalog, widget.store.records]),
     builder: (context, _) {
       final visible = rows.where((row) {
-        final drama = widget.store.catalog.currentDrama(
-          Drama.fromJson(Map<String, dynamic>.from(row['drama'] as Map)),
-        );
+        final drama = widget.store.catalog.currentDrama(row.drama);
         return source != DramaSource.huangdou ||
             !widget.store.catalog.hideVip ||
             drama.vip != true;
@@ -112,9 +172,9 @@ class _RankingsPageState extends State<RankingsPage> {
                     Padding(
                       padding: const EdgeInsets.only(right: 8),
                       child: ChoiceChip(
-                        label: Text(board['name'] as String),
-                        selected: selected == board['id'],
-                        onSelected: (_) => _load(board['id'] as String),
+                        label: Text(board.name),
+                        selected: selected == board.id,
+                        onSelected: (_) => _selectBoard(board.id),
                       ),
                     ),
                 ],
@@ -138,32 +198,42 @@ class _RankingsPageState extends State<RankingsPage> {
                 child: Text(description),
               ),
             if (loading) const LinearProgressIndicator(),
+            if (warning != null)
+              Padding(padding: const EdgeInsets.all(16), child: Text(warning!)),
             if (error != null)
               Padding(
                 padding: const EdgeInsets.all(16),
-                child: Text(
-                  error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                child: Column(
+                  children: [
+                    Text(
+                      error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: loading ? null : _retry,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('重试'),
+                    ),
+                  ],
                 ),
               ),
             Expanded(
               child: visible.isEmpty && !loading && !hasMore
                   ? EmptyState(
                       icon: Icons.bar_chart,
-                      title: '榜单暂时不可用',
-                      message: '稍后重试，或返回剧库继续浏览',
-                      action: OutlinedButton(
-                        onPressed: () =>
-                            selected == null ? _loadBoards() : _load(selected!),
-                        child: const Text('重试'),
-                      ),
+                      title: error != null ? '榜单暂时不可用' : '暂无榜单内容',
+                      message: error != null ? '稍后重试，或返回剧库继续浏览' : '切换榜单，或稍后刷新',
+                      action: error == null
+                          ? OutlinedButton(
+                              onPressed: _retry,
+                              child: const Text('刷新'),
+                            )
+                          : null,
                     )
                   : RefreshIndicator(
-                      onRefresh: () async {
-                        if (!loading && selected != null) {
-                          await _load(selected!);
-                        }
-                      },
+                      onRefresh: () => _load(),
                       child: ListView.builder(
                         physics: const AlwaysScrollableScrollPhysics(),
                         padding: const EdgeInsets.all(16),
@@ -171,17 +241,15 @@ class _RankingsPageState extends State<RankingsPage> {
                         itemBuilder: (context, index) {
                           if (index == visible.length) {
                             return TextButton(
-                              onPressed: loading
+                              onPressed: loading || error != null
                                   ? null
-                                  : () => _load(selected!, more: true),
+                                  : () => _load(more: true),
                               child: const Text('加载更多'),
                             );
                           }
                           final row = visible[index];
                           final drama = widget.store.catalog.currentDrama(
-                            Drama.fromJson(
-                              Map<String, dynamic>.from(row['drama'] as Map),
-                            ),
+                            row.drama,
                           );
                           return Card(
                             margin: const EdgeInsets.only(bottom: 12),
@@ -199,8 +267,7 @@ class _RankingsPageState extends State<RankingsPage> {
                                         fit: StackFit.expand,
                                         children: [
                                           Poster(drama, radius: 10),
-                                          if (kind == "ranking" &&
-                                              (row["rank"] as int? ?? 0) > 0)
+                                          if (kind == "ranking" && row.rank > 0)
                                             Positioned(
                                               top: 0,
                                               left: 0,
@@ -225,7 +292,7 @@ class _RankingsPageState extends State<RankingsPage> {
                                                       ),
                                                 ),
                                                 child: Text(
-                                                  '${row['rank']}',
+                                                  '${row.rank}',
                                                   style: const TextStyle(
                                                     color: Colors.white,
                                                     fontWeight: FontWeight.w800,
