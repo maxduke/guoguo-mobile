@@ -8,6 +8,7 @@ import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/ui/downloads_page.dart';
 import 'package:guoguo_mobile/ui/player_page.dart';
 import 'widget_test.dart' show NoNetwork;
+import 'support/download_page_actions.dart';
 
 class _Downloads extends DownloadStore {
   _Downloads(super.app);
@@ -95,10 +96,10 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('按剧空间'));
+      await tester.tap(find.byTooltip('空间管理'));
       await tester.pumpAndSettle();
       expect(find.text('11.0 KB'), findsOneWidget);
-      expect(find.text('红果 · 已完成 1/2 集'), findsOneWidget);
+      expect(find.text('已下载 1 集 · 排队中 1 集'), findsOneWidget);
       expect(
         tester.getTopLeft(find.text('另一站的剧')).dy,
         lessThan(tester.getTopLeft(find.text('同一部剧')).dy),
@@ -149,13 +150,13 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('重试失败任务 (2)'));
+    await tester.tap(find.text('重试失败 (2)'));
     await tester.pumpAndSettle();
     expect(downloads.retried, ['1', '2']);
     expect(find.textContaining('1 个已重试，1 个未完成'), findsOneWidget);
     expect(downloads.entries[2].userPaused, isTrue);
     expect(downloads.entries[3].complete, isTrue);
-    expect(find.text('重试失败任务 (1)'), findsOneWidget);
+    expect(find.text('重试失败 (1)'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     downloads.dispose();
     store.dispose();
@@ -195,7 +196,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      await tester.tap(find.text('按剧空间'));
+      await tester.tap(find.byTooltip('空间管理'));
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
         find.text('同一部剧'),
@@ -231,8 +232,8 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('已完成 2'));
-      await tester.pumpAndSettle();
+      await setDownloadFilters(tester, status: '已完成 2');
+      await expandDownloadGroup(tester);
       await tester.tap(find.byTooltip('播放第 4 集'));
       // Inspect the pushed route before mounting the platform video player.
       final route = routes.last! as MaterialPageRoute<void>;
@@ -271,7 +272,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('同一部剧'), findsOneWidget);
-      expect(find.byTooltip('播放第 4 集'), findsOneWidget);
+      expect(find.byTooltip('播放第 4 集'), findsNothing);
+      await expandDownloadGroup(tester);
+      await tester.ensureVisible(find.text('第 4 集'));
       await tester.longPress(find.text('第 4 集'));
       await tester.pumpAndSettle();
       expect(find.text('删除 (1)'), findsOneWidget);
@@ -287,7 +290,7 @@ void main() {
       await tester.tap(find.text('删除'));
       await tester.pumpAndSettle();
       expect(downloads.removed, ['1', '4']);
-      expect(find.text('还没有已完成的视频'), findsOneWidget);
+      expect(find.text('暂无下载任务'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       downloads.dispose();
@@ -312,6 +315,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await expandDownloadGroup(tester);
       await tester.drag(find.byKey(const ValueKey('4')), const Offset(-700, 0));
       await tester.pumpAndSettle();
       expect(downloads.removed, isEmpty);

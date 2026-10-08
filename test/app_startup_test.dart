@@ -250,10 +250,9 @@ void main() {
       await tester.tap(find.text('下载'));
       await tester.pumpAndSettle();
       expect(find.text('已保存的故事'), findsWidgets);
-      final filter = tester.widget<ChoiceChip>(
-        find.widgetWithText(ChoiceChip, '已完成 1'),
-      );
-      expect(filter.selected, true);
+      expect(find.text('1 部剧 · 1 集可播放'), findsOneWidget);
+      expect(find.text('本地播放'), findsOneWidget);
+      expect(find.text('查看分集'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
       core.complete();
       downloads.gate.complete();

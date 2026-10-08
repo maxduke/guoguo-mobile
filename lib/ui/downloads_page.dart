@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../data/app_store.dart';
 import '../data/download_store.dart';
+import '../domain/episode_queue.dart';
 import '../domain/models.dart';
 import 'components.dart';
 import 'player_page.dart';
@@ -52,13 +53,24 @@ class _DownloadGroup {
   final int completed;
   Drama get drama => entries.first.drama;
   String get size => bytes == null ? '待统计' : formatDownloadBytes(bytes!);
+  String get status {
+    final counts = <DownloadPhase, int>{};
+    for (final entry in entries) {
+      counts.update(entry.phase, (count) => count + 1, ifAbsent: () => 1);
+    }
+    return [
+      if (completed > 0) '已下载 $completed 集',
+      for (final phase in DownloadPhase.values)
+        if (phase != DownloadPhase.complete && counts.containsKey(phase))
+          '${phase.label} ${counts[phase]} 集',
+    ].join(' · ');
+  }
 }
 
 class _DownloadView {
   const _DownloadView({
     required this.entries,
     required this.groups,
-    required this.counts,
     required this.sourceCount,
     required this.completedCount,
     required this.sourceBytes,
@@ -66,7 +78,6 @@ class _DownloadView {
 
   final List<DownloadEntry> entries;
   final List<_DownloadGroup> groups;
-  final Map<_TaskFilter, int> counts;
   final int sourceCount, completedCount;
   final int? sourceBytes;
 }
@@ -91,11 +102,11 @@ class _DownloadsPageState extends State<DownloadsPage> {
   DramaSource? _source;
   String? _focusedDrama;
   bool _space = false, _selecting = false, _busy = false, _confirming = false;
-  _TaskFilter _filter = _TaskFilter.pending;
+  _TaskFilter _filter = _TaskFilter.all;
   _Sort _sort = _Sort.recent;
+  final _scroll = ScrollController();
   final Set<String> _selected = {};
-  final Set<String> _collapsed = {};
-  bool _defaultFilterSet = false;
+  final Set<String> _expanded = {};
   String? _openingEntry;
   int _playGeneration = 0;
 
@@ -106,26 +117,13 @@ class _DownloadsPageState extends State<DownloadsPage> {
   @override
   void initState() {
     super.initState();
-    _setDefaultFilter();
     widget.downloads.addListener(_downloadsChanged);
     unawaited(widget.downloads.refreshUsage());
   }
 
-  void _setDefaultFilter() {
-    if (_defaultFilterSet ||
-        (widget.downloads.initializing && !widget.downloads.manifestLoaded)) {
-      return;
-    }
-    _defaultFilterSet = true;
-    if (widget.downloads.entries.isNotEmpty &&
-        widget.downloads.entries.every((e) => e.complete)) {
-      _filter = _TaskFilter.complete;
-    }
-  }
-
   void _downloadsChanged() {
     if (!mounted) return;
-    if (!_defaultFilterSet) setState(_setDefaultFilter);
+    _expanded.retainAll(widget.downloads.entries.map((e) => e.drama.key));
     if (_selected.isNotEmpty) {
       _selected.retainAll(
         widget.downloads.entries.where(_visible).map((e) => e.id),
@@ -139,12 +137,10 @@ class _DownloadsPageState extends State<DownloadsPage> {
     if (oldWidget.downloads != widget.downloads) {
       oldWidget.downloads.removeListener(_downloadsChanged);
       widget.downloads.addListener(_downloadsChanged);
-      _defaultFilterSet = false;
-      _filter = _TaskFilter.pending;
+      _filter = _TaskFilter.all;
       _focusedDrama = null;
-      _setDefaultFilter();
       _selected.clear();
-      _collapsed.clear();
+      _expanded.clear();
       unawaited(widget.downloads.refreshUsage());
     }
     if ((oldWidget.active && !widget.active) ||
@@ -158,6 +154,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
   @override
   void dispose() {
     widget.downloads.removeListener(_downloadsChanged);
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -174,8 +171,10 @@ class _DownloadsPageState extends State<DownloadsPage> {
         .toList();
     final scoped = sourceEntries.where(_inScope).toList();
     final entries = scoped.where((e) => _space || _filter.matches(e)).toList();
+    final visibleKeys = entries.map((e) => e.drama.key).toSet();
     final byDrama = <String, List<DownloadEntry>>{};
-    for (final entry in entries) {
+    for (final entry in scoped) {
+      if (!visibleKeys.contains(entry.drama.key)) continue;
       byDrama.putIfAbsent(entry.drama.key, () => []).add(entry);
     }
     final groups = byDrama.values
@@ -195,10 +194,6 @@ class _DownloadsPageState extends State<DownloadsPage> {
     return _DownloadView(
       entries: List.unmodifiable(entries),
       groups: List.unmodifiable(groups),
-      counts: Map.unmodifiable({
-        for (final filter in _TaskFilter.values)
-          filter: scoped.where(filter.matches).length,
-      }),
       sourceCount: sourceEntries.length,
       completedCount: sourceEntries.where((e) => e.complete).length,
       sourceBytes: widget.downloads.bytesFor(sourceEntries),
@@ -361,9 +356,225 @@ class _DownloadsPageState extends State<DownloadsPage> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  ({DownloadEntry? entry, String label}) _localPlayback(_DownloadGroup group) {
+    final saved = group.entries.where((e) => e.complete).toList();
+    if (saved.isEmpty) return (entry: null, label: '本地播放');
+    final record = widget.store.records.history[group.drama.key];
+    final index = saved.indexWhere((e) => e.episode.id == record?.episodeId);
+    if (index < 0) return (entry: saved.first, label: '本地播放');
+    if (!record!.episodeCompleted) {
+      return (entry: saved[index], label: '继续观看');
+    }
+    final next = nextAdjacentEpisodeIndex(
+      index,
+      saved.length,
+      episodeIndices: saved.map((e) => e.index).toList(),
+    );
+    return next == null
+        ? (entry: saved[index], label: '重播第 ${saved[index].episode.number} 集')
+        : (entry: saved[next], label: '继续观看');
+  }
+
+  void _showEpisodes(_DownloadGroup group) {
+    if (!_interactive || _locked) return;
+    if (_space) _scroll.jumpTo(0);
+    setState(() {
+      if (_space) {
+        _space = false;
+        _focusedDrama = group.drama.key;
+        _filter = _TaskFilter.all;
+        _sort = _Sort.recent;
+        _selected.clear();
+        _expanded.add(group.drama.key);
+      } else if (!_expanded.add(group.drama.key)) {
+        _expanded.remove(group.drama.key);
+      }
+    });
+  }
+
+  void _showSpace() {
+    if (!_interactive || _locked) return;
+    _scroll.jumpTo(0);
+    setState(() {
+      _space = true;
+      _focusedDrama = null;
+      _selected.clear();
+      _sort = _Sort.largest;
+    });
+    unawaited(widget.downloads.refreshUsage());
+  }
+
+  void _returnToDownloads() {
+    if (!_interactive || _locked) return;
+    _scroll.jumpTo(0);
+    setState(() {
+      _space = false;
+      _focusedDrama = null;
+      _selected.clear();
+      _sort = _Sort.recent;
+    });
+  }
+
+  Future<void> _showFilters() async {
+    if (!_interactive || _locked) return;
+    final downloads = widget.downloads;
+    var source = _source, focus = _focusedDrama;
+    var filter = _filter, sort = _sort;
+    final result =
+        await showModalBottomSheet<
+          ({DramaSource? source, String? focus, _TaskFilter filter, _Sort sort})
+        >(
+          context: context,
+          isScrollControlled: true,
+          showDragHandle: true,
+          builder: (context) => StatefulBuilder(
+            builder: (context, update) {
+              final scoped = downloads.entries.where(
+                (e) =>
+                    (source == null || e.drama.source == source) &&
+                    (_space || focus == null || e.drama.key == focus),
+              );
+              return ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(context).height * .8,
+                ),
+                child: SafeArea(
+                  top: false,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                '筛选与排序',
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                              const SizedBox(height: 16),
+                              SourceFilter(
+                                value: source,
+                                onChanged: (value) => update(() {
+                                  source = value;
+                                  focus = null;
+                                }),
+                              ),
+                              if (!_space) ...[
+                                const SizedBox(height: 16),
+                                const Text('下载状态'),
+                                const SizedBox(height: 8),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    for (final value in _TaskFilter.values)
+                                      ChoiceChip(
+                                        label: Text(
+                                          '${value.label} ${scoped.where(value.matches).length}',
+                                        ),
+                                        selected: filter == value,
+                                        onSelected: (_) =>
+                                            update(() => filter = value),
+                                      ),
+                                  ],
+                                ),
+                              ],
+                              const SizedBox(height: 16),
+                              DropdownButtonFormField<_Sort>(
+                                initialValue: sort,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  labelText: '排序',
+                                ),
+                                items: [
+                                  for (final value in _Sort.values)
+                                    DropdownMenuItem(
+                                      value: value,
+                                      child: Text(value.label),
+                                    ),
+                                ],
+                                onChanged: (value) => sort = value!,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextButton(
+                                onPressed: () => Navigator.pop(context, (
+                                  source: null,
+                                  focus: null,
+                                  filter: _TaskFilter.all,
+                                  sort: _space ? _Sort.largest : _Sort.recent,
+                                )),
+                                child: const Text('重置筛选'),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: FilledButton(
+                                onPressed: () => Navigator.pop(context, (
+                                  source: source,
+                                  focus: focus,
+                                  filter: filter,
+                                  sort: sort,
+                                )),
+                                child: const Text('应用'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+    if (result == null ||
+        !_interactive ||
+        _locked ||
+        downloads != widget.downloads) {
+      return;
+    }
+    setState(() {
+      if (_source != result.source ||
+          _focusedDrama != result.focus ||
+          _filter != result.filter) {
+        _selected.clear();
+      }
+      _source = result.source;
+      _focusedDrama = result.focus;
+      _filter = result.filter;
+      _sort = result.sort;
+    });
+    _scroll.jumpTo(0);
+  }
+
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-    listenable: Listenable.merge([widget.downloads, widget.store.preferences]),
+  Widget build(BuildContext context) => PopScope<void>(
+    canPop: !widget.active || !_space,
+    onPopInvokedWithResult: (didPop, _) {
+      if (!didPop && _space) _returnToDownloads();
+    },
+    child: _downloadList(context),
+  );
+
+  Widget _downloadList(BuildContext context) => ListenableBuilder(
+    listenable: Listenable.merge([
+      widget.downloads,
+      widget.store.preferences,
+      widget.store.records,
+      widget.store.records.progress,
+    ]),
     builder: (context, _) {
       final view = _view();
       final entries = view.entries;
@@ -372,11 +583,10 @@ class _DownloadsPageState extends State<DownloadsPage> {
       final items = <Object>[
         for (final group in groups) ...[
           group,
-          if (!_space && !_collapsed.contains(group.drama.key))
-            ...group.entries,
+          if (!_space && _expanded.contains(group.drama.key))
+            ...group.entries.where(_visible),
         ],
       ];
-      final retryable = entries.where((e) => e.canRetry).toList();
       return RefreshIndicator(
         onRefresh: () async {
           if (widget.downloads.initializationError != null) {
@@ -386,69 +596,92 @@ class _DownloadsPageState extends State<DownloadsPage> {
           }
         },
         child: CustomScrollView(
+          controller: _scroll,
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
               sliver: SliverList.list(
                 children: [
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_space)
+                            IconButton(
+                              tooltip: '返回下载',
+                              onPressed: _locked ? null : _returnToDownloads,
+                              icon: const Icon(Icons.arrow_back_rounded),
+                            ),
+                          Flexible(
+                            child: Text(
+                              _space ? '空间管理' : '我的下载',
+                              style: Theme.of(context).textTheme.headlineMedium,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (!_space)
+                            IconButton(
+                              tooltip: '空间管理',
+                              onPressed: _locked ? null : _showSpace,
+                              icon: const Icon(Icons.storage_rounded),
+                            ),
+                          TextButton.icon(
+                            onPressed: _locked
+                                ? null
+                                : () => setState(() {
+                                    _selecting = !_selecting;
+                                    _selected.clear();
+                                  }),
+                            icon: Icon(
+                              _selecting
+                                  ? Icons.close
+                                  : Icons.checklist_rounded,
+                            ),
+                            label: Text(_selecting ? '完成' : '多选'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                   Row(
                     children: [
                       Expanded(
                         child: Text(
-                          '下载管理',
-                          style: Theme.of(context).textTheme.headlineMedium,
+                          _selecting
+                              ? '已选 ${chosen.length} 集 · ${_size(chosen)}'
+                              : '${groups.length} 部剧 · ${groups.fold<int>(0, (count, group) => count + group.completed)} 集可播放',
+                          style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ),
                       TextButton.icon(
-                        onPressed: _locked
-                            ? null
-                            : () => setState(() {
-                                _selecting = !_selecting;
-                                _selected.clear();
-                              }),
-                        icon: Icon(
-                          _selecting ? Icons.close : Icons.checklist_rounded,
-                        ),
-                        label: Text(_selecting ? '完成' : '多选'),
+                        onPressed: _locked ? null : _showFilters,
+                        icon: const Icon(Icons.tune_rounded),
+                        label: const Text('筛选'),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  SegmentedButton<bool>(
-                    showSelectedIcon: false,
-                    segments: const [
-                      ButtonSegment(value: false, label: Text('下载任务')),
-                      ButtonSegment(value: true, label: Text('按剧空间')),
-                    ],
-                    selected: {_space},
-                    onSelectionChanged: _locked
-                        ? null
-                        : (value) => setState(() {
-                            _space = value.first;
-                            _focusedDrama = null;
-                            _selected.clear();
-                            _sort = _space ? _Sort.largest : _Sort.recent;
-                            if (_space) {
-                              unawaited(widget.downloads.refreshUsage());
-                            }
-                          }),
-                  ),
-                  const SizedBox(height: 12),
-                  SourceFilter(
-                    value: _source,
-                    onChanged: _locked
-                        ? (_) {}
-                        : (value) => setState(() {
-                            _source = value;
-                            _focusedDrama = null;
-                            _selected.clear();
-                          }),
-                  ),
+                  if (_source != null ||
+                      (!_space && _filter != _TaskFilter.all) ||
+                      _sort != (_space ? _Sort.largest : _Sort.recent))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        '${_source?.label ?? '全部站源'} · ${_space ? '全部' : _filter.label} · ${_sort.label}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
                   if (_space) ...[
-                    const SizedBox(height: 8),
                     Card(
-                      margin: EdgeInsets.zero,
+                      margin: const EdgeInsets.only(bottom: 8),
                       color: Theme.of(context).colorScheme.primaryContainer,
                       child: Padding(
                         padding: const EdgeInsets.all(16),
@@ -463,9 +696,8 @@ class _DownloadsPageState extends State<DownloadsPage> {
                                   : formatDownloadBytes(view.sourceBytes!),
                               style: Theme.of(context).textTheme.headlineMedium,
                             ),
-                            const SizedBox(height: 4),
                             Text(
-                              '${groups.length} 部剧 · ${view.completedCount} 集已完成 / ${view.sourceCount} 集任务',
+                              '${groups.length} 部剧 · ${view.completedCount} 集已下载 · ${view.sourceCount} 集下载任务',
                             ),
                             const SizedBox(height: 6),
                             const Text(
@@ -477,35 +709,13 @@ class _DownloadsPageState extends State<DownloadsPage> {
                       ),
                     ),
                   ] else ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      widget.store.preferences.cellularDownloads
-                          ? '允许移动数据下载'
-                          : '仅 Wi-Fi 下载 · 无 Wi-Fi 时任务等待网络',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          for (final filter in _TaskFilter.values)
-                            Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: ChoiceChip(
-                                label: Text(
-                                  '${filter.label} ${view.counts[filter]}',
-                                ),
-                                selected: _filter == filter,
-                                onSelected: _locked
-                                    ? null
-                                    : (_) => setState(() {
-                                        _defaultFilterSet = true;
-                                        _filter = filter;
-                                        _selected.clear();
-                                      }),
-                              ),
-                            ),
-                        ],
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        widget.store.preferences.cellularDownloads
+                            ? '允许移动数据下载'
+                            : '仅 Wi-Fi 下载 · 无 Wi-Fi 时任务等待网络',
+                        style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ),
                     if (_focusedDrama != null)
@@ -522,58 +732,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
                         ),
                       ),
                   ],
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _selecting
-                              ? '已选 ${chosen.length} 集 · ${_size(chosen)}'
-                              : '${groups.length} 部剧',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ),
-                      PopupMenuButton<_Sort>(
-                        tooltip: '排序',
-                        enabled: !_locked,
-                        initialValue: _sort,
-                        onSelected: (value) => setState(() => _sort = value),
-                        itemBuilder: (_) => [
-                          for (final sort in const [
-                            _Sort.largest,
-                            _Sort.recent,
-                            _Sort.title,
-                          ])
-                            PopupMenuItem(value: sort, child: Text(sort.label)),
-                        ],
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(_sort.label),
-                              const Icon(Icons.arrow_drop_down),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
                   if (_selecting) _selectionActions(entries, chosen),
-                  if (!_selecting && !_space && retryable.isNotEmpty)
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: TextButton.icon(
-                        onPressed: _locked
-                            ? null
-                            : () => _batch(
-                                retryable,
-                                widget.downloads.retry,
-                                '重试',
-                              ),
-                        icon: const Icon(Icons.refresh),
-                        label: Text('重试失败任务 (${retryable.length})'),
-                      ),
-                    ),
                   if ((_busy && !_confirming) ||
                       _openingEntry != null ||
                       widget.downloads.measuringUsage)
@@ -626,8 +785,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
                 itemCount: items.length,
                 itemBuilder: (_, index) => switch (items[index]) {
                   final DownloadEntry entry => _entry(entry),
-                  final _DownloadGroup group =>
-                    _space ? _storageGroup(group) : _group(group),
+                  final _DownloadGroup group => _group(group),
                   _ => const SizedBox.shrink(),
                 },
               ),
@@ -702,97 +860,127 @@ class _DownloadsPageState extends State<DownloadsPage> {
     onChanged: _locked ? null : (_) => _toggleGroup(episodes),
   );
 
-  Widget _storageGroup(_DownloadGroup group) {
-    final episodes = group.entries;
+  Widget _group(_DownloadGroup group) {
+    final episodes = group.entries.where(_visible).toList();
     final drama = group.drama;
+    final playback = _localPlayback(group);
+    final retryable = group.entries.where((e) => e.canRetry).toList();
+    final expanded = !_space && _expanded.contains(drama.key);
     return Card(
-      key: ValueKey('storage-${drama.key}'),
+      key: ValueKey('download-${drama.key}'),
       margin: const EdgeInsets.only(bottom: 10),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onLongPress: _locked ? null : () => _toggleGroup(episodes),
         onTap: _locked
             ? null
-            : () {
-                if (_selecting) {
-                  _toggleGroup(episodes);
-                } else {
-                  setState(() {
-                    _space = false;
-                    _focusedDrama = drama.key;
-                    _filter = _TaskFilter.all;
-                  });
-                }
-              },
+            : _selecting
+            ? () => _toggleGroup(episodes)
+            : null,
         child: Padding(
           padding: const EdgeInsets.all(12),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (_selecting) _groupCheckbox(episodes),
-              SizedBox(width: 54, height: 76, child: Poster(drama, radius: 8)),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              Row(
+                children: [
+                  if (_selecting) _groupCheckbox(episodes),
+                  SizedBox(
+                    width: 54,
+                    height: 76,
+                    child: Poster(drama, radius: 8),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          drama.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${drama.source.label} · ${group.entries.length} 集下载 · ${group.size}',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          group.status,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (!_selecting) ...[
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Text(
-                      drama.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${drama.source.label} · 已完成 ${group.completed}/${episodes.length} 集',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      group.size,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: Theme.of(context).colorScheme.primary,
+                    if (!_space && playback.entry != null)
+                      FilledButton.tonalIcon(
+                        key: ValueKey('download-play-${drama.key}'),
+                        onPressed: _locked
+                            ? null
+                            : () => _play(playback.entry!),
+                        icon: _openingEntry == playback.entry!.id
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  semanticsLabel: '正在检查视频',
+                                ),
+                              )
+                            : const Icon(Icons.play_arrow_rounded),
+                        label: Text(playback.label),
                       ),
+                    TextButton.icon(
+                      onPressed: _locked ? null : () => _showEpisodes(group),
+                      icon: Icon(
+                        expanded ? Icons.expand_less : Icons.expand_more,
+                      ),
+                      label: Text(expanded ? '收起分集' : '查看分集'),
                     ),
+                    if (!_space && retryable.isNotEmpty)
+                      TextButton.icon(
+                        onPressed: _locked
+                            ? null
+                            : () => _batch(
+                                retryable,
+                                widget.downloads.retry,
+                                '重试',
+                              ),
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: Text('重试失败 (${retryable.length})'),
+                      ),
+                    if (_space)
+                      IconButton(
+                        tooltip: '删除整部剧下载',
+                        onPressed: _locked
+                            ? null
+                            : () => _remove(group.entries),
+                        icon: const Icon(Icons.delete_outline),
+                      )
+                    else
+                      IconButton(
+                        tooltip: '查看剧集详情',
+                        onPressed: _locked ? null : () => widget.onOpen(drama),
+                        icon: const Icon(Icons.info_outline_rounded),
+                      ),
                   ],
                 ),
-              ),
-              if (!_selecting)
-                IconButton(
-                  tooltip: '删除整部剧下载',
-                  onPressed: _locked ? null : () => _remove(episodes),
-                  icon: const Icon(Icons.delete_outline),
-                ),
+              ],
             ],
           ),
         ),
       ),
-    );
-  }
-
-  Widget _group(_DownloadGroup group) {
-    final episodes = group.entries;
-    final drama = group.drama;
-    final collapsed = _collapsed.contains(drama.key);
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: _selecting ? _groupCheckbox(episodes) : null,
-      title: Text(
-        drama.title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontWeight: FontWeight.w700),
-      ),
-      subtitle: Text(
-        '${drama.source.label} · ${episodes.length} 集 · ${group.size}',
-      ),
-      trailing: Icon(collapsed ? Icons.expand_more : Icons.expand_less),
-      onTap: _locked
-          ? null
-          : () => setState(() {
-              if (!_collapsed.add(drama.key)) _collapsed.remove(drama.key);
-            }),
-      onLongPress: _locked ? null : () => widget.onOpen(drama),
     );
   }
 
