@@ -22,9 +22,12 @@ import 'widget_test.dart' show NoNetwork;
 class LocalDownloads extends DownloadStore {
   LocalDownloads(super.store);
   bool available = true;
+  Completer<void>? fileGate;
   @override
-  Future<String?> localFile(Drama drama, Episode episode) async =>
-      available ? '/tmp/cast-${episode.id}.mp4' : null;
+  Future<String?> localFile(Drama drama, Episode episode) async {
+    await fileGate?.future;
+    return available ? '/tmp/cast-${episode.id}.mp4' : null;
+  }
 }
 
 class AirPlayFixtureProvider extends NoNetwork {
@@ -423,6 +426,48 @@ void main() {
     expect(find.byTooltip('播放').hitTestable(), findsOneWidget);
     await unmount(tester);
   });
+
+  for (final stage in ['preparing', 'seeking', 'failed']) {
+    testWidgets(
+      'background save during AirPlay return keeps the remote position: $stage',
+      (tester) async {
+        installAirPlay();
+        final (native, _, _, store, downloads) = await mount(
+          tester,
+          airPlayChannel: airPlayChannel,
+        );
+        await tester.tap(find.byTooltip('AirPlay'));
+        await tester.pumpAndSettle();
+        await emitAirPlay(index: 1, playing: false);
+        await tester.pumpAndSettle();
+        final gate = Completer<void>();
+        if (stage == 'seeking') {
+          native.seekGate = gate;
+        } else {
+          downloads.fileGate = gate;
+        }
+        if (stage == 'failed') {
+          downloads.available = false;
+          store.offline = true;
+        }
+        await emitAirPlay(index: 1, playing: false, closed: true);
+        await tester.pump();
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await tester.pump();
+        final duringReturn = store.records.history['hongguo:fixture']!;
+        gate.complete();
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pumpAndSettle();
+        await unmount(tester);
+        expect(duringReturn.episodeId, 'two');
+        expect(duringReturn.episodeIndex, 9);
+        expect(duringReturn.positionMs, 42000);
+        expect(store.records.history['hongguo:fixture']!.positionMs, 42000);
+      },
+    );
+  }
 
   for (final ended in [true, false]) {
     testWidgets(

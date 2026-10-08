@@ -61,6 +61,10 @@
 
 `player_transport.dart` 和 `player_sheets.dart` 负责进度/倍速控件及选集、相关剧集、更多操作的展示。它们通过回调报告用户操作，不持有媒体资源。
 
+`PlaybackProgressController` 保存当前分集身份、播完状态、记录快照和统一的十秒周期提交间隔；切集、后台、退出、重播和投屏交接仍立即提交。页面提供确认播完事件和当前播放设备的位置，控制器在提交时固定分集 ID、原始位置和真实集号，再交给 `RecordStore` 的既有写入队列。
+
+AirPlay 返回手机期间，观看记录继续采用原生队列的分集和位置，直到手机恢复完成；旧手机源先解除当前播放身份。准备或恢复定位期间进入后台，以及恢复失败后退出，都不能把旧手机位置写到当前 AirPlay 分集。
+
 `PlayerPage` 继续协调既有播放、恢复、生命周期和独立投屏会话；本轮没有合并 AirPlay 与手机播放器，也没有删除设备兼容、失败回退和换集资源保留逻辑。
 
 ## 回归测试
@@ -74,6 +78,7 @@
 - `test/download_initialization_test.dart`：清单先呈现、恢复期间修改保护、失败重试、损坏清单保留文件、未就绪的网络规则与初始化期间释放。
 - `test/watch_resume_test.dart`：按 ID 计算下一集、完结/连载/未知状态与目录更新后的续播恢复。
 - `test/episode_queue_test.dart`、`test/offline_episode_gap_test.dart`：原始位置相邻判断、缺集时本地/PiP/AirPlay 停止自动连播、连续下载与手动跳集、重播/回退后清除提示。
+- `test/playback_progress_test.dart`、`test/player_cast_handoff_test.dart`：进度提交节流、记录快照身份、写入失败后重试，以及 AirPlay 返回期间准备/定位阻塞和失败时的进度归属。
 - `test/continue_and_range_test.dart`：非连续原始集号展示、追剧续播来源筛选、播完状态展示、离线缺集与下载范围。
 - 原有分区存储、备份、更新提醒、请求取消、播放器交接和 PiP 测试继续保留。
 
