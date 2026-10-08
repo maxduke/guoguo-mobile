@@ -37,9 +37,11 @@ class _SettingsPageState extends State<SettingsPage> {
 
   bool _clearing = false;
   bool _backingUp = false;
+  bool _exchangingLibrary = false;
+  bool get _fileBusy => _backingUp || _exchangingLibrary;
 
   Future<void> _backup(BuildContext context, {required bool importing}) async {
-    if (_backingUp) return;
+    if (_fileBusy) return;
     setState(() => _backingUp = true);
     try {
       if (importing) {
@@ -58,6 +60,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ? const Rect.fromLTWH(0, 0, 1, 1)
         : box.localToGlobal(Offset.zero) & box.size;
     final directory = await getTemporaryDirectory();
+    if (!context.mounted) return;
     final file = File('${directory.path}/guoguo-records.json');
     await file.writeAsString(store.records.exportBackup(), flush: true);
     if (!context.mounted) return;
@@ -75,12 +78,13 @@ class _SettingsPageState extends State<SettingsPage> {
       type: FileType.custom,
       allowedExtensions: ['json'],
     );
-    if (selected == null) return;
+    if (selected == null || !context.mounted) return;
     final length = await selected.length();
     if (length == null || length > 20 * 1024 * 1024) {
       throw const UserInputException('备份文件超过 20 MB 或无法读取大小');
     }
     final bytes = await selected.readAsBytes();
+    if (!context.mounted) return;
     final String raw;
     try {
       raw = utf8.decode(bytes);
@@ -93,6 +97,7 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('合并记录备份'),
+        scrollable: true,
         content: Text(
           '备份包含 ${backup.favorites.length} 部收藏、${backup.history.length} 条观看记录、${backup.seasonReminders.length} 项新季提醒。\n\n收藏会去重，观看记录与新季提醒保留时间较新的一份。现有视频不会改变。',
         ),
@@ -118,20 +123,20 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  bool _exchangingLibrary = false;
   Future<void> _library(BuildContext context, {required bool importing}) async {
-    if (_exchangingLibrary) return;
+    if (_fileBusy) return;
     setState(() => _exchangingLibrary = true);
     final exchange = LibraryExchange(store);
     File? copied;
     try {
       final directory = await getTemporaryDirectory();
+      if (!context.mounted) return;
       if (importing) {
         final selected = await FilePicker.pickFile(
           type: FileType.custom,
           allowedExtensions: ['json', 'xz'],
         );
-        if (selected == null) return;
+        if (selected == null || !context.mounted) return;
         final length = await selected.length();
         if (length == null || length > LibraryExchange.maxBytes) {
           throw const UserInputException('剧库文件超过 32 MB 或无法读取');
@@ -159,6 +164,7 @@ class _SettingsPageState extends State<SettingsPage> {
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('合并剧库'),
+            scrollable: true,
             content: Text(
               '可导入 ${preview.items.length} 部剧集；跳过 ${preview.skipped} 条不支持站源和 ${preview.rejected} 条无效记录。\n\n按剧集身份补全资料，保留现有条目，不包含视频文件。',
             ),
@@ -220,42 +226,41 @@ class _SettingsPageState extends State<SettingsPage> {
           child: ListView(
             padding: const EdgeInsets.all(22),
             children: [
-              _heading(context, '舒服地看'),
+              _heading(context, '外观'),
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
-                      const Text('外观'),
-                      const SizedBox(height: 14),
-                      SegmentedButton<ThemeMode>(
-                        segments: const [
-                          ButtonSegment(
-                            value: ThemeMode.light,
-                            icon: Icon(Icons.light_mode_outlined),
-                            label: Text('浅色'),
-                          ),
-                          ButtonSegment(
-                            value: ThemeMode.dark,
-                            icon: Icon(Icons.dark_mode_outlined),
-                            label: Text('深色'),
-                          ),
-                          ButtonSegment(
-                            value: ThemeMode.system,
-                            label: Text('跟随系统'),
-                          ),
-                        ],
-                        selected: {store.preferences.themeMode},
-                        onSelectionChanged: (v) => perform(
-                          context,
-                          () => store.preferences.setTheme(v.first),
+                      for (final mode in [
+                        ThemeMode.light,
+                        ThemeMode.dark,
+                        ThemeMode.system,
+                      ])
+                        ChoiceChip(
+                          label: Text(switch (mode) {
+                            ThemeMode.light => '浅色',
+                            ThemeMode.dark => '深色',
+                            ThemeMode.system => '跟随系统',
+                          }),
+                          selected: store.preferences.themeMode == mode,
+                          onSelected: (selected) {
+                            if (selected) {
+                              perform(
+                                context,
+                                () => store.preferences.setTheme(mode),
+                              );
+                            }
+                          },
                         ),
-                      ),
                     ],
                   ),
                 ),
               ),
+              const SizedBox(height: 24),
+              _heading(context, '播放与网络'),
               Card(
                 child: Column(
                   children: [
@@ -297,89 +302,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ),
               const SizedBox(height: 24),
-              _heading(context, '把喜欢的故事带走'),
-              Card(
-                child: Column(
-                  children: [
-                    ListTile(
-                      leading: const Icon(Icons.ios_share),
-                      title: const Text('导出记录备份'),
-                      subtitle: const Text('收藏、观看历史和新季提醒，不含视频文件'),
-                      trailing: const Icon(Icons.chevron_right),
-                      enabled: !_backingUp,
-                      onTap: () => perform(
-                        context,
-                        () => _backup(context, importing: false),
-                        failureMessage: '备份导出失败，请检查可用空间后重试',
-                      ),
-                    ),
-                    const Divider(height: 1, indent: 56),
-                    ListTile(
-                      leading: const Icon(Icons.restore_page_outlined),
-                      title: const Text('导入记录备份'),
-                      subtitle: const Text('先预览，再合并到当前设备'),
-                      trailing: const Icon(Icons.chevron_right),
-                      enabled: !_backingUp,
-                      onTap: () => perform(
-                        context,
-                        () => _backup(context, importing: true),
-                        failureMessage: '备份导入失败，原记录未修改，请稍后重试',
-                      ),
-                    ),
-                    if (_backingUp) const LinearProgressIndicator(),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              _heading(context, '剧库互通'),
-              Card(
-                child: Column(
-                  children: [
-                    ListTile(
-                      leading: const Icon(Icons.library_add_outlined),
-                      title: const Text('导入剧库 JSON / XZ'),
-                      subtitle: const Text('先预览，再补全现有剧集资料'),
-                      enabled: !_exchangingLibrary,
-                      onTap: () => perform(
-                        context,
-                        () => _library(context, importing: true),
-                        failureMessage: '剧库导入失败，请检查文件后重试',
-                      ),
-                    ),
-                    const Divider(height: 1, indent: 56),
-                    ListTile(
-                      leading: const Icon(Icons.ios_share),
-                      title: const Text('导出剧库 XZ'),
-                      subtitle: const Text('供果果与真果·鉴互通，不包含视频'),
-                      enabled: !_exchangingLibrary,
-                      onTap: () => perform(
-                        context,
-                        () => _library(context, importing: false),
-                        failureMessage: '剧库导出失败，请检查可用空间后重试',
-                      ),
-                    ),
-                    if (_exchangingLibrary) const LinearProgressIndicator(),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              _heading(context, '播放体验'),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.speed_rounded),
-                  title: const Text('播放诊断'),
-                  subtitle: const Text('查看本地准备与开播耗时'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute<void>(
-                      builder: (_) => PlaybackDiagnosticsPage(store: store),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              _heading(context, '设备空间'),
+              _heading(context, '存储'),
               Card(
                 child: Column(
                   children: [
@@ -425,7 +348,57 @@ class _SettingsPageState extends State<SettingsPage> {
                   ],
                 ),
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
+              _heading(context, '记录备份'),
+              Card(
+                child: Column(
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.ios_share),
+                      title: const Text('导出记录备份'),
+                      subtitle: const Text('收藏、观看历史和新季提醒，不含视频文件'),
+                      trailing: const Icon(Icons.chevron_right),
+                      enabled: !_fileBusy,
+                      onTap: () => perform(
+                        context,
+                        () => _backup(context, importing: false),
+                        failureMessage: '备份导出失败，请检查可用空间后重试',
+                      ),
+                    ),
+                    const Divider(height: 1, indent: 56),
+                    ListTile(
+                      leading: const Icon(Icons.restore_page_outlined),
+                      title: const Text('导入记录备份'),
+                      subtitle: const Text('先预览，再合并到当前设备'),
+                      trailing: const Icon(Icons.chevron_right),
+                      enabled: !_fileBusy,
+                      onTap: () => perform(
+                        context,
+                        () => _backup(context, importing: true),
+                        failureMessage: '备份导入失败，原记录未修改，请稍后重试',
+                      ),
+                    ),
+                    if (_backingUp) const LinearProgressIndicator(),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              _heading(context, '关于与支持'),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.speed_rounded),
+                  title: const Text('问题反馈与诊断'),
+                  subtitle: const Text('复制播放诊断，用于反馈问题'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => PlaybackDiagnosticsPage(store: store),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
               Center(
                 child: FutureBuilder<PackageInfo>(
                   future: _packageInfo,
@@ -444,6 +417,52 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ),
               const SizedBox(height: 24),
+              Card(
+                child: ExpansionTile(
+                  title: const Text('高级工具'),
+                  subtitle: const Text('播放实验与剧库互通'),
+                  leading: const Icon(Icons.handyman_outlined),
+                  children: [
+                    SwitchListTile(
+                      title: const Text('提前开播（实验）'),
+                      subtitle: const Text(
+                        '从头看部分视频时可边准备边播，缓冲范围逐步增加。续播、手动画中画和投屏等待完整准备。',
+                      ),
+                      value: store.preferences.progressivePreparation,
+                      onChanged: (value) => perform(
+                        context,
+                        () => store.preferences.setPlayback(progressive: value),
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.library_add_outlined),
+                      title: const Text('导入剧库 JSON / XZ'),
+                      subtitle: const Text('先预览，再补全现有剧集资料'),
+                      enabled: !_fileBusy,
+                      onTap: () => perform(
+                        context,
+                        () => _library(context, importing: true),
+                        failureMessage: '剧库导入失败，请检查文件后重试',
+                      ),
+                    ),
+                    const Divider(height: 1, indent: 56),
+                    ListTile(
+                      leading: const Icon(Icons.ios_share),
+                      title: const Text('导出剧库 XZ'),
+                      subtitle: const Text('供果果与真果·鉴互通，不包含视频'),
+                      enabled: !_fileBusy,
+                      onTap: () => perform(
+                        context,
+                        () => _library(context, importing: false),
+                        failureMessage: '剧库导出失败，请检查可用空间后重试',
+                      ),
+                    ),
+                    if (_exchangingLibrary) const LinearProgressIndicator(),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
             ],
           ),
         ),
@@ -452,6 +471,9 @@ class _SettingsPageState extends State<SettingsPage> {
   );
   Widget _heading(BuildContext context, String title) => Padding(
     padding: const EdgeInsets.only(left: 4, bottom: 10),
-    child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+    child: Semantics(
+      header: true,
+      child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+    ),
   );
 }
