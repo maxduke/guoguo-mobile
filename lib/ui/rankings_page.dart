@@ -1,26 +1,11 @@
 import 'package:flutter/material.dart';
 import '../data/app_store.dart';
+import '../data/discovery_cache.dart';
+import '../domain/discovery.dart';
+import '../platform/provider_client.dart';
 import '../domain/models.dart';
 import 'components.dart';
-
-class _RankingBoard {
-  const _RankingBoard(this.id, this.name);
-  final String id, name;
-
-  factory _RankingBoard.fromJson(Map<String, dynamic> value) =>
-      _RankingBoard(value['id'] as String, value['name'] as String);
-}
-
-class _RankingRow {
-  const _RankingRow(this.drama, this.rank);
-  final Drama drama;
-  final int rank;
-
-  factory _RankingRow.fromJson(Map<String, dynamic> value) => _RankingRow(
-    Drama.fromJson(Map<String, dynamic>.from(value['drama'] as Map)),
-    value['rank'] as int? ?? 0,
-  );
-}
+import 'discovery_cache_status.dart';
 
 class RankingsPage extends StatefulWidget {
   const RankingsPage({super.key, required this.store, required this.onOpen});
@@ -31,45 +16,100 @@ class RankingsPage extends StatefulWidget {
 }
 
 class _RankingsPageState extends State<RankingsPage> {
-  late final DramaSource source = widget.store.catalog.source;
-  List<_RankingBoard> boards = const [];
-  List<_RankingRow> rows = const [];
+  late DramaSource source = widget.store.catalog.source;
+  List<DiscoveryBoard> boards = const [];
+  List<DiscoveryRow> rows = const [];
   String? selected, error, warning;
-  String kind = "ranking", description = "";
+  DiscoveryKind kind = DiscoveryKind.ranking;
+  String description = '';
+  DateTime? updatedAt;
+  bool cachedOnly = false, failedBoards = false;
   bool loading = false, hasMore = false;
   bool? failedMore;
   int page = 1, generation = 0;
   @override
   void initState() {
     super.initState();
+    _restoreBoards();
     _loadBoards();
+  }
+
+  @override
+  void didUpdateWidget(RankingsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store == widget.store) return;
+    generation++;
+    source = widget.store.catalog.source;
+    _restoreBoards();
+    _loadBoards();
+  }
+
+  void _restoreBoards() {
+    boards =
+        widget.store.catalog.discoveryCache.boards(source)?.boards ?? const [];
+    selected = boards.isEmpty ? null : boards.first.id;
+    _restoreColumn();
+  }
+
+  void _restoreColumn() {
+    final cached = selected == null
+        ? null
+        : widget.store.catalog.discoveryCache.ranking(source, selected!);
+    rows = cached?.rows ?? const [];
+    updatedAt = cached?.savedAt;
+    cachedOnly = cached != null;
+    kind = cached?.kind ?? DiscoveryKind.ranking;
+    description = cached?.description ?? '';
+    warning = cached?.warning;
+    page = 1;
+    hasMore = false;
+    loading = false;
+    error = null;
+    failedMore = null;
+    failedBoards = false;
   }
 
   Future<void> _loadBoards() async {
     if (!mounted || loading) return;
     final request = ++generation;
+    final requestStore = widget.store;
+    final requestSource = source;
     setState(() {
       loading = true;
       error = null;
+      failedBoards = false;
     });
     try {
-      final result = await widget.store.provider.call('boards', {
-        'source': source.name,
+      final result = await requestStore.provider.call('boards', {
+        'source': requestSource.name,
       });
       if (!mounted || request != generation) return;
-      final incoming = List<_RankingBoard>.unmodifiable(
+      final incoming = List<DiscoveryBoard>.unmodifiable(
         (result['items'] as List).map(
-          (v) => _RankingBoard.fromJson(Map<String, dynamic>.from(v as Map)),
+          (v) => DiscoveryBoard.fromJson(v as Map, requestSource),
         ),
       );
+      await requestStore.catalog.saveDiscoveryBoards(requestSource, incoming);
+      if (!mounted || request != generation) return;
       setState(() {
         boards = incoming;
         loading = false;
       });
-      if (boards.isNotEmpty) _selectBoard(boards.first.id);
+      if (boards.isNotEmpty) {
+        final board = boards.any((board) => board.id == selected)
+            ? selected!
+            : boards.first.id;
+        _selectBoard(board, refresh: true);
+      } else {
+        setState(() {
+          selected = null;
+          _restoreColumn();
+        });
+      }
     } catch (_) {
       if (mounted && request == generation) {
         setState(() {
+          failedBoards = true;
           error = '榜单列表暂时无法加载，请重试';
         });
       }
@@ -78,55 +118,78 @@ class _RankingsPageState extends State<RankingsPage> {
     }
   }
 
-  void _selectBoard(String board) {
-    if (!mounted || board == selected) return;
+  void _selectBoard(String board, {bool refresh = false}) {
+    if (!mounted || (!refresh && board == selected)) return;
     setState(() {
       selected = board;
-      rows = const [];
-      page = 1;
-      hasMore = false;
-      kind = 'ranking';
-      description = '';
-      warning = null;
-      loading = false;
+      _restoreColumn();
     });
     _load();
   }
 
-  Future<void> _retry() =>
-      selected == null ? _loadBoards() : _load(more: failedMore ?? false);
+  Future<void> _retry() => failedBoards || selected == null
+      ? _loadBoards()
+      : _load(more: failedMore ?? false);
 
   Future<void> _load({bool more = false}) async {
     final board = selected;
-    if (!mounted || board == null || loading || (more && !hasMore)) return;
+    if (!mounted ||
+        board == null ||
+        loading ||
+        (more && (!hasMore || cachedOnly))) {
+      return;
+    }
     final request = ++generation;
+    final requestStore = widget.store;
+    final requestSource = source;
     final nextPage = more ? page + 1 : 1;
-    final previous = more ? rows : const <_RankingRow>[];
+    final previous = more ? rows : const <DiscoveryRow>[];
     setState(() {
       loading = true;
       error = null;
       failedMore = null;
     });
     try {
-      final result = await widget.store.provider.call('ranking', {
+      if (requestStore.offline) throw const ProviderException('当前离线');
+      final result = await requestStore.provider.call('ranking', {
         'board': board,
         'page': nextPage,
       });
       if (!mounted || request != generation) return;
       final incoming = (result['items'] as List)
-          .map((v) => _RankingRow.fromJson(Map<String, dynamic>.from(v as Map)))
+          .map(
+            (v) => DiscoveryRow.fromJson(Map<String, dynamic>.from(v as Map)),
+          )
           .toList();
-      final nextKind = result['kind'] as String? ?? 'ranking';
+      if (incoming.any((row) => row.drama.source != requestSource)) {
+        throw const FormatException('栏目站源不匹配');
+      }
+      final nextKind = DiscoveryKind.parse(result['kind']);
       final nextDescription = result['description'] as String? ?? '';
       final nextWarning = result['warning'] as String?;
       final nextHasMore = result['hasMore'] as bool? ?? false;
-      final nextRows = List<_RankingRow>.unmodifiable(
+      final nextRows = List<DiscoveryRow>.unmodifiable(
         {
           for (final row in [...previous, ...incoming]) row.drama.key: row,
         }.values,
       );
+      final fetchedAt = requestStore.now();
+      await requestStore.catalog.saveRankingColumn(
+        requestSource,
+        board,
+        CachedDiscoveryColumn(
+          nextRows,
+          savedAt: fetchedAt,
+          kind: nextKind,
+          description: nextDescription,
+          warning: nextWarning,
+        ),
+      );
+      if (!mounted || request != generation) return;
       setState(() {
         rows = nextRows;
+        updatedAt = fetchedAt;
+        cachedOnly = false;
         hasMore = nextHasMore;
         kind = nextKind;
         description = nextDescription;
@@ -137,7 +200,9 @@ class _RankingsPageState extends State<RankingsPage> {
       if (mounted && request == generation) {
         setState(() {
           failedMore = more;
-          error = rows.isEmpty
+          error = requestStore.offline
+              ? '当前离线，联网后可重试栏目'
+              : rows.isEmpty
               ? '榜单暂时无法加载，请重试'
               : more
               ? '更多榜单内容暂时无法加载，已保留现有内容'
@@ -197,6 +262,8 @@ class _RankingsPageState extends State<RankingsPage> {
                 ),
                 child: Text(description),
               ),
+            if (updatedAt != null)
+              DiscoveryCacheStatus(savedAt: updatedAt!, cached: cachedOnly),
             if (loading) const LinearProgressIndicator(),
             if (warning != null)
               Padding(padding: const EdgeInsets.all(16), child: Text(warning!)),
@@ -267,7 +334,8 @@ class _RankingsPageState extends State<RankingsPage> {
                                         fit: StackFit.expand,
                                         children: [
                                           Poster(drama, radius: 10),
-                                          if (kind == "ranking" && row.rank > 0)
+                                          if (kind == DiscoveryKind.ranking &&
+                                              row.rank > 0)
                                             Positioned(
                                               top: 0,
                                               left: 0,
