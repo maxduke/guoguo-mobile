@@ -22,9 +22,11 @@ import 'widget_test.dart' show NoNetwork;
 class LocalDownloads extends DownloadStore {
   LocalDownloads(super.store);
   bool available = true;
+  int lookups = 0;
   Completer<void>? fileGate;
   @override
   Future<String?> localFile(Drama drama, Episode episode) async {
+    lookups++;
     await fileGate?.future;
     return available ? '/tmp/cast-${episode.id}.mp4' : null;
   }
@@ -203,7 +205,8 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.pump(const Duration(seconds: 1));
-    await tester.tapAt(const Offset(400, 300));
+    // Toggle chrome away from the centered playback notice and its actions.
+    await tester.tapAt(const Offset(700, 150));
     await tester.pumpAndSettle();
     return (native, receiver, relay, store, downloads);
   }
@@ -225,11 +228,15 @@ void main() {
   const airPlayChannel = MethodChannel('guoguo/airplay');
   final airPlayCalls = <MethodCall>[];
   bool external = false;
+  bool failAirPlayClose = false;
+  Completer<void>? airPlayRouteGate, airPlayCloseGate;
   String? airPlayIdentity;
   int airPlaySequence = 0;
   void installAirPlay({bool selected = false}) {
     airPlayCalls.clear();
     external = selected;
+    failAirPlayClose = false;
+    airPlayRouteGate = airPlayCloseGate = null;
     airPlayIdentity = null;
     airPlaySequence = 0;
     final messenger =
@@ -237,6 +244,14 @@ void main() {
     messenger.setMockMethodCallHandler(airPlayChannel, (call) async {
       airPlayCalls.add(call);
       if (call.method == 'getState') return {'routed': external};
+      if (call.method == 'showRoutes') await airPlayRouteGate?.future;
+      if (call.method == 'close') await airPlayCloseGate?.future;
+      if (call.method == 'close' && failAirPlayClose) {
+        throw PlatformException(
+          code: 'airplay_close',
+          message: 'private failure',
+        );
+      }
       if (call.method == 'open') {
         airPlayIdentity = (call.arguments as Map)['sessionId'] as String;
       }
@@ -569,6 +584,123 @@ void main() {
       await emitAirPlay(global: true);
       await tester.pumpAndSettle();
       expect(native.plays, 1);
+      await unmount(tester);
+    },
+  );
+
+  testWidgets(
+    'native route rejection offers route selection and resumes after switching back',
+    (tester) async {
+      installAirPlay(selected: true);
+      final (native, _, _, _, _) = await mount(
+        tester,
+        airPlayChannel: airPlayChannel,
+        configureNative: (native) => native.beforeSource = (_) {
+          if (external) {
+            throw PlatformException(
+              code: 'airplay_route',
+              message: 'private native details',
+            );
+          }
+        },
+      );
+      expect(native.plays, 0);
+      expect(find.text('重试'), findsNothing);
+      await tester.tap(find.byKey(const Key('airPlayChooseRoute')));
+      await tester.pumpAndSettle();
+      expect(airPlayCalls.last.method, 'showRoutes');
+      external = false;
+      await emitAirPlay(global: true);
+      await tester.pumpAndSettle();
+      expect(native.sources, hasLength(1));
+      expect(native.plays, 1);
+      expect(find.byKey(const Key('airPlayChooseRoute')), findsNothing);
+      await unmount(tester);
+    },
+  );
+
+  testWidgets('failed AirPlay return offers an effective return retry', (
+    tester,
+  ) async {
+    installAirPlay();
+    final (native, _, relay, store, _) = await mount(
+      tester,
+      airPlayChannel: airPlayChannel,
+      autoAdvance: false,
+    );
+    await tester.tap(find.byTooltip('AirPlay'));
+    await tester.pumpAndSettle();
+    failAirPlayClose = true;
+    await emitAirPlay(closed: true, playing: false);
+    await tester.pumpAndSettle();
+    expect(relay.closes, 0);
+    expect(find.text('重试'), findsNothing);
+    expect(find.text('重试返回手机'), findsOneWidget);
+    failAirPlayClose = false;
+    final gate = airPlayCloseGate = Completer<void>();
+    addTearDown(() {
+      if (!gate.isCompleted) gate.complete();
+    });
+    await tester.tap(find.text('重试返回手机'));
+    await tester.pump();
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, '正在返回手机…'))
+          .onPressed,
+      isNull,
+    );
+    await tester.tap(find.text('正在返回手机…'));
+    await tester.pump();
+    expect(airPlayCalls.where((call) => call.method == 'close'), hasLength(2));
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(native.seeks.last, 42000);
+    expect(store.records.history['hongguo:fixture']!.positionMs, 42000);
+    expect(relay.closes, 1);
+    await unmount(tester);
+  });
+
+  testWidgets(
+    'route selection blocks duplicate opens and handles native failure',
+    (tester) async {
+      installAirPlay(selected: true);
+      await mount(tester, airPlayChannel: airPlayChannel);
+      final gate = airPlayRouteGate = Completer<void>();
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete();
+      });
+      final choose = tester
+          .widget<FilledButton>(find.byKey(const Key('airPlayChooseRoute')))
+          .onPressed!;
+      choose();
+      choose();
+      await tester.pump();
+      expect(
+        airPlayCalls.where((call) => call.method == 'showRoutes'),
+        hasLength(1),
+      );
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const Key('airPlayChooseRoute')))
+            .onPressed,
+        isNull,
+      );
+      gate.completeError(
+        PlatformException(
+          code: 'airplay_busy',
+          message: 'private native details',
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('无法打开 AirPlay 设备选择，请稍后再试'), findsOneWidget);
+      expect(find.textContaining('private native details'), findsNothing);
+      airPlayRouteGate = null;
+      await tester.tap(find.byKey(const Key('airPlayChooseRoute')));
+      await tester.pumpAndSettle();
+      expect(
+        airPlayCalls.where((call) => call.method == 'showRoutes'),
+        hasLength(2),
+      );
       await unmount(tester);
     },
   );

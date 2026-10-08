@@ -1,5 +1,6 @@
 import 'player_sheets.dart';
 import 'player_transport.dart';
+import 'player_notice.dart';
 import 'throttled_builder.dart';
 import 'detail_page.dart';
 
@@ -24,9 +25,9 @@ import '../domain/models.dart';
 import '../domain/episode_queue.dart';
 import '../domain/playback_diagnostic.dart';
 import '../domain/playback_policy.dart';
-import '../platform/episode_buffer.dart' show EpisodeCancelled;
 import '../platform/playback_session.dart';
 import '../platform/playback_progress.dart';
+import '../platform/playback_failure.dart';
 import '../platform/playback_recovery.dart';
 import '../platform/playback_lifecycle.dart';
 import '../platform/media_preparer.dart';
@@ -84,6 +85,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   AirPlaySession? _airplay;
   bool _airPlayReturning = false, _airPlayReturnPending = false;
   bool _airPlayOpening = false, _wasAirPlayBlocked = false;
+  bool _choosingAirPlayRoute = false;
   bool _airPlayResumePlaying = false;
   PlaybackSessionController? _airPlayMedia;
   bool get _localBlocked =>
@@ -129,7 +131,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   bool get _pipActive => _lifecycle.pipActive;
   bool _modal = false, _scrubbing = false;
   double _speed = 1;
-  String? _error;
+  PlaybackFailure? _error;
   String _loadingPhase = '正在查找本地视频…';
   PlaybackAttempt? _attempt;
 
@@ -466,22 +468,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _schedulePrefetch();
     } catch (error) {
       if (mounted && generation == _generation) {
+        final failure = PlaybackFailure.from(error);
         _finishAttempt(
-          error is EpisodeCancelled
+          failure.kind == PlaybackFailureKind.cancelled
               ? PlaybackResult.cancelled
               : PlaybackResult.failed,
         );
         setState(() {
           _loading = false;
-          _error = error is EpisodeCancelled
-              ? '准备已取消，请重试'
-              : error is PlatformException && error.code == 'airplay_route'
-              ? 'AirPlay 仍连接电视，请切回 iPhone 后播放'
-              : '$error';
+          _error = failure;
         });
-        if (error is PlatformException && error.code == 'airplay_route') {
-          await _airplay?.refreshRoute();
-        } else if (error is! EpisodeCancelled && error is! CastCancelled) {
+        if (failure.kind == PlaybackFailureKind.airPlayRoute) {
+          await _airplay?.refreshRoute().catchError((Object _) {});
+        } else if (failure.autoRecover) {
           unawaited(_recover());
         }
       }
@@ -505,7 +504,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     bool play = true,
     Duration? savedPosition,
   }) async {
-    if (_localBlocked || _recovering && !automatic) return;
+    if (_localBlocked || !automatic && (_loading || _recovering)) return;
     if (!automatic) _recovery.reset();
     _health.reset();
     _finishAttempt(PlaybackResult.cancelled);
@@ -575,6 +574,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       await _ensureCompatible(play: _playIntent);
       return;
     }
+    final exhausted = _error?.kind == PlaybackFailureKind.network
+        ? _error!
+        : const PlaybackFailure('自动恢复未成功，请重试或切换分集');
     await _recovery.recover(
       _index,
       pause: () async {
@@ -585,7 +587,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         if (action == RecoveryAction.stop) {
           if (_active != null) unawaited(_player.pause());
           setState(() {
-            _error = '自动恢复未成功，请重试或切换分集';
+            _error = exhausted;
             _loading = false;
           });
         } else {
@@ -606,7 +608,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       },
       onFailure: () {
         setState(() {
-          _error = '自动恢复未成功，请重试或切换分集';
+          _error = exhausted;
           _loading = false;
         });
       },
@@ -654,7 +656,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         if (_loading || _recovering || _active == null) break;
         _finishAttempt(PlaybackResult.failed);
         setState(() {
-          _error = '视频暂时无法播放，请重试或切换分集';
+          _error = const PlaybackFailure('视频暂时无法播放，请重试或切换分集');
           _loading = false;
         });
         unawaited(_recover());
@@ -835,7 +837,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         if (mounted && generation == _generation) {
           setState(() {
             _loading = false;
-            _error = '兼容播放准备失败，请重试';
+            _error = const PlaybackFailure('兼容播放准备失败，请重试');
           });
         }
         return false;
@@ -1055,6 +1057,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       unawaited(_returnFromAirPlay());
     } else if (unblocked &&
         !_airPlayReturnPending &&
+        !_loading &&
+        _error?.kind == PlaybackFailureKind.airPlayRoute) {
+      unawaited(_retry(play: _playIntent));
+    } else if (unblocked &&
+        !_airPlayReturnPending &&
         _active != null &&
         !_loading &&
         _playIntent &&
@@ -1065,7 +1072,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   Future<void> _returnFromAirPlay() async {
     if (_airPlayReturning || !_airPlayReturnPending) return;
-    _airPlayReturning = true;
+    setState(() => _airPlayReturning = true);
     final airplay = _airplay!;
     try {
       await airplay.release();
@@ -1087,11 +1094,45 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       await _activate(position: position, play: play);
       if (mounted) _session.retain({_index});
     } catch (_) {
-      if (mounted) setState(() => _error = '结束 AirPlay 失败，请重试');
+      if (mounted) {
+        setState(
+          () => _error = const PlaybackFailure(
+            '返回手机播放未成功，请重试返回手机',
+            kind: PlaybackFailureKind.airPlayReturn,
+          ),
+        );
+      }
     } finally {
-      _airPlayReturning = false;
+      if (mounted) {
+        setState(() => _airPlayReturning = false);
+      } else {
+        _airPlayReturning = false;
+      }
     }
   }
+
+  Future<void> _chooseAirPlayRoute() async {
+    if (_choosingAirPlayRoute || _airplay == null) return;
+    setState(() => _choosingAirPlayRoute = true);
+    try {
+      await _airplay!.showRoutes();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法打开 AirPlay 设备选择，请稍后再试')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _choosingAirPlayRoute = false);
+    }
+  }
+
+  Widget _airPlayRouteButton() => FilledButton.icon(
+    key: const Key('airPlayChooseRoute'),
+    onPressed: _choosingAirPlayRoute ? null : _chooseAirPlayRoute,
+    icon: const Icon(Icons.airplay),
+    label: Text(_choosingAirPlayRoute ? '正在打开设备选择…' : '选择 iPhone 播放'),
+  );
 
   void _goTo(int index) {
     if (_localBlocked) return;
@@ -1359,49 +1400,32 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               _offlineGap &&
               !_locked &&
               !_localBlocked)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.all(28),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      '下一集未下载，已停止连播',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white),
-                    ),
-                    const SizedBox(height: 16),
-                    FilledButton(
-                      onPressed: () => _goTo(_index + 1),
-                      child: Text(
-                        '播放已下载的第 ${widget.episodes[_index + 1].number} 集',
-                      ),
-                    ),
-                  ],
-                ),
+            PlayerNotice(
+              message: '下一集未下载，已停止连播',
+              action: FilledButton(
+                onPressed: () => _goTo(_index + 1),
+                child: Text('播放已下载的第 ${widget.episodes[_index + 1].number} 集'),
               ),
             ),
-          if (selected && _error != null)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.all(28),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _error!.length > 600
-                          ? "${_error!.substring(0, 600)}…"
-                          : _error!,
-                      maxLines: 8,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.white),
+          if (selected && _error != null && !_localBlocked)
+            PlayerNotice(
+              message: _error!.message,
+              action: _error!.kind == PlaybackFailureKind.airPlayRoute
+                  ? _airPlayRouteButton()
+                  : FilledButton(
+                      onPressed: _loading || _recovering ? null : _retry,
+                      child: Text(
+                        _error!.kind == PlaybackFailureKind.localUnavailable
+                            ? '重新检查'
+                            : '重试',
+                      ),
                     ),
-                    const SizedBox(height: 16),
-                    FilledButton(onPressed: _retry, child: const Text('重试')),
-                  ],
-                ),
-              ),
+              secondaryAction: widget.episodes.length > 1
+                  ? TextButton(
+                      onPressed: _showEpisodes,
+                      child: const Text('选集'),
+                    )
+                  : null,
             ),
         ],
       ),
@@ -1575,26 +1599,19 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                 ),
               ),
             ),
-          if (_airplay?.routed == true && _airplay?.engaged != true)
-            SafeArea(
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'AirPlay 仍连接电视，手机播放已暂停',
-                      style: TextStyle(color: Colors.white70),
-                    ),
-                    const SizedBox(height: 12),
-                    FilledButton.icon(
-                      key: const Key('airPlayChooseRoute'),
-                      onPressed: () => _airplay!.showRoutes(),
-                      icon: const Icon(Icons.airplay),
-                      label: const Text('选择 iPhone 播放'),
-                    ),
-                  ],
-                ),
+          if (_error?.kind == PlaybackFailureKind.airPlayReturn &&
+              _airPlayReturnPending)
+            PlayerNotice(
+              message: _error!.message,
+              action: FilledButton(
+                onPressed: _airPlayReturning ? null : _returnFromAirPlay,
+                child: Text(_airPlayReturning ? '正在返回手机…' : '重试返回手机'),
               ),
+            )
+          else if (_airplay?.routed == true && _airplay?.engaged != true)
+            PlayerNotice(
+              message: 'AirPlay 仍连接电视，手机播放已暂停',
+              action: _airPlayRouteButton(),
             ),
           if (_casting.error != null && !_casting.blocksLocal)
             SafeArea(
