@@ -5,6 +5,7 @@ import 'package:guoguo_mobile/data/app_store.dart';
 import 'package:guoguo_mobile/data/download_store.dart';
 import 'package:guoguo_mobile/data/storage.dart';
 import 'package:guoguo_mobile/domain/models.dart';
+import 'package:guoguo_mobile/domain/discovery.dart';
 import 'package:guoguo_mobile/platform/provider_client.dart';
 
 class NoNetwork implements ProviderClient {
@@ -35,13 +36,18 @@ void main() {
             episodes: 80,
           ),
         );
+        store.catalog.discoveryCache.putRecommendations(
+          RecommendationGenre.shortPlay,
+          store.catalog.catalogs[DramaSource.hongguo]!,
+          DateTime.now(),
+        );
         final downloads = DownloadStore(store);
         await tester.pumpWidget(
           GuoguoApp(store: store, downloads: downloads, autoLoad: false),
         );
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
-        expect(find.text('发现好剧'), findsOneWidget);
+        expect(find.text('真人剧推荐'), findsOneWidget);
         await tester.tap(find.text('追剧'));
         await tester.pumpAndSettle();
         expect(find.text('接着看'), findsOneWidget);

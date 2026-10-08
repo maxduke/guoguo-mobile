@@ -11,9 +11,11 @@ import 'package:guoguo_mobile/data/download_store.dart';
 import 'package:guoguo_mobile/data/storage.dart';
 import 'package:guoguo_mobile/data/cover_cache.dart';
 import 'package:guoguo_mobile/domain/models.dart';
+import 'package:guoguo_mobile/domain/discovery.dart';
 import 'widget_test.dart' show NoNetwork;
 import 'package:guoguo_mobile/platform/provider_client.dart';
 import 'package:guoguo_mobile/ui/rankings_page.dart';
+import 'package:guoguo_mobile/ui/library_page.dart';
 import 'package:guoguo_mobile/ui/recommendations_page.dart';
 import 'package:guoguo_mobile/ui/downloads_page.dart';
 import 'package:guoguo_mobile/ui/theme.dart';
@@ -70,6 +72,11 @@ void main() {
             episodes: 80,
           ),
         );
+        store.catalog.discoveryCache.putRecommendations(
+          RecommendationGenre.shortPlay,
+          store.catalog.catalogs[DramaSource.hongguo]!,
+          DateTime.now(),
+        );
         final downloads = _PreviewDownloads(store);
         final key = GlobalKey();
         await tester.pumpWidget(
@@ -89,9 +96,39 @@ void main() {
         await tester.runAsync(() async {
           final image = await boundary.toImage();
           final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-          await Directory('screenshots').create();
+          await Directory('build/home-previews').create(recursive: true);
           await File(
-            'screenshots/${size.width < 500 ? 'phone' : 'tablet'}-${mode.name}.png',
+            'build/home-previews/${size.width < 500 ? 'phone' : 'tablet'}-${mode.name}.png',
+          ).writeAsBytes(bytes!.buffer.asUint8List());
+          image.dispose();
+        });
+        store.offline = true;
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: key,
+            child: MaterialApp(
+              debugShowCheckedModeBanner: false,
+              theme: guoguoTheme(
+                mode == ThemeMode.dark ? Brightness.dark : Brightness.light,
+              ),
+              home: LibraryPage(
+                store: store,
+                autoLoad: false,
+                onOpen: (_) {},
+                onSearch: () {},
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        await tester.runAsync(() async {
+          final boundary =
+              key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+          final image = await boundary.toImage();
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          await File(
+            'build/home-previews/library-${size.width < 500 ? 'phone' : 'tablet'}-${mode.name}.png',
           ).writeAsBytes(bytes!.buffer.asUint8List());
           image.dispose();
         });
@@ -154,7 +191,7 @@ void main() {
           final image = await boundary.toImage();
           final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
           await File(
-            'screenshots/$name-${mode.name}.png',
+            'build/home-previews/$name-${mode.name}.png',
           ).writeAsBytes(bytes!.buffer.asUint8List());
           image.dispose();
         });
@@ -206,13 +243,16 @@ void main() {
       await tester.runAsync(() async {
         final image = await boundary.toImage();
         final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-        await File(target.key).writeAsBytes(bytes!.buffer.asUint8List());
+        final output = File('build/home-previews/icons/${target.key}');
+        await output.parent.create(recursive: true);
+        await output.writeAsBytes(bytes!.buffer.asUint8List());
         image.dispose();
       });
     }
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 11));
     await tester.runAsync(() async {
+      await coverCache.getFileFromCache('home-preview-initialization');
       await coverCache.dispose();
       await cacheDirectory!.delete(recursive: true);
     });

@@ -84,28 +84,16 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
     });
     try {
       if (requestStore.offline) throw const ProviderException('当前离线，请联网后获取推荐');
-      final result = await requestStore.provider.call('recommendations', {
-        'recommendation': {
-          'genre': requestGenre.id,
-          'offset': requestOffset,
-          'sessionId': requestSession,
-          'seen': previous.reversed.take(540).map((d) => d.id).toList(),
-        },
-      });
+      final result = await requestStore.provider.recommendations(
+        requestGenre,
+        offset: requestOffset,
+        sessionId: requestSession,
+        seen: previous.reversed.take(540).map((d) => d.id).toList(),
+      );
       if (!mounted || request != generation) return;
-      final incoming = (result['items'] as List)
-          .map((v) => Drama.fromJson(Map<String, dynamic>.from(v as Map)))
-          .toList();
-      if (incoming.any((d) => d.source != DramaSource.hongguo)) {
-        throw const FormatException('推荐站源不匹配');
-      }
-      final nextOffset = result['nextOffset'] as int;
-      if (nextOffset < 0) throw const FormatException('推荐游标不正确');
-      final nextSession = result['sessionId'] as String? ?? '';
-      final nextHasMore = result['hasMore'] as bool? ?? false;
       final nextRows = List<Drama>.unmodifiable(
         {
-          for (final d in [...previous, ...incoming]) d.key: d,
+          for (final d in [...previous, ...result.items]) d.key: d,
         }.values,
       );
       final fetchedAt = requestStore.now();
@@ -119,9 +107,9 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
         rows = nextRows;
         updatedAt = fetchedAt;
         cachedOnly = false;
-        offset = nextOffset;
-        session = nextSession;
-        hasMore = nextHasMore;
+        offset = result.nextOffset;
+        session = result.sessionId;
+        hasMore = result.hasMore;
       });
     } catch (_) {
       if (mounted && request == generation) {

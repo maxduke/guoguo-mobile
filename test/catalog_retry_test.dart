@@ -236,6 +236,8 @@ void main() {
       GuoguoApp(store: store, downloads: downloads, autoLoad: false),
     );
     await tester.pumpAndSettle();
+    await tester.tap(find.text('完整剧库'));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('重试加载剧库'),
       250,
@@ -244,7 +246,9 @@ void main() {
     await tester.tap(find.text('重试加载剧库'));
     await tester.pump();
     expect(provider.requests.last, {'source': 'hongguo'});
-    provider.pending.last.complete(_page(DramaSource.hongguo, 'recovered'));
+    provider.pending.last.complete(
+      _page(DramaSource.hongguo, 'recovered', more: false),
+    );
     await tester.pumpAndSettle();
     expect(find.text('重试加载剧库'), findsNothing);
     expect(tester.takeException(), isNull);

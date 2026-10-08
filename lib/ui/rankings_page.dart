@@ -80,15 +80,10 @@ class _RankingsPageState extends State<RankingsPage> {
       failedBoards = false;
     });
     try {
-      final result = await requestStore.provider.call('boards', {
-        'source': requestSource.name,
-      });
-      if (!mounted || request != generation) return;
-      final incoming = List<DiscoveryBoard>.unmodifiable(
-        (result['items'] as List).map(
-          (v) => DiscoveryBoard.fromJson(v as Map, requestSource),
-        ),
+      final incoming = await requestStore.provider.discoveryBoards(
+        requestSource,
       );
+      if (!mounted || request != generation) return;
       await requestStore.catalog.saveDiscoveryBoards(requestSource, incoming);
       if (!mounted || request != generation) return;
       setState(() {
@@ -110,7 +105,7 @@ class _RankingsPageState extends State<RankingsPage> {
       if (mounted && request == generation) {
         setState(() {
           failedBoards = true;
-          error = '榜单列表暂时无法加载，请重试';
+          error = '栏目列表暂时无法加载，请重试';
         });
       }
     } finally {
@@ -151,26 +146,15 @@ class _RankingsPageState extends State<RankingsPage> {
     });
     try {
       if (requestStore.offline) throw const ProviderException('当前离线');
-      final result = await requestStore.provider.call('ranking', {
-        'board': board,
-        'page': nextPage,
-      });
+      final result = await requestStore.provider.discoveryColumn(
+        requestSource,
+        board,
+        page: nextPage,
+      );
       if (!mounted || request != generation) return;
-      final incoming = (result['items'] as List)
-          .map(
-            (v) => DiscoveryRow.fromJson(Map<String, dynamic>.from(v as Map)),
-          )
-          .toList();
-      if (incoming.any((row) => row.drama.source != requestSource)) {
-        throw const FormatException('栏目站源不匹配');
-      }
-      final nextKind = DiscoveryKind.parse(result['kind']);
-      final nextDescription = result['description'] as String? ?? '';
-      final nextWarning = result['warning'] as String?;
-      final nextHasMore = result['hasMore'] as bool? ?? false;
       final nextRows = List<DiscoveryRow>.unmodifiable(
         {
-          for (final row in [...previous, ...incoming]) row.drama.key: row,
+          for (final row in [...previous, ...result.rows]) row.drama.key: row,
         }.values,
       );
       final fetchedAt = requestStore.now();
@@ -180,9 +164,9 @@ class _RankingsPageState extends State<RankingsPage> {
         CachedDiscoveryColumn(
           nextRows,
           savedAt: fetchedAt,
-          kind: nextKind,
-          description: nextDescription,
-          warning: nextWarning,
+          kind: result.kind,
+          description: result.description,
+          warning: result.warning,
         ),
       );
       if (!mounted || request != generation) return;
@@ -190,10 +174,10 @@ class _RankingsPageState extends State<RankingsPage> {
         rows = nextRows;
         updatedAt = fetchedAt;
         cachedOnly = false;
-        hasMore = nextHasMore;
-        kind = nextKind;
-        description = nextDescription;
-        warning = nextWarning?.isNotEmpty == true ? nextWarning : null;
+        hasMore = result.hasMore;
+        kind = result.kind;
+        description = result.description;
+        warning = result.warning?.isNotEmpty == true ? result.warning : null;
         page = nextPage;
       });
     } catch (_) {
@@ -203,10 +187,10 @@ class _RankingsPageState extends State<RankingsPage> {
           error = requestStore.offline
               ? '当前离线，联网后可重试栏目'
               : rows.isEmpty
-              ? '榜单暂时无法加载，请重试'
+              ? '栏目暂时无法加载，请重试'
               : more
-              ? '更多榜单内容暂时无法加载，已保留现有内容'
-              : '榜单刷新失败，已保留现有内容';
+              ? '更多栏目内容暂时无法加载，已保留现有内容'
+              : '栏目刷新失败，已保留现有内容';
         });
       }
     } finally {
@@ -225,7 +209,7 @@ class _RankingsPageState extends State<RankingsPage> {
             drama.vip != true;
       }).toList();
       return Scaffold(
-        appBar: AppBar(title: Text('${source.label}榜单')),
+        appBar: AppBar(title: Text('${source.label}栏目')),
         body: Column(
           children: [
             SingleChildScrollView(
@@ -290,8 +274,8 @@ class _RankingsPageState extends State<RankingsPage> {
               child: visible.isEmpty && !loading && !hasMore
                   ? EmptyState(
                       icon: Icons.bar_chart,
-                      title: error != null ? '榜单暂时不可用' : '暂无榜单内容',
-                      message: error != null ? '稍后重试，或返回剧库继续浏览' : '切换榜单，或稍后刷新',
+                      title: error != null ? '栏目暂时不可用' : '暂无栏目内容',
+                      message: error != null ? '稍后重试，或返回剧库继续浏览' : '切换栏目，或稍后刷新',
                       action: error == null
                           ? OutlinedButton(
                               onPressed: _retry,

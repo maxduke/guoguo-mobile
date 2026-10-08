@@ -197,7 +197,7 @@ void main() {
         await tester.tap(find.byTooltip('继续观看 故事0'));
         await tester.pump();
         expect(provider.chapters, 1);
-        await tester.tap(find.text('剧库'));
+        await tester.tap(find.text('发现'));
         await tester.pump();
         if (fail) {
           provider.pending.completeError(StateError('secret'));

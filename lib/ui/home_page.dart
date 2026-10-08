@@ -6,10 +6,10 @@ import '../data/app_store.dart';
 import '../data/app_startup.dart';
 import '../data/download_store.dart';
 import '../domain/models.dart';
-import '../domain/catalog_query.dart';
 import 'components.dart';
 import 'search_page.dart';
-import 'source_selector.dart';
+import 'discovery_page.dart';
+import 'library_page.dart';
 import 'detail_page.dart';
 import 'personal_page.dart';
 import 'continue_watching_card.dart';
@@ -44,24 +44,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _resuming = false;
   }
 
-  String _category = '全部';
-  CatalogSort _sort = CatalogSort.recommended;
   AppStore get store => widget.store;
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _loadInitialCatalog();
-  }
-
-  void _loadInitialCatalog() {
-    if (widget.autoLoad) {
-      if (store.catalog.library.isEmpty) {
-        unawaited(store.catalog.refresh());
-      } else {
-        unawaited(store.catalog.loadCategories());
-      }
-    }
   }
 
   @override
@@ -69,8 +56,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != store) {
       oldWidget.store.records.cancelUpdateChecks();
-      _category = '全部';
-      _loadInitialCatalog();
     }
     if (oldWidget.store != store || oldWidget.downloads != widget.downloads) {
       _cancelResume();
@@ -105,71 +90,49 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _openSearch() async {
     setState(_cancelResume);
+    await _showSearch(context, store, widget.downloads);
+  }
+
+  void _openLibrary() {
+    setState(_cancelResume);
     final owner = store, downloads = widget.downloads;
-    final initialSource = owner.catalog.source;
     owner.records.cancelUpdateChecks();
-    await Navigator.push(
+    Navigator.push(
       context,
       MaterialPageRoute<void>(
-        builder: (routeContext) => SearchPage(
+        builder: (routeContext) => LibraryPage(
           store: owner,
-          onOpen: (drama) {
-            owner.records.cancelUpdateChecks();
-            openDrama(routeContext, owner, downloads, drama);
-          },
+          onSearch: () => _showSearch(routeContext, owner, downloads),
+          onOpen: (drama) => openDrama(routeContext, owner, downloads, drama),
         ),
       ),
     );
-    if (mounted && store == owner && widget.downloads == downloads) {
-      if (owner.catalog.source != initialSource) {
-        setState(() => _category = '全部');
-      }
-      _loadInitialCatalog();
-    }
+  }
+
+  void _openFeed() {
+    setState(_cancelResume);
+    final owner = store, downloads = widget.downloads;
+    final source = owner.catalog.source;
+    owner.records.cancelUpdateChecks();
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (routeContext) {
+          void open(Drama drama) =>
+              openDrama(routeContext, owner, downloads, drama);
+          return source == DramaSource.hongguo
+              ? RecommendationsPage(store: owner, onOpen: open)
+              : RankingsPage(store: owner, onOpen: open);
+        },
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final wide = MediaQuery.sizeOf(context).width >= 900;
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 72,
-        titleSpacing: wide ? 32 : 22,
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primary,
-                borderRadius: BorderRadius.circular(11),
-              ),
-              child: Icon(
-                Icons.play_arrow_rounded,
-                color: Theme.of(context).colorScheme.onPrimary,
-                size: 28,
-              ),
-            ),
-            const SizedBox(width: 10),
-            const Text(
-              '果果',
-              style: TextStyle(
-                fontWeight: FontWeight.w800,
-                fontSize: 23,
-                letterSpacing: 2,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Text(
-              '好故事，接着看',
-              style: TextStyle(
-                fontSize: 12,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
+        title: const Text('果果'),
         actions: [
           IconButton(
             tooltip: '设置',
@@ -235,8 +198,37 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               index: _tab,
               children: [
                 ListenableBuilder(
-                  listenable: Listenable.merge([store.catalog, store]),
-                  builder: (context, _) => _library(wide),
+                  listenable: Listenable.merge([
+                    store.catalog,
+                    store,
+                    if (widget.startup != null) widget.startup!,
+                  ]),
+                  builder: (context, _) => DiscoveryPage(
+                    store: store,
+                    source: store.catalog.source,
+                    active: _tab == 0 && _routeActive,
+                    ready: widget.startup == null || widget.startup!.coreReady,
+                    autoLoad: widget.autoLoad || widget.startup != null,
+                    onOpen: _open,
+                    onSearch: _openSearch,
+                    onLibrary: _openLibrary,
+                    onMore: _openFeed,
+                    continuation: ListenableBuilder(
+                      listenable: Listenable.merge([
+                        store.records,
+                        store.records.progress,
+                      ]),
+                      builder: (context, _) {
+                        final recent = store.records.continuable;
+                        return recent.isEmpty
+                            ? const SizedBox.shrink()
+                            : Padding(
+                                padding: const EdgeInsets.only(top: 16),
+                                child: _continueCard(recent.first),
+                              );
+                      },
+                    ),
+                  ),
                 ),
                 PersonalPage(
                   store: store,
@@ -265,9 +257,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         },
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.grid_view_outlined),
-            selectedIcon: Icon(Icons.grid_view_rounded),
-            label: '剧库',
+            icon: Icon(Icons.explore_outlined),
+            selectedIcon: Icon(Icons.explore),
+            label: '发现',
           ),
           NavigationDestination(
             icon: Icon(Icons.bookmarks_outlined),
@@ -280,430 +272,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             label: '下载',
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _sortMenu() => PopupMenuButton<CatalogSort>(
-    initialValue: _sort,
-    tooltip: '排序短剧',
-    onSelected: (sort) => setState(() => _sort = sort),
-    itemBuilder: (_) => [
-      for (final sort in CatalogSort.values)
-        PopupMenuItem(value: sort, child: Text(sort.label)),
-    ],
-    child: Chip(
-      avatar: const Icon(Icons.sort, size: 18),
-      label: Text(_sort.label),
-    ),
-  );
-
-  void _discover() => Navigator.push(
-    context,
-    MaterialPageRoute<void>(
-      builder: (_) => RecommendationsPage(store: store, onOpen: _open),
-    ),
-  );
-
-  Widget _library(bool wide) {
-    final rows = queryCatalog(
-      store.catalog.library,
-      category: store.catalog.source.remoteCategories ? '全部' : _category,
-      hideVip:
-          store.catalog.source == DramaSource.huangdou && store.catalog.hideVip,
-      sort: _sort,
-    );
-    final categories = {
-      '全部',
-      ...store.catalog.library
-          .map((d) => d.category)
-          .where((s) => s.isNotEmpty),
-    }.toList();
-    final loading = store.catalog.libraryLoading;
-    final horizontal = wide ? 40.0 : 22.0;
-    return RefreshIndicator(
-      onRefresh: () => store.catalog.refresh(),
-      child: NotificationListener<ScrollNotification>(
-        onNotification: (notification) {
-          if (notification.depth == 0 &&
-              notification is ScrollUpdateNotification &&
-              notification.metrics.extentAfter < 700 &&
-              !store.catalog.libraryCanRetry) {
-            unawaited(store.catalog.loadMore());
-          }
-          return false;
-        },
-        child: CustomScrollView(
-          key: PageStorageKey(
-            'library-${store.catalog.source.name}-${store.catalog.selectedCategory}',
-          ),
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            SliverPadding(
-              padding: EdgeInsets.fromLTRB(horizontal, 8, horizontal, 0),
-              sliver: SliverList.list(
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        '发现好剧',
-                        style: Theme.of(context).textTheme.headlineLarge,
-                      ),
-                      const Spacer(),
-                      if (wide && store.catalog.source == DramaSource.hongguo)
-                        TextButton.icon(
-                          onPressed: _discover,
-                          icon: const Icon(
-                            Icons.auto_awesome_outlined,
-                            size: 19,
-                          ),
-                          label: const Text('发现推荐'),
-                        ),
-                      if (store.catalog.source.rankings)
-                        TextButton.icon(
-                          onPressed: () => Navigator.push(
-                            context,
-                            MaterialPageRoute<void>(
-                              builder: (_) =>
-                                  RankingsPage(store: store, onOpen: _open),
-                            ),
-                          ),
-                          icon: const Icon(Icons.bar_chart_rounded, size: 19),
-                          label: const Text('榜单'),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  SourceSelector(
-                    value: store.catalog.source,
-                    onChanged: (source) {
-                      if (source == null) return;
-                      setState(_cancelResume);
-                      unawaited(
-                        perform(context, () async {
-                          _category = '全部';
-                          await store.catalog.selectSource(source);
-                          if (store.catalog.library.isEmpty) {
-                            await store.catalog.refresh(source);
-                          } else {
-                            await store.catalog.loadCategories(source);
-                          }
-                        }),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 18),
-                  OutlinedButton.icon(
-                    onPressed: _openSearch,
-                    icon: const Icon(Icons.search),
-                    label: const Text('搜索剧名'),
-                  ),
-                  const SizedBox(height: 16),
-                  if (!wide && store.catalog.source == DramaSource.hongguo) ...[
-                    Card(
-                      margin: const EdgeInsets.only(bottom: 18),
-                      clipBehavior: Clip.antiAlias,
-                      child: InkWell(
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute<void>(
-                            builder: (_) => RecommendationsPage(
-                              store: store,
-                              onOpen: _open,
-                            ),
-                          ),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(18),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.auto_awesome_outlined,
-                                color: Theme.of(context).colorScheme.primary,
-                                size: 28,
-                              ),
-                              const SizedBox(width: 14),
-                              const Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      '今天，看点什么',
-                                      style: TextStyle(
-                                        fontSize: 17,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                    SizedBox(height: 4),
-                                    Text(
-                                      '真人剧 · 漫剧 · AI 剧',
-                                      style: TextStyle(fontSize: 12),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const Icon(Icons.arrow_forward_rounded),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                  ListenableBuilder(
-                    listenable: Listenable.merge([
-                      store.records,
-                      store.records.progress,
-                    ]),
-                    builder: (context, _) {
-                      final recent = store.records.continuable;
-                      return recent.isEmpty
-                          ? const SizedBox.shrink()
-                          : Column(
-                              children: [
-                                _continueCard(recent.first),
-                                const SizedBox(height: 22),
-                              ],
-                            );
-                    },
-                  ),
-                  Row(
-                    children: [
-                      Text(
-                        '全部短剧',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      const Spacer(),
-                      if (loading)
-                        const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      else
-                        IconButton(
-                          tooltip: '更新当前站源',
-                          onPressed: () => store.catalog.refresh(),
-                          icon: const Icon(Icons.refresh_rounded),
-                        ),
-                      Text(
-                        '已加载 ${rows.length} 部',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Wrap(
-                    spacing: 10,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      if (!wide || categories.length <= 1) _sortMenu(),
-                      if (store.catalog.source == DramaSource.huangdou)
-                        FilterChip(
-                          label: Text(
-                            store.catalog.hideVip ? '隐藏 VIP' : '显示 VIP',
-                          ),
-                          selected: store.catalog.hideVip,
-                          onSelected: (value) => perform(
-                            context,
-                            () => store.catalog.setHideVip(value),
-                          ),
-                        ),
-                    ],
-                  ),
-                  if (store.catalog.source == DramaSource.huangdou &&
-                      store.catalog.library.any((d) => d.vip == null))
-                    Text(
-                      '部分剧集会员状态待识别，打开详情后更新',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  if (store.catalog.source.remoteCategories)
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          for (final category
-                              in store.catalog.sourceCategories[store
-                                      .catalog
-                                      .source] ??
-                                  [const SourceCategory('', '全部')])
-                            Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: ChoiceChip(
-                                label: Text(category.name),
-                                selected:
-                                    store.catalog.selectedCategory ==
-                                    category.id,
-                                onSelected: (_) => perform(
-                                  context,
-                                  () =>
-                                      store.catalog.selectCategory(category.id),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  if (store.catalog.categoryErrors.containsKey(
-                    store.catalog.source,
-                  ))
-                    _Notice(
-                      store.catalog.categoryErrors[store.catalog.source]!,
-                      Icons.cloud_off_outlined,
-                      onRetry: store.offline || store.catalog.categoriesLoading
-                          ? null
-                          : () => store.catalog.loadCategories(),
-                      retryLabel: '重试加载分类',
-                    ),
-                  if (!store.catalog.source.remoteCategories &&
-                      categories.length > 1)
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          if (wide) ...[_sortMenu(), const SizedBox(width: 12)],
-                          for (final category in categories)
-                            Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: ChoiceChip(
-                                label: Text(category),
-                                selected: _category == category,
-                                onSelected: (_) =>
-                                    setState(() => _category = category),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  if (store.catalog.libraryError != null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: _Notice(
-                        store.catalog.libraryError!,
-                        Icons.cloud_off_outlined,
-                        onRetry:
-                            store.catalog.library.isEmpty &&
-                                store.catalog.libraryCanRetry &&
-                                !store.offline &&
-                                !loading
-                            ? store.catalog.retryLibrary
-                            : null,
-                      ),
-                    ),
-                  const SizedBox(height: 12),
-                ],
-              ),
-            ),
-            if (rows.isEmpty)
-              SliverToBoxAdapter(
-                child: EmptyState(
-                  icon: loading
-                      ? Icons.travel_explore
-                      : Icons.movie_filter_outlined,
-                  title: loading ? '正在找寻好故事' : '你的下一部好剧，在这里',
-                  message: loading
-                      ? '首次加载需要一点时间，内容会保存在设备上'
-                      : '轻点更新，加载${store.catalog.source.label}剧库',
-                  action:
-                      loading || store.offline || store.catalog.libraryCanRetry
-                      ? null
-                      : FilledButton.icon(
-                          onPressed: () => store.catalog.refresh(),
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('更新剧库'),
-                        ),
-                ),
-              )
-            else
-              SliverPadding(
-                padding: EdgeInsets.fromLTRB(horizontal, 0, horizontal, 28),
-                sliver: SliverLayoutBuilder(
-                  builder: (context, constraints) {
-                    final columns = (constraints.crossAxisExtent / 165)
-                        .floor()
-                        .clamp(2, 7);
-                    return SliverGrid.builder(
-                      itemCount: rows.length,
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: columns,
-                        mainAxisSpacing: 22,
-                        crossAxisSpacing: 14,
-                        childAspectRatio: .61,
-                      ),
-                      itemBuilder: (context, index) => ListenableBuilder(
-                        listenable: store.records,
-                        builder: (context, _) => DramaCard(
-                          drama: rows[index],
-                          onTap: () => _open(rows[index]),
-                          favorite: store.records.favorites.containsKey(
-                            rows[index].key,
-                          ),
-                          onFavorite: () => perform(
-                            context,
-                            () => store.records.toggleFavorite(rows[index]),
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            if (store.catalog.library.isNotEmpty)
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 24),
-                  child: Center(
-                    child: Column(
-                      children: [
-                        Text(
-                          '已加载 ${store.catalog.library.length} 部 · ${store.catalog.libraryCanRetry
-                              ? "等待重试"
-                              : store.catalog.libraryHasMore
-                              ? "继续下滑加载"
-                              : "当前来源已返回完毕"}',
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          '已加载数量不代表全站总量',
-                          style: TextStyle(fontSize: 12),
-                        ),
-                        if (store.catalog.libraryHasMore ||
-                            store.catalog.libraryCanRetry)
-                          OutlinedButton.icon(
-                            onPressed: loading || store.offline
-                                ? null
-                                : store.catalog.libraryCanRetry
-                                ? store.catalog.retryLibrary
-                                : store.catalog.loadMore,
-                            icon: loading
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : Icon(
-                                    store.catalog.libraryCanRetry
-                                        ? Icons.refresh
-                                        : Icons.expand_more,
-                                  ),
-                            label: Text(
-                              loading
-                                  ? '正在加载…'
-                                  : store.catalog.libraryCanRetry
-                                  ? '重试加载剧库'
-                                  : '加载更多短剧',
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
       ),
     );
   }
@@ -733,6 +301,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     busy: _resuming,
     onContinue: _resuming ? null : () => _continue(record),
     onDetails: () => _open(record.drama),
+  );
+}
+
+Future<void> _showSearch(
+  BuildContext context,
+  AppStore store,
+  DownloadStore downloads,
+) async {
+  store.records.cancelUpdateChecks();
+  await Navigator.push(
+    context,
+    MaterialPageRoute<void>(
+      builder: (routeContext) => SearchPage(
+        store: store,
+        onOpen: (drama) => openDrama(routeContext, store, downloads, drama),
+      ),
+    ),
   );
 }
 
