@@ -6,6 +6,7 @@ import 'package:guoguo_mobile/data/storage.dart';
 import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/ui/detail_page.dart';
 import 'package:guoguo_mobile/ui/episode_grid.dart';
+import 'package:guoguo_mobile/ui/related_series_section.dart';
 
 import 'widget_test.dart' show NoNetwork;
 
@@ -15,6 +16,19 @@ const drama = Drama(
   title: '山海有归期',
   description: '一段很长的故事。\n一段很长的故事。\n一段很长的故事。',
   episodes: 70,
+);
+
+const _metadataDrama = Drama(
+  id: 'detail-metadata',
+  source: DramaSource.hongguo,
+  title: '山海有归期 第二季',
+  category: '重逢',
+  description: '一段很长的故事。\n一段很长的故事。\n一段很长的故事。\n一段很长的故事。\n故事继续。',
+  episodes: 70,
+  status: 'ongoing',
+  vip: true,
+  date: '2026-10-01',
+  tags: ['成长', '回归', '重逢', '这个标签非常长仍然应当可以在展开资料时完整阅读'],
 );
 
 List<Episode> episodes([int count = 70]) => [
@@ -27,6 +41,103 @@ class FakeDownloads extends DownloadStore {
 }
 
 void main() {
+  Future<AppStore> mountMetadata(WidgetTester tester) async {
+    tester.view.physicalSize = const Size(390, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
+      ..offline = true;
+    store.catalog.episodeCache[_metadataDrama.key] = episodes();
+    final downloads = FakeDownloads(store);
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox());
+      downloads.dispose();
+      store.dispose();
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DetailPage(
+          store: store,
+          downloads: downloads,
+          drama: _metadataDrama,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    return store;
+  }
+
+  testWidgets(
+    'episodes precede related series and remain visible below compact metadata',
+    (tester) async {
+      await mountMetadata(tester);
+      final primary = find.byKey(const ValueKey('detail-primary-play'));
+      expect(find.text('2–60 集').hitTestable(), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('选集')).dy,
+        lessThan(tester.getTopLeft(primary).dy),
+      );
+      expect(
+        tester.getTopLeft(find.byType(RelatedSeriesSection)).dy,
+        greaterThanOrEqualTo(tester.getBottomLeft(find.byType(EpisodeGrid)).dy),
+      );
+      expect(find.text('部分分集需要站源授权，试看不作为完整正片'), findsOneWidget);
+      expect(find.text('上线 2026-10-01'), findsNothing);
+      await tester.tap(find.text('展开资料'));
+      await tester.pump();
+      expect(find.text('上线 2026-10-01'), findsOneWidget);
+      expect(find.text(_metadataDrama.tags.join(' · ')), findsOneWidget);
+      expect(primary.hitTestable(), findsOneWidget);
+      await tester.ensureVisible(find.text('收起资料'));
+      await tester.tap(find.text('收起资料'));
+      await tester.pump();
+      expect(find.text('2–60 集').hitTestable(), findsOneWidget);
+      expect(find.text('上线 2026-10-01'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'chosen episode range survives metadata expansion and window changes',
+    (tester) async {
+      final store = await mountMetadata(tester);
+      await tester.ensureVisible(find.byType(DropdownButton<int>));
+      await tester.tap(find.byType(DropdownButton<int>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('62–120 集').last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('展开资料'));
+      await tester.tap(find.text('展开资料'));
+      await tester.pump();
+      expect(find.text('62–120 集'), findsOneWidget);
+      tester.view.physicalSize = const Size(1024, 768);
+      await tester.pumpAndSettle();
+      expect(find.text('62–120 集'), findsOneWidget);
+      await store.records.saveWatch(
+        WatchRecord(
+          drama: _metadataDrama,
+          episodeId: 'e65',
+          episodeIndex: 65,
+          positionMs: 3000,
+          durationMs: 60000,
+          updatedAt: DateTime.now(),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('62–120 集'), findsOneWidget);
+      tester.view.physicalSize = const Size(390, 700);
+      await tester.pumpAndSettle();
+      expect(find.text('62–120 集'), findsOneWidget);
+      await tester.ensureVisible(find.text('定位当前'));
+      await tester.tap(find.text('定位当前'));
+      await tester.pump();
+      expect(find.text('122–140 集'), findsOneWidget);
+      expect(find.text('继续第 132 集'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('range stays chosen across resume changes and locates current', (
     tester,
   ) async {
