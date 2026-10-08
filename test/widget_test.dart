@@ -44,7 +44,7 @@ void main() {
         expect(find.text('发现好剧'), findsOneWidget);
         await tester.tap(find.text('追剧'));
         await tester.pumpAndSettle();
-        expect(find.text('留给喜欢的故事'), findsOneWidget);
+        expect(find.text('接着看'), findsOneWidget);
         expect(tester.takeException(), isNull);
         await tester.tap(find.text('下载'));
         await tester.pumpAndSettle();

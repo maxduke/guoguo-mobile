@@ -139,11 +139,11 @@ void main() {
       expect(downloads.attempts, 1);
       await tester.tap(find.text('追剧'));
       await tester.pump();
-      expect(find.text('收藏 1'), findsOneWidget);
+      expect(find.text('我的收藏 1'), findsOneWidget);
       network.completeError(StateError('private network detail'));
       await tester.pump();
       expect(find.text('重试网络'), findsOneWidget);
-      expect(find.text('收藏 1'), findsOneWidget);
+      expect(find.text('我的收藏 1'), findsOneWidget);
       expect(find.textContaining('private network detail'), findsNothing);
       await tester.pumpWidget(const SizedBox.shrink());
       core.complete();
@@ -178,14 +178,14 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(attempts, 2);
-      expect(find.text('收藏 1'), findsOneWidget);
+      expect(find.text('我的收藏 1'), findsOneWidget);
       retry.complete();
       await tester.pumpAndSettle();
       expect(app.coreReady, true);
       expect(find.text('重试站源'), findsNothing);
       expect(provider.methods, isEmpty);
       expect(downloads.attempts, 1);
-      expect(find.text('收藏 1'), findsOneWidget);
+      expect(find.text('我的收藏 1'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
