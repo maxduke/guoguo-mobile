@@ -31,14 +31,21 @@ Future<void> continueDrama(
   BuildContext context,
   AppStore store,
   DownloadStore downloads,
-  WatchRecord record,
-) async {
+  WatchRecord record, {
+  bool Function()? isActive,
+}) async {
+  bool active() =>
+      context.mounted &&
+      ModalRoute.of(context)?.isCurrent != false &&
+      (isActive?.call() ?? true);
+  if (!active()) return;
   List<Episode> episodes;
   List<int>? indices;
   var localOnly = false;
   try {
     episodes = await store.catalog.episodes(record.drama);
   } catch (_) {
+    if (!active()) return;
     final saved =
         downloads.entries
             .where((e) => e.complete && e.drama.key == record.drama.key)
@@ -49,7 +56,9 @@ Future<void> continueDrama(
     indices = saved.map((e) => e.index).toList();
     localOnly = true;
   }
-  if (!context.mounted) return;
+  if (!context.mounted || !active()) return;
+  episodes = List<Episode>.unmodifiable(episodes);
+  if (indices != null) indices = List<int>.unmodifiable(indices);
   int index;
   if (localOnly) {
     // A downloaded successor may skip several episodes. Advance only to the

@@ -6,12 +6,13 @@ import '../data/app_store.dart';
 import '../data/app_startup.dart';
 import '../data/download_store.dart';
 import '../domain/models.dart';
-import '../domain/watch_resume.dart';
 import '../domain/catalog_query.dart';
 import 'components.dart';
 import 'catalog_search_controller.dart';
 import 'source_selector.dart';
 import 'detail_page.dart';
+import 'personal_page.dart';
+import 'continue_watching_card.dart';
 import 'downloads_page.dart';
 import 'settings_page.dart';
 import 'rankings_page.dart';
@@ -36,10 +37,15 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   int _tab = 0;
   bool _resuming = false;
-  late final CatalogSearchController _search;
+  bool _routeActive = true;
+  int _resumeGeneration = 0;
+  void _cancelResume() {
+    _resumeGeneration++;
+    _resuming = false;
+  }
+
+  late CatalogSearchController _search;
   String _category = '全部';
-  DramaSource? _personalSource;
-  bool _favoritesOnly = true;
   CatalogSort _sort = CatalogSort.recommended;
   AppStore get store => widget.store;
   @override
@@ -47,6 +53,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _search = CatalogSearchController(store.catalog);
+    _loadInitialCatalog();
+  }
+
+  void _loadInitialCatalog() {
     if (widget.autoLoad) {
       if (store.catalog.library.isEmpty) {
         unawaited(store.catalog.refresh());
@@ -54,6 +64,29 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         unawaited(store.catalog.loadCategories());
       }
     }
+  }
+
+  @override
+  void didUpdateWidget(HomePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != store) {
+      oldWidget.store.records.cancelUpdateChecks();
+      _search.dispose();
+      _search = CatalogSearchController(store.catalog);
+      _category = '全部';
+      _loadInitialCatalog();
+    }
+    if (oldWidget.store != store || oldWidget.downloads != widget.downloads) {
+      _cancelResume();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final active = ModalRoute.of(context)?.isCurrent != false;
+    if (_routeActive && !active) _cancelResume();
+    _routeActive = active;
   }
 
   @override
@@ -65,6 +98,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   void _open(Drama drama) {
+    setState(_cancelResume);
     store.records.cancelUpdateChecks();
     openDrama(context, store, widget.downloads, drama);
   }
@@ -75,12 +109,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   void _resetCategory(String text) {
+    if (_resuming) setState(_cancelResume);
     if (text.trim().isNotEmpty && _category != '全部') {
       setState(() => _category = '全部');
     }
   }
 
   Future<void> _submit(String text) {
+    if (_resuming) setState(_cancelResume);
     if (text != _search.input.text) _resetCategory(text);
     FocusScope.of(context).unfocus();
     return _search.submit(text);
@@ -132,13 +168,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           IconButton(
             tooltip: '设置',
             icon: const Icon(Icons.tune_rounded),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute<void>(
-                builder: (_) =>
-                    SettingsPage(store: store, downloads: widget.downloads),
-              ),
-            ),
+            onPressed: () {
+              setState(_cancelResume);
+              Navigator.push(
+                context,
+                MaterialPageRoute<void>(
+                  builder: (_) =>
+                      SettingsPage(store: store, downloads: widget.downloads),
+                ),
+              );
+            },
           ),
           const SizedBox(width: 12),
         ],
@@ -193,20 +232,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   listenable: Listenable.merge([store.catalog, store, _search]),
                   builder: (context, _) => _library(wide),
                 ),
-                ListenableBuilder(
-                  listenable: Listenable.merge([
-                    store.catalog,
-                    store.records,
-                    store.records.progress,
-                    store,
-                  ]),
-                  builder: (context, _) => _personal(wide),
+                PersonalPage(
+                  store: store,
+                  downloads: widget.downloads,
+                  active: _tab == 1 && _routeActive,
                 ),
                 DownloadsPage(
                   store: store,
                   downloads: widget.downloads,
                   onOpen: _open,
-                  active: _tab == 2,
+                  active: _tab == 2 && _routeActive,
                 ),
               ],
             ),
@@ -217,7 +252,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         selectedIndex: _tab,
         onDestinationSelected: (v) {
           if (v != _tab) store.records.cancelUpdateChecks();
-          setState(() => _tab = v);
+          setState(() {
+            _cancelResume();
+            _tab = v;
+          });
         },
         destinations: const [
           NavigationDestination(
@@ -336,6 +374,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     value: store.catalog.source,
                     onChanged: (source) {
                       if (source == null) return;
+                      setState(_cancelResume);
                       unawaited(
                         perform(context, () async {
                           _category = '全部';
@@ -824,276 +863,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _continue(WatchRecord record) async {
     if (_resuming) return;
+    final generation = ++_resumeGeneration;
+    final owner = store, downloads = widget.downloads;
+    bool active() =>
+        mounted &&
+        _tab == 0 &&
+        generation == _resumeGeneration &&
+        store == owner &&
+        widget.downloads == downloads;
     store.records.cancelUpdateChecks();
     setState(() => _resuming = true);
     await perform(
       context,
-      () => continueDrama(context, store, widget.downloads, record),
+      () => continueDrama(context, owner, downloads, record, isActive: active),
     );
-    if (mounted) setState(() => _resuming = false);
+    if (active()) setState(() => _resuming = false);
   }
 
-  String _episodeLabel(WatchRecord record) {
-    final number = store.records.episodeNumberFor(record);
-    return number == null ? '上次观看' : '第 $number 集';
-  }
-
-  String _watchLabel(WatchRecord record) =>
-      switch (store.records.resumeFor(record).status) {
-        WatchStatus.waiting => '${_episodeLabel(record)} · 等待更新',
-        WatchStatus.completed => '已看完',
-        WatchStatus.nextEpisode ||
-        WatchStatus.episodeCompleted => '${_episodeLabel(record)} · 本集已看完',
-        WatchStatus.watching => _episodeLabel(record),
-      };
-
-  String _continueLabel(WatchRecord record) {
-    final resume = store.records.resumeFor(record);
-    if (resume.status == WatchStatus.nextEpisode) {
-      return '${_episodeLabel(record)}已播完 · 接着看第 ${resume.episode!.number} 集';
-    }
-    return '${_episodeLabel(record)} · 已看 ${record.durationMs > 0 ? '${(record.progress * 100).round()}%' : '${record.positionMs ~/ 60000}分${record.positionMs ~/ 1000 % 60}秒'}';
-  }
-
-  Widget _continueCard(WatchRecord record) => Card(
-    margin: EdgeInsets.zero,
-    child: InkWell(
-      onTap: _resuming ? null : () => _continue(record),
-      borderRadius: BorderRadius.circular(20),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 48,
-              height: 64,
-              child: Poster(record.drama, radius: 9),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '接着上次看 · ${record.drama.source.label}',
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.primary,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    record.drama.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _continueLabel(record),
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            if (_resuming)
-              const SizedBox(
-                width: 28,
-                height: 28,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            else
-              const Icon(Icons.play_circle_fill_rounded, size: 36),
-          ],
-        ),
-      ),
-    ),
+  Widget _continueCard(WatchRecord record) => ContinueWatchingCard(
+    records: store.records,
+    record: record,
+    busy: _resuming,
+    onContinue: _resuming ? null : () => _continue(record),
+    onDetails: () => _open(record.drama),
   );
-
-  Widget _personal(bool wide) {
-    final records = store.records.recent
-        .where(
-          (v) => _personalSource == null || v.drama.source == _personalSource,
-        )
-        .toList();
-    final favorites = store.records.favorites.values
-        .where((v) => _personalSource == null || v.source == _personalSource)
-        .toList();
-    final continuable = records
-        .where((record) => store.records.resumeFor(record).canContinue)
-        .firstOrNull;
-    return ListView(
-      padding: EdgeInsets.symmetric(horizontal: wide ? 40 : 22, vertical: 12),
-      children: [
-        Text('留给喜欢的故事', style: Theme.of(context).textTheme.headlineMedium),
-        const SizedBox(height: 8),
-        Text(
-          '收藏与足迹，都在这里',
-          style: TextStyle(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(height: 24),
-        if (continuable != null) ...[
-          _continueCard(continuable),
-          const SizedBox(height: 24),
-        ],
-        SourceFilter(
-          value: _personalSource,
-          onChanged: (v) => setState(() => _personalSource = v),
-        ),
-        const SizedBox(height: 12),
-        SegmentedButton<bool>(
-          segments: [
-            ButtonSegment(
-              value: true,
-              label: Text('收藏 ${favorites.length}'),
-              icon: const Icon(Icons.bookmark_border),
-            ),
-            ButtonSegment(
-              value: false,
-              label: Text('历史 ${records.length}'),
-              icon: const Icon(Icons.history),
-            ),
-          ],
-          selected: {_favoritesOnly},
-          onSelectionChanged: (v) => setState(() => _favoritesOnly = v.first),
-        ),
-        if (_favoritesOnly)
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed:
-                  store.records.checkingUpdates ||
-                      (favorites.isEmpty &&
-                          store.records.seasonReminders.isEmpty)
-                  ? null
-                  : () => perform(context, () async {
-                      final completed = await store.records
-                          .checkFavoriteUpdates();
-                      if (mounted && completed) {
-                        ScaffoldMessenger.of(
-                          context,
-                        ).showSnackBar(const SnackBar(content: Text('更新检查完成')));
-                      }
-                    }),
-              icon: const Icon(Icons.refresh_rounded),
-              label: Text(store.records.checkingUpdates ? '正在检查更新…' : '检查更新'),
-            ),
-          ),
-        const SizedBox(height: 18),
-        if (_favoritesOnly &&
-            store.records.seasonReminders.values.any(
-              (r) =>
-                  _personalSource == null || r.anchor.source == _personalSource,
-            )) ...[
-          Text('新季提醒', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 8),
-          for (final reminder in store.records.seasonReminders.values.where(
-            (r) =>
-                _personalSource == null || r.anchor.source == _personalSource,
-          ))
-            Card(
-              child: Column(
-                children: [
-                  ListTile(
-                    title: Text(
-                      reminder.anchor.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      !reminder.initialized
-                          ? '等待首次检查建立提醒基准'
-                          : reminder.unreadCount == 0
-                          ? '暂无新季'
-                          : '发现 ${reminder.unreadCount} 部新季',
-                    ),
-                    onTap: () => _open(reminder.anchor),
-                    trailing: IconButton(
-                      tooltip: '关闭新季提醒',
-                      icon: const Icon(Icons.notifications_off_outlined),
-                      onPressed: () => perform(
-                        context,
-                        () =>
-                            store.records.toggleSeasonReminder(reminder.anchor),
-                      ),
-                    ),
-                  ),
-                  for (final notice
-                      in reminder.seasons.values.where((n) => !n.read).take(3))
-                    ListTile(
-                      title: Text(
-                        notice.drama.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: const Text('新季'),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => _open(notice.drama),
-                    ),
-                  if (reminder.unreadCount > 3)
-                    TextButton(
-                      onPressed: () => _open(reminder.anchor),
-                      child: const Text('查看全部新季'),
-                    ),
-                ],
-              ),
-            ),
-          const SizedBox(height: 18),
-        ],
-        if (_favoritesOnly && favorites.isEmpty ||
-            !_favoritesOnly && records.isEmpty)
-          EmptyState(
-            icon: _favoritesOnly
-                ? Icons.bookmark_add_outlined
-                : Icons.history_rounded,
-            title: _favoritesOnly ? '把心动的故事留下' : '故事从这一刻开始',
-            message: _favoritesOnly ? '点击海报上的收藏，随时回来接着看' : '开始观看后，这里会记住你的进度',
-          )
-        else
-          ...(_favoritesOnly ? favorites : records.map((v) => v.drama)).map((
-            drama,
-          ) {
-            final record = store.records.history[drama.key];
-            return Card(
-              margin: const EdgeInsets.only(bottom: 12),
-              child: ListTile(
-                contentPadding: const EdgeInsets.all(12),
-                leading: SizedBox(
-                  width: 48,
-                  height: 66,
-                  child: Poster(drama, radius: 9),
-                ),
-                title: Text(
-                  drama.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(
-                  '${drama.source.label}${record == null ? '' : ' · ${_watchLabel(record)}'}${store.records.newEpisodeCount(drama) > 0 ? ' · 新增 ${store.records.newEpisodeCount(drama)} 集' : ''}',
-                ),
-                onTap: () => _open(drama),
-                trailing: IconButton(
-                  tooltip: _favoritesOnly ? '取消收藏' : '删除历史',
-                  icon: Icon(
-                    _favoritesOnly ? Icons.bookmark_rounded : Icons.close,
-                  ),
-                  onPressed: () => perform(
-                    context,
-                    () => _favoritesOnly
-                        ? store.records.toggleFavorite(drama)
-                        : store.records.removeHistory(drama.key),
-                  ),
-                ),
-              ),
-            );
-          }),
-      ],
-    );
-  }
 }
 
 class _Notice extends StatelessWidget {
