@@ -26,11 +26,12 @@ const drama = Drama(
   tags: ['都市', '情感'],
 );
 
-WatchRecord watch({int number = 6}) => WatchRecord(
+WatchRecord watch({int number = 6, bool completed = false}) => WatchRecord(
   drama: drama,
   episodeId: 'e2',
   episodeIndex: 1,
   episodeNumber: number,
+  episodeCompleted: completed,
   positionMs: 42000,
   durationMs: 100000,
   updatedAt: DateTime.utc(2026, 10, 7),
@@ -63,7 +64,7 @@ void main() {
       final store = AppStore(storage: storage, provider: NoNetwork());
       addTearDown(store.dispose);
       await store.records.toggleFavorite(drama);
-      await store.records.saveWatch(watch());
+      await store.records.saveWatch(watch(completed: true));
       final writes = storage.writes;
       final updated = Drama.fromJson({...drama.toJson(), 'tags': <String>[]});
       await store.records.updateDrama(updated);
@@ -73,6 +74,7 @@ void main() {
       expect(record.drama.tags, isEmpty);
       expect(record.episodeId, 'e2');
       expect(record.episodeNumber, 6);
+      expect(record.episodeCompleted, true);
       expect(record.positionMs, 42000);
       expect(record.updatedAt, watch().updatedAt);
     },
@@ -145,6 +147,35 @@ void main() {
         updatedAt: DateTime.utc(2026, 10, 7),
       );
       expect(store.records.episodeNumberFor(unknown), isNull);
+    },
+  );
+
+  test(
+    'completion changes persist, retry after failure and survive backup',
+    () async {
+      final storage = CountingStorage();
+      final store = AppStore(storage: storage, provider: NoNetwork());
+      addTearDown(store.dispose);
+      await store.records.saveWatch(watch());
+      storage.fail = true;
+      await expectLater(
+        store.records.saveWatch(watch(completed: true)),
+        throwsA(isA<FileSystemException>()),
+      );
+      storage.fail = false;
+      await store.records.saveWatch(watch(completed: true));
+      expect(storage.writes, 3);
+      expect(store.persistenceError, isNull);
+      await store.records.saveWatch(watch(completed: true));
+      expect(storage.writes, 3);
+      final restored = AppStore(storage: storage, provider: NoNetwork());
+      addTearDown(restored.dispose);
+      await restored.load();
+      expect(restored.records.history[drama.key]!.episodeCompleted, true);
+      final backup = store.records.inspectBackup(store.records.exportBackup());
+      expect(backup.history.single.episodeCompleted, true);
+      final old = watch(completed: true).toJson()..remove('episodeCompleted');
+      expect(WatchRecord.fromJson(old).episodeCompleted, false);
     },
   );
 

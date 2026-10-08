@@ -6,6 +6,7 @@ import 'package:background_downloader/background_downloader.dart';
 import '../data/app_store.dart';
 import '../data/download_store.dart';
 import '../domain/models.dart';
+import '../domain/watch_resume.dart';
 import 'components.dart';
 import 'episode_grid.dart';
 import 'player_page.dart';
@@ -48,7 +49,19 @@ Future<void> continueDrama(
     localOnly = true;
   }
   if (!context.mounted) return;
-  final index = episodes.indexWhere((e) => e.id == record.episodeId);
+  int index;
+  if (localOnly) {
+    // A downloaded successor may skip several episodes. Advance only to the
+    // adjacent original slot; otherwise replay the saved episode from zero.
+    index = episodes.indexWhere((e) => e.id == record.episodeId);
+    if (record.episodeCompleted &&
+        index + 1 < episodes.length &&
+        indices![index + 1] == indices[index] + 1) {
+      index++;
+    }
+  } else {
+    index = WatchResume(record, episodes).index;
+  }
   await Navigator.push(
     context,
     MaterialPageRoute<void>(
@@ -57,7 +70,7 @@ Future<void> continueDrama(
         downloads: downloads,
         drama: record.drama,
         episodes: episodes,
-        initialIndex: index < 0 ? 0 : index,
+        initialIndex: index,
         episodeIndices: indices,
         localOnly: localOnly,
       ),
@@ -227,12 +240,7 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   int _resumeIndex(List<Episode> rows) {
-    if (rows.isEmpty) return 0;
-    final record = widget.store.records.history[drama.key];
-    final index = record == null
-        ? -1
-        : rows.indexWhere((e) => e.id == record.episodeId);
-    return index < 0 ? 0 : index;
+    return WatchResume(widget.store.records.history[drama.key], rows).index;
   }
 
   Widget _bottomActions() => Material(
@@ -249,8 +257,9 @@ class _DetailPageState extends State<DetailPage> {
               future: _episodes,
               builder: (context, snapshot) {
                 final rows = snapshot.data ?? const <Episode>[];
-                final resumeIndex = _resumeIndex(rows);
                 final record = widget.store.records.history[drama.key];
+                final resume = WatchResume(record, rows);
+                final resumeIndex = resume.index;
                 return Row(
                   children: [
                     IconButton.filledTonal(
@@ -294,6 +303,10 @@ class _DetailPageState extends State<DetailPage> {
                                     : '暂无可播放分集')
                               : record == null
                               ? '开始观看'
+                              : !resume.canContinue
+                              ? resume.status == WatchStatus.completed
+                                    ? '重新观看'
+                                    : '重看第 ${rows[resumeIndex].number} 集'
                               : '继续第 ${rows[resumeIndex].number} 集',
                           textAlign: TextAlign.center,
                         ),

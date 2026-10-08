@@ -109,6 +109,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   Timer? _hideTimer, _preloadTimer, _settleTimer;
   StreamSubscription<List<ConnectivityResult>>? _network;
   int _index = 0;
+  bool _episodeCompleted = false;
   int get _generation => _session.generation;
   bool _controls = false, _locked = false, _fill = false;
   bool _loading = true;
@@ -305,6 +306,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               episodeId: widget.episodes[_index].id,
               episodeIndex: widget.episodeIndices?[_index] ?? _index,
               episodeNumber: widget.episodes[_index].number,
+              episodeCompleted: _episodeCompleted,
               positionMs: position.inMilliseconds,
               durationMs: duration.inMilliseconds,
               updatedAt: DateTime.now(),
@@ -336,6 +338,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     unawaited(_paused.catchError((Object _) {}));
     setState(() {
       _index = index;
+      _episodeCompleted = false;
       _active = null;
       _loading = true;
       _loadingPhase = '正在准备这一集…';
@@ -365,7 +368,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     var start =
         position ??
         (resume && record?.episodeId == widget.episodes[index].id
-            ? Duration(milliseconds: record!.positionMs)
+            ? Duration(
+                milliseconds: record!.episodeCompleted ? 0 : record.positionMs,
+              )
             : null);
     if (start != null && start > Duration.zero) _session.requireComplete(index);
     final attempt = PlaybackAttempt(
@@ -616,6 +621,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           unawaited(_recover());
           break;
         }
+        _episodeCompleted = true;
         _save();
         if (!_foreground && !_pipActive) break;
         if (widget.store.preferences.autoAdvance &&
@@ -1034,11 +1040,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       if (airplay.engaged && !airplay.preparing) {
         _airPlayResumePlaying = airplay.playing;
       }
-      if (_index != airplay.index) {
+      final changed = _index != airplay.index;
+      if (changed) {
         _index = airplay.index;
         if (_pages.hasClients) _pages.jumpToPage(_index);
       }
-      if (DateTime.now().difference(_lastSaved).inSeconds >= 10 ||
+      if (!airplay.preparing) _episodeCompleted = airplay.ended;
+      if (changed ||
+          DateTime.now().difference(_lastSaved).inSeconds >= 10 ||
           airplay.ended ||
           !airplay.engaged) {
         _save();
@@ -1143,9 +1152,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _playIntent = true;
       final value = controller.videoPlayerController?.value;
       final duration = value?.duration ?? Duration.zero;
-      if (duration > Duration.zero &&
-          value!.position >= duration - const Duration(milliseconds: 300)) {
+      if (_episodeCompleted ||
+          (duration > Duration.zero &&
+              value!.position >=
+                  duration - const Duration(milliseconds: 300))) {
+        final index = _index, generation = _generation;
         await controller.seekTo(Duration.zero);
+        if (!mounted || index != _index || generation != _generation) return;
+        _episodeCompleted = false;
+        _savePosition(Duration.zero, duration);
       }
       await controller.play();
     }
@@ -1373,7 +1388,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     final target = Duration(
       microseconds: position.inMicroseconds.clamp(0, duration.inMicroseconds),
     );
+    final index = _index, generation = _generation;
     await _player.seekTo(target);
+    if (!mounted || index != _index || generation != _generation) return;
+    if (_episodeCompleted && target < duration) {
+      _episodeCompleted = false;
+      _savePosition(target, duration);
+    }
   }
 
   Widget _transport() {
