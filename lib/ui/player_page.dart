@@ -26,6 +26,7 @@ import '../domain/playback_diagnostic.dart';
 import '../domain/playback_policy.dart';
 import '../platform/episode_buffer.dart' show EpisodeCancelled;
 import '../platform/playback_session.dart';
+import '../platform/playback_progress.dart';
 import '../platform/playback_recovery.dart';
 import '../platform/playback_lifecycle.dart';
 import '../platform/media_preparer.dart';
@@ -74,6 +75,7 @@ class PlayerPage extends StatefulWidget {
 class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   late final PageController _pages;
   late final PlaybackSessionController _session;
+  late final PlaybackProgressController _progress;
   late final BetterPlayerController _player;
   final GlobalKey _playerKey = GlobalKey();
   late final PlaybackRecoveryController _recovery;
@@ -109,8 +111,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   StreamSubscription<VideoEvent>? _nativeEvents;
   Timer? _hideTimer, _preloadTimer, _settleTimer;
   StreamSubscription<List<ConnectivityResult>>? _network;
-  int _index = 0;
-  bool _episodeCompleted = false;
+  int get _index => _progress.index;
+  bool get _episodeCompleted => _progress.completed;
   int? get _nextAdjacentEpisode => nextAdjacentEpisodeIndex(
     _index,
     widget.episodes.length,
@@ -130,12 +132,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   String? _error;
   String _loadingPhase = '正在查找本地视频…';
   PlaybackAttempt? _attempt;
-  DateTime _lastSaved = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
     super.initState();
-    _index = widget.initialIndex;
+    _progress = PlaybackProgressController(
+      drama: widget.drama,
+      episodes: widget.episodes,
+      initialIndex: widget.initialIndex,
+      episodeIndices: widget.episodeIndices,
+      saveWatch: widget.store.records.saveWatch,
+      now: widget.playbackClock,
+    );
     _speed = widget.store.preferences.playbackSpeed;
     _pages = PageController(initialPage: _index);
     _session = PlaybackSessionController(
@@ -286,14 +294,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     synchronize();
   }
 
-  void _save() {
-    if (_airPlayReturnPending && _airplay != null) {
-      _savePosition(_airplay!.position, _airplay!.duration);
+  void _save({bool force = true}) {
+    if ((_airPlayReturnPending || _airPlayReturning) && _airplay != null) {
+      _progress.save(_airplay!.position, _airplay!.duration, force: force);
       return;
     }
     if (_casting.blocksLocal && _casting.source != null) {
       final handoff = _casting.handoff;
-      if (handoff != null) _savePosition(handoff.position, handoff.duration);
+      if (handoff != null) {
+        _progress.save(handoff.position, handoff.duration, force: force);
+      }
       return;
     }
     final value = _active == null ? null : _player.videoPlayerController?.value;
@@ -302,31 +312,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         value.duration == Duration.zero) {
       return;
     }
-    _savePosition(
+    _progress.save(
       value.position,
       _active!.preparer.streaming && !_active!.preparer.complete
           ? Duration.zero
           : value.duration!,
-    );
-  }
-
-  void _savePosition(Duration position, Duration duration) {
-    _lastSaved = DateTime.now();
-    unawaited(
-      widget.store.records
-          .saveWatch(
-            WatchRecord(
-              drama: widget.drama,
-              episodeId: widget.episodes[_index].id,
-              episodeIndex: widget.episodeIndices?[_index] ?? _index,
-              episodeNumber: widget.episodes[_index].number,
-              episodeCompleted: _episodeCompleted,
-              positionMs: position.inMilliseconds,
-              durationMs: duration.inMilliseconds,
-              updatedAt: DateTime.now(),
-            ),
-          )
-          .catchError((Object _) {}),
+      force: force,
     );
   }
 
@@ -351,8 +342,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _paused = _active == null ? Future.value() : _player.pause();
     unawaited(_paused.catchError((Object _) {}));
     setState(() {
-      _index = index;
-      _episodeCompleted = false;
+      _progress.select(index);
       _active = null;
       _loading = true;
       _loadingPhase = '正在准备这一集…';
@@ -635,7 +625,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           unawaited(_recover());
           break;
         }
-        setState(() => _episodeCompleted = true);
+        setState(() => _progress.completed = true);
         _save();
         if (!_foreground && !_pipActive) break;
         final next = _nextAdjacentEpisode;
@@ -657,7 +647,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             value.position > initial) {
           _finishAttempt(PlaybackResult.started);
         }
-        if (DateTime.now().difference(_lastSaved).inSeconds >= 10) _save();
+        _save(force: false);
         break;
       case BetterPlayerEventType.exception:
         if (_localBlocked) break;
@@ -918,10 +908,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _preloadTimer?.cancel();
       _hideTimer?.cancel();
       final state = _casting.latest.state;
-      if (_casting.reportedPosition != null &&
-          (state != _lastCastState ||
-              DateTime.now().difference(_lastSaved).inSeconds >= 10)) {
-        _save();
+      if (_casting.reportedPosition != null) {
+        _save(force: state != _lastCastState);
       }
       _lastCastState = state;
     } else {
@@ -933,7 +921,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   Future<void> _returnFromCast(CastHandoff handoff) async {
     if (!mounted || _active == null) return;
     final generation = _generation;
-    _savePosition(handoff.position, handoff.duration);
+    _progress.save(handoff.position, handoff.duration);
     _lifecycle.setExternalPlayback(false);
     _playIntent = handoff.playing;
     final duration =
@@ -1056,16 +1044,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       }
       final changed = _index != airplay.index;
       if (changed) {
-        _index = airplay.index;
+        _progress.select(airplay.index);
         if (_pages.hasClients) _pages.jumpToPage(_index);
       }
-      if (!airplay.preparing) _episodeCompleted = airplay.ended;
-      if (changed ||
-          DateTime.now().difference(_lastSaved).inSeconds >= 10 ||
-          airplay.ended ||
-          !airplay.engaged) {
-        _save();
-      }
+      if (!airplay.preparing) _progress.completed = airplay.ended;
+      _save(force: changed || airplay.ended || !airplay.engaged);
     }
     setState(() => _controls = true);
     if (!airplay.engaged && _airPlayReturnPending && !_airPlayReturning) {
@@ -1092,6 +1075,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       if (!mounted || airplay.routed) return;
       final position = airplay.position;
       final play = _airPlayResumePlaying && !airplay.ended;
+      _detachTimeline();
+      _active = null;
       _airPlayReturnPending = false;
       _lifecycle.setExternalPlayback(false);
       setState(() {
@@ -1173,8 +1158,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         final index = _index, generation = _generation;
         await controller.seekTo(Duration.zero);
         if (!mounted || index != _index || generation != _generation) return;
-        _episodeCompleted = false;
-        _savePosition(Duration.zero, duration);
+        _progress.completed = false;
+        _progress.save(Duration.zero, duration);
       }
       await controller.play();
     }
@@ -1435,8 +1420,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     await _player.seekTo(target);
     if (!mounted || index != _index || generation != _generation) return;
     if (_episodeCompleted && target < duration) {
-      setState(() => _episodeCompleted = false);
-      _savePosition(target, duration);
+      setState(() => _progress.completed = false);
+      _progress.save(target, duration);
     }
   }
 
