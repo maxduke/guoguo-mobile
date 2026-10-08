@@ -12,6 +12,7 @@ import 'package:guoguo_mobile/ui/home_page.dart';
 import 'package:guoguo_mobile/ui/player_page.dart';
 
 import 'widget_test.dart' show NoNetwork;
+import 'support/download_page_actions.dart';
 
 DownloadEntry _entry(int number, {bool ready = true, String? failure}) =>
     DownloadEntry(
@@ -86,16 +87,36 @@ class _Routes extends NavigatorObserver {
   }
 }
 
+class _NoRequests extends NoNetwork {
+  final methods = <String>[];
+
+  @override
+  Future<Map<String, dynamic>> call(
+    String method, [
+    Map<String, dynamic> arguments = const {},
+  ]) async {
+    methods.add(method);
+    throw StateError('local playback must not contact the provider');
+  }
+}
+
 Future<({AppStore store, _Downloads downloads, _Routes routes})> _mount(
   WidgetTester tester,
   List<DownloadEntry> entries, {
   bool home = false,
+  bool expand = true,
+  Size size = const Size(1024, 1400),
+  double textScale = 1,
+  NoNetwork? provider,
 }) async {
-  tester.view.physicalSize = const Size(1024, 1400);
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  final store = AppStore(storage: MemoryStorage(), provider: NoNetwork());
+  final store = AppStore(
+    storage: MemoryStorage(),
+    provider: provider ?? NoNetwork(),
+  );
   final downloads = _Downloads(store)..entries = entries;
   final routes = _Routes();
   addTearDown(() async {
@@ -115,6 +136,12 @@ Future<({AppStore store, _Downloads downloads, _Routes routes})> _mount(
   });
   await tester.pumpWidget(
     MaterialApp(
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: TextScaler.linear(textScale)),
+        child: child!,
+      ),
       navigatorObservers: [routes],
       home: home
           ? HomePage(store: store, downloads: downloads, autoLoad: false)
@@ -132,6 +159,9 @@ Future<({AppStore store, _Downloads downloads, _Routes routes})> _mount(
     await tester.tap(find.text('下载'));
     await tester.pumpAndSettle();
   }
+  if (expand && entries.isNotEmpty) {
+    await expandDownloadGroup(tester, dramaKey: entries.first.drama.key);
+  }
   return (store: store, downloads: downloads, routes: routes);
 }
 
@@ -142,6 +172,246 @@ IconButton _play(WidgetTester tester, int number) => tester.widget<IconButton>(
 );
 
 void main() {
+  testWidgets(
+    'mixed downloads and new dramas stay visible with episodes collapsed',
+    (tester) async {
+      final entries = [
+        _entry(4),
+        _entry(1, ready: false, failure: '失败'),
+        _entry(2, ready: false)..processing = true,
+      ];
+      final (:downloads, routes: _, store: _) = await _mount(
+        tester,
+        entries,
+        expand: false,
+      );
+      expect(find.text('已下载 1 集 · 下载失败 1 集 · 正在整理视频 1 集'), findsOneWidget);
+      expect(find.text('本地播放'), findsOneWidget);
+      expect(find.byType(Dismissible), findsNothing);
+      final other = DownloadEntry.fromJson({
+        ..._entry(8).toJson(),
+        'drama': const Drama(
+          id: 'test',
+          source: DramaSource.huangguo,
+          title: '另一站的剧',
+          episodes: 99,
+        ).toJson(),
+      });
+      downloads.entries.add(other);
+      downloads.notifyListeners();
+      await tester.pumpAndSettle();
+      expect(find.text('2 部剧 · 2 集可播放'), findsOneWidget);
+      expect(find.text('查看分集'), findsNWidgets(2));
+      expect(find.byType(Dismissible), findsNothing);
+      expect(find.textContaining('/99'), findsNothing);
+      entries[2]
+        ..processing = false
+        ..awaitingProcessing = true;
+      downloads.notifyListeners();
+      await tester.pumpAndSettle();
+      expect(find.textContaining('等待整理 1 集'), findsOneWidget);
+      await expandDownloadGroup(tester, dramaKey: 'hongguo:test');
+      expect(find.text('第 1 集'), findsOneWidget);
+      expect(find.text('第 8 集'), findsNothing);
+      await tester.tap(find.text('收起分集'));
+      await tester.pumpAndSettle();
+      expect(find.byType(Dismissible), findsNothing);
+      expect(downloads.entries.map((e) => e.id), ['4', '1', '2', '8']);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final scenario in [
+    (episode: 4, completed: false, label: '继续观看', target: 4, index: 1),
+    (episode: 4, completed: true, label: '继续观看', target: 5, index: 2),
+    (episode: 1, completed: true, label: '重播第 1 集', target: 1, index: 0),
+    (episode: 5, completed: true, label: '重播第 5 集', target: 5, index: 2),
+    (episode: 2, completed: false, label: '本地播放', target: 1, index: 0),
+  ]) {
+    testWidgets(
+      'card ${scenario.label} respects local gaps for saved episode ${scenario.episode}',
+      (tester) async {
+        final provider = _NoRequests();
+        final (:downloads, :routes, :store) = await _mount(
+          tester,
+          [_entry(5), _entry(1), _entry(4), _entry(2, ready: false)],
+          expand: false,
+          provider: provider,
+        );
+        store.setOffline(scenario.completed);
+        await store.records.saveWatch(
+          WatchRecord(
+            drama: downloads.entries.first.drama,
+            episodeId: '${scenario.episode}',
+            episodeIndex: 99,
+            episodeCompleted: scenario.completed,
+            positionMs: 12000,
+            durationMs: 60000,
+            updatedAt: DateTime.utc(2026, 10, 8),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final element = tester.element(find.byType(DownloadsPage));
+        final play = tester
+            .widget<FilledButton>(
+              find.byKey(const ValueKey('download-play-hongguo:test')),
+            )
+            .onPressed!;
+        expect(find.text(scenario.label), findsOneWidget);
+        play();
+        play();
+        expect(downloads.checked, ['${scenario.target}']);
+        downloads.checks.single.complete('/local.mp4');
+        await tester.idle();
+        final player = routes.players.single.builder(element) as PlayerPage;
+        expect(player.initialIndex, scenario.index);
+        expect(player.episodeIndices, [0, 3, 4]);
+        expect(player.episodes.map((e) => e.number), [1, 4, 5]);
+        expect(player.localOnly, isTrue);
+        expect(provider.methods, isEmpty);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets(
+    'removing history restores local play and card check failures are retryable',
+    (tester) async {
+      final (:downloads, :routes, :store) = await _mount(tester, [
+        _entry(1),
+      ], expand: false);
+      await store.records.saveWatch(
+        WatchRecord(
+          drama: downloads.entries.single.drama,
+          episodeId: '1',
+          episodeIndex: 0,
+          positionMs: 1000,
+          durationMs: 60000,
+          updatedAt: DateTime.utc(2026, 10, 8),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('继续观看'), findsOneWidget);
+      await store.records.removeHistory('hongguo:test');
+      await tester.pumpAndSettle();
+      expect(find.text('本地播放'), findsOneWidget);
+      await tester.tap(find.text('本地播放'));
+      downloads.checks.single.complete(null);
+      await tester.pumpAndSettle();
+      expect(find.text('视频文件已不存在，请重新下载'), findsOneWidget);
+      expect(routes.players, isEmpty);
+      await tester.tap(find.text('本地播放'));
+      expect(downloads.checked, ['1', '1']);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'filters keep full card totals and scope collapsed selection; cancel and sorting retain it',
+    (tester) async {
+      final (:downloads, routes: _, store: _) = await _mount(tester, [
+        _entry(1),
+        _entry(2, ready: false),
+      ], expand: false);
+      downloads.bytesByEntry.addAll({'1': 1024, '2': 2048});
+      downloads.notifyListeners();
+      await tester.pumpAndSettle();
+      await setDownloadFilters(tester, status: '未完成 1');
+      expect(find.text('红果 · 2 集下载 · 3.0 KB'), findsOneWidget);
+      expect(find.text('已下载 1 集 · 排队中 1 集'), findsOneWidget);
+      expect(find.text('1 部剧 · 1 集可播放'), findsOneWidget);
+      await tester.tap(find.text('多选'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(Checkbox));
+      await tester.pumpAndSettle();
+      expect(find.text('删除 (1)'), findsOneWidget);
+      await openDownloadFilters(tester);
+      await tester.tap(find.text('已完成 1'));
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('删除 (1)'), findsOneWidget);
+      expect(find.text('全部站源 · 未完成 · 最近添加'), findsOneWidget);
+      await setDownloadFilters(tester, sort: '剧名排序');
+      expect(find.text('删除 (1)'), findsOneWidget);
+      await tester.tap(find.text('删除 (1)'));
+      await tester.pumpAndSettle();
+      expect(find.text('删除 1 个下载？'), findsOneWidget);
+      expect(find.textContaining('1 集，已保存文件占用 2.0 KB'), findsOneWidget);
+      await tester.tap(find.text('保留'));
+      await tester.pumpAndSettle();
+      await setDownloadFilters(tester, reset: true);
+      expect(find.text('删除 (0)'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'cards, episodes and filters stay usable at 320px with large text',
+    (tester) async {
+      final (:downloads, :store, routes: _) = await _mount(
+        tester,
+        [_entry(1), _entry(4, ready: false, failure: '网络连接中断')],
+        expand: false,
+        size: const Size(320, 760),
+        textScale: 1.6,
+      );
+      expect(find.text('本地播放').hitTestable(), findsOneWidget);
+      expect(find.text('查看分集').hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await openDownloadFilters(tester);
+      expect(find.text('应用').hitTestable(), findsOneWidget);
+      expect(find.text('重置筛选').hitTestable(), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await setDownloadFilters(tester, status: '失败 1');
+      expect(find.text('本地播放'), findsOneWidget);
+      await expandDownloadGroup(tester);
+      await tester.ensureVisible(find.text('第 4 集'));
+      expect(find.text('第 1 集'), findsNothing);
+      expect(find.text('第 4 集'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await setDownloadFilters(tester, reset: true);
+      expect(find.text('已下载 1 集 · 下载失败 1 集'), findsOneWidget);
+      // Group selection stays within the card, including when episodes are open.
+      await tester.scrollUntilVisible(
+        find.text('多选'),
+        -200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.text('多选'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byType(Checkbox), findsWidgets);
+      expect(downloads.entries, hasLength(2));
+      expect(store.records.history, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'space management uses shared cards and system back restores downloads',
+    (tester) async {
+      await _mount(tester, [_entry(1)], expand: false, home: true);
+      await tester.tap(find.byTooltip('空间管理'));
+      await tester.pumpAndSettle();
+      expect(find.text('已保存文件占用'), findsOneWidget);
+      expect(find.text('本地播放'), findsNothing);
+      expect(find.byTooltip('删除整部剧下载'), findsOneWidget);
+      final route = ModalRoute.of(tester.element(find.byType(HomePage)))!;
+      expect(route.popDisposition, RoutePopDisposition.doNotPop);
+      await tester.tap(find.text('剧库'));
+      await tester.pumpAndSettle();
+      expect(route.popDisposition, RoutePopDisposition.bubble);
+      await tester.tap(find.text('下载'));
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('我的下载'), findsOneWidget);
+      expect(find.text('本地播放'), findsOneWidget);
+      expect(find.byType(Dismissible), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('repeated play checks once and opens one sparse offline queue', (
     tester,
   ) async {
@@ -150,8 +420,7 @@ void main() {
       _entry(1),
       _entry(2, ready: false),
     ]);
-    await tester.tap(find.text('已完成 2'));
-    await tester.pumpAndSettle();
+    await setDownloadFilters(tester, status: '已完成 2');
     final element = tester.element(find.byType(DownloadsPage));
     final first = _play(tester, 4).onPressed!;
     final other = _play(tester, 1).onPressed!;
@@ -320,14 +589,19 @@ void main() {
       downloads.checks.single.complete('/old.mp4');
       await tester.pumpAndSettle();
       expect(routes.players, isEmpty);
+      expect(find.text('第 2 集'), findsNothing);
+      await expandDownloadGroup(tester);
       expect(find.text('第 2 集'), findsOneWidget);
       expect(find.text('第 1 集'), findsNothing);
+      await openDownloadFilters(tester);
       expect(
         tester
-            .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '未完成 1'))
+            .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '全部 1'))
             .selected,
         isTrue,
       );
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
       replacement.entries.single.progress = .5;
       replacement.notifyListeners();
       await tester.pumpAndSettle();
@@ -368,6 +642,7 @@ void main() {
         second,
         _entry(3),
       ]);
+      await setDownloadFilters(tester, status: '未完成 2');
       await tester.longPress(find.text('第 1 集'));
       await tester.pumpAndSettle();
       expect(find.text('删除 (1)'), findsOneWidget);
@@ -379,15 +654,13 @@ void main() {
       second.ready = true;
       downloads.notifyListeners();
       await tester.pumpAndSettle();
-      expect(find.text('未完成 1'), findsOneWidget);
-      expect(find.text('已完成 2'), findsOneWidget);
+      expect(find.text('已下载 2 集 · 排队中 1 集'), findsOneWidget);
       expect(find.text('删除 (1)'), findsOneWidget);
       first.ready = true;
       downloads.notifyListeners();
       await tester.pumpAndSettle();
       expect(find.text('删除 (0)'), findsOneWidget);
-      await tester.tap(find.text('已完成 3'));
-      await tester.pumpAndSettle();
+      await setDownloadFilters(tester, status: '已完成 3');
       expect(find.text('删除 (0)'), findsOneWidget);
       expect(
         tester
@@ -412,40 +685,39 @@ void main() {
       });
       final entries = [_entry(4), _entry(1, ready: false), other];
       final (:downloads, routes: _, store: _) = await _mount(tester, entries);
-      await tester.tap(find.text('全部 3'));
-      await tester.pumpAndSettle();
       await tester.longPress(find.text('第 4 集'));
       await tester.pumpAndSettle();
       expect(find.text('删除 (1)'), findsOneWidget);
-      await tester.tap(find.text('全部站源'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('黄果'));
-      await tester.pumpAndSettle();
+      await setDownloadFilters(tester, source: '黄果');
       expect(find.text('删除 (0)'), findsOneWidget);
-      expect(find.text('全部 1'), findsOneWidget);
       expect(find.text('本地测试'), findsNothing);
       await tester.tap(find.text('完成'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('黄果'));
+      await setDownloadFilters(tester, reset: true);
+      await tester.tap(find.byTooltip('空间管理'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('全部站源'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('按剧空间'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('本地测试'));
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('download-hongguo:test')),
+          matching: find.text('查看分集'),
+        ),
+      );
       await tester.pumpAndSettle();
       expect(find.text('正在查看单部剧 · 显示全部'), findsOneWidget);
-      expect(find.text('全部 2'), findsOneWidget);
-      expect(find.text('未完成 1'), findsOneWidget);
-      expect(find.text('已完成 1'), findsOneWidget);
       expect(find.text('另一站的剧'), findsNothing);
+      await openDownloadFilters(tester);
+      for (final label in ['全部 2', '未完成 1', '已完成 1']) {
+        expect(find.text(label), findsOneWidget);
+      }
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
       expect(
         tester.getTopLeft(find.text('第 1 集')).dy,
         lessThan(tester.getTopLeft(find.text('第 4 集')).dy),
       );
       await tester.tap(find.text('正在查看单部剧 · 显示全部'));
       await tester.pumpAndSettle();
-      expect(find.text('全部 3'), findsOneWidget);
+      expect(find.text('2 部剧 · 2 集可播放'), findsOneWidget);
       expect(find.text('另一站的剧'), findsOneWidget);
       expect(downloads.entries.map((entry) => entry.id), ['4', '1', '8']);
       expect(tester.takeException(), isNull);
@@ -463,8 +735,7 @@ void main() {
       ]);
       downloads.retryFailures.add('2');
       downloads.retryGate = Completer<void>();
-      await tester.tap(find.text('失败 2'));
-      await tester.pumpAndSettle();
+      await setDownloadFilters(tester, status: '失败 2');
       await tester.longPress(find.text('第 1 集'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('全选'));
@@ -477,7 +748,7 @@ void main() {
       downloads.retryGate!.complete();
       await tester.pumpAndSettle();
       expect(downloads.retries, ['1', '2']);
-      expect(find.text('失败 2'), findsOneWidget);
+      expect(find.text('全部站源 · 失败 · 最近添加'), findsOneWidget);
       expect(find.text('删除 (1)'), findsOneWidget);
       expect(find.textContaining('1 个已重试，1 个未完成'), findsOneWidget);
       expect(tester.takeException(), isNull);

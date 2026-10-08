@@ -12,6 +12,7 @@ import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/ui/downloads_page.dart';
 import 'package:guoguo_mobile/ui/theme.dart';
 import 'widget_test.dart' show NoNetwork;
+import 'support/download_page_actions.dart';
 
 class _PreviewDownloads extends DownloadStore {
   _PreviewDownloads(super.app);
@@ -53,7 +54,7 @@ void main() {
       }
       await Directory('build/download-previews').create(recursive: true);
     });
-    for (final width in [390.0, 1024.0]) {
+    for (final width in [320.0, 390.0, 1024.0]) {
       for (final mode in [Brightness.light, Brightness.dark]) {
         tester.view.physicalSize = Size(width, 844);
         tester.view.devicePixelRatio = 1;
@@ -93,6 +94,12 @@ void main() {
             child: MaterialApp(
               debugShowCheckedModeBanner: false,
               theme: guoguoTheme(mode),
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  textScaler: TextScaler.linear(width == 320 ? 1.6 : 1),
+                ),
+                child: child!,
+              ),
               home: Scaffold(
                 appBar: AppBar(title: const Text('果果')),
                 body: DownloadsPage(
@@ -105,9 +112,25 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        for (final view in ['tasks', 'storage']) {
+        for (final view in [
+          'tasks',
+          if (width == 320) 'filters',
+          if (width == 320) 'episodes',
+          'storage',
+        ]) {
+          if (view == 'filters') {
+            await openDownloadFilters(tester);
+          }
+          if (view == 'episodes') {
+            await expandDownloadGroup(tester);
+          }
           if (view == 'storage') {
-            await tester.tap(find.text('按剧空间'));
+            await tester.scrollUntilVisible(
+              find.byTooltip('空间管理'),
+              -200,
+              scrollable: find.byType(Scrollable).first,
+            );
+            await tester.tap(find.byTooltip('空间管理'));
             await tester.pumpAndSettle();
           }
           expect(tester.takeException(), isNull);
@@ -123,6 +146,10 @@ void main() {
             ).writeAsBytes(bytes!.buffer.asUint8List());
             image.dispose();
           });
+          if (view == 'filters') {
+            await tester.binding.handlePopRoute();
+            await tester.pumpAndSettle();
+          }
         }
         await tester.pumpWidget(const SizedBox());
         downloads.dispose();
