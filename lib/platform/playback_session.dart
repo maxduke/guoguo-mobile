@@ -4,6 +4,7 @@ import '../domain/models.dart';
 import '../domain/playback_diagnostic.dart';
 import 'episode_buffer.dart';
 import 'media_preparer.dart';
+import 'playback_failure.dart';
 import 'provider_client.dart';
 
 /// A session-owned result. Its media and temporary files leave together.
@@ -166,7 +167,7 @@ class PlaybackSessionController {
       timing.local = path != null;
       if (path == null) {
         if (!canResolve()) {
-          throw const ProviderException('此分集尚未下载，请联网后播放');
+          throw const LocalEpisodeUnavailable();
         }
         stageName = 'resolve';
         _phase(index, '正在获取播放资源…');

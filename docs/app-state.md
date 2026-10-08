@@ -65,6 +65,10 @@
 
 AirPlay 返回手机期间，观看记录继续采用原生队列的分集和位置，直到手机恢复完成；旧手机源先解除当前播放身份。准备或恢复定位期间进入后台，以及恢复失败后退出，都不能把旧手机位置写到当前 AirPlay 分集。
 
+`PlaybackFailure` 将已知连接失败、离线缺文件、取消和 AirPlay 占用转换为固定提示，未知异常使用通用文案。离线缺文件只接受主动重新检查或选集；取消、存储不足及组件未就绪不执行自动恢复。连接失败沿用有限恢复预算，耗尽后保留网络提示。诊断仍只记录既有结构化字段，不保存异常文本或媒体地址。
+
+`PlayerNotice` 共用缺集、播放失败及 AirPlay 提示的布局。远端占用时隐藏本地重试，使用系统设备选择入口；因路由拒绝的播放在切回 iPhone 后恢复。AirPlay 返回失败提供专用重试，设备选择和返回期间阻止重复操作，并保留原有进度与播放意图。
+
 `PlayerPage` 继续协调既有播放、恢复、生命周期和独立投屏会话；本轮没有合并 AirPlay 与手机播放器，也没有删除设备兼容、失败回退和换集资源保留逻辑。
 
 ## 回归测试
@@ -79,6 +83,7 @@ AirPlay 返回手机期间，观看记录继续采用原生队列的分集和位
 - `test/watch_resume_test.dart`：按 ID 计算下一集、完结/连载/未知状态与目录更新后的续播恢复。
 - `test/episode_queue_test.dart`、`test/offline_episode_gap_test.dart`：原始位置相邻判断、缺集时本地/PiP/AirPlay 停止自动连播、连续下载与手动跳集、重播/回退后清除提示。
 - `test/playback_progress_test.dart`、`test/player_cast_handoff_test.dart`：进度提交节流、记录快照身份、写入失败后重试，以及 AirPlay 返回期间准备/定位阻塞和失败时的进度归属。
+- `test/playback_failure_test.dart`、`test/player_error_actions_test.dart`：固定错误提示、有限网络恢复、离线重新检查和选集、取消诊断及重复重试；AirPlay 设备选择/返回失败的恢复操作由交接测试覆盖。
 - `test/continue_and_range_test.dart`：非连续原始集号展示、追剧续播来源筛选、播完状态展示、离线缺集与下载范围。
 - 原有分区存储、备份、更新提醒、请求取消、播放器交接和 PiP 测试继续保留。
 
