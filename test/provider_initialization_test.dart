@@ -12,6 +12,39 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   tearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
+  for (final sample in <(String, String?)>[
+    (
+      'Get https://site.invalid/?token=secret: 地址指向内网或保留网络（198.18.0.1）',
+      '站点域名解析异常，可尝试切换网络后重试',
+    ),
+    (
+      'Get https://site.invalid/?token=secret: context deadline exceeded',
+      '站点连接超时，请稍后重试',
+    ),
+    ('site.invalid HTTP 200：站点要求浏览器验证', '站点要求浏览器验证，暂时无法加载'),
+    ('site.invalid HTTP 429，已暂停该域名请求', '站点暂时限制请求，请稍后重试'),
+    ('https://private.invalid?token=secret', null),
+  ]) {
+    test('native failure has a fixed safe hint: ${sample.$2}', () async {
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'initialize') return null;
+        final method = (jsonDecode(call.arguments as String) as Map)['method'];
+        if (method == 'coreInfo') return jsonEncode({'protocol': 3});
+        throw PlatformException(code: 'provider', message: sample.$1);
+      });
+      final provider = NativeProviderClient();
+      await provider.initialize('/providers');
+      await expectLater(
+        provider.call('ranking', {'board': 'huangguo-hot', 'refresh': true}),
+        throwsA(
+          isA<ProviderException>()
+              .having((e) => e.failureHint, 'safe hint', sample.$2)
+              .having((e) => e.userMessage, 'display message', '站源暂时不可用，请稍后重试'),
+        ),
+      );
+    });
+  }
+
   test(
     'native failures separate diagnostic details from display messages',
     () async {

@@ -81,15 +81,39 @@ class NativeProviderClient implements ProviderClient {
       throw ProviderException(
         error.message ?? '站源暂时不可用，请稍后重试',
         userMessage: '站源暂时不可用，请稍后重试',
+        failureHint: _failureHint(error.message),
       );
     }
+  }
+
+  static String? _failureHint(String? message) {
+    final text = message?.toLowerCase() ?? '';
+    if (text.contains('已暂停该域名请求')) {
+      return '站点暂时限制请求，请稍后重试';
+    }
+    if (text.contains('浏览器验证') || text.contains('cloudflare')) {
+      return '站点要求浏览器验证，暂时无法加载';
+    }
+    if (text.contains('域名解析失败') ||
+        text.contains('dns') ||
+        text.contains('no such host') ||
+        text.contains('内网或保留网络') ||
+        text.contains('没有可用的公网地址')) {
+      return '站点域名解析异常，可尝试切换网络后重试';
+    }
+    if (text.contains('deadline exceeded') || text.contains('timeout')) {
+      return '站点连接超时，请稍后重试';
+    }
+    return null;
   }
 }
 
 class ProviderException implements Exception {
-  const ProviderException(this.message, {String? userMessage})
+  const ProviderException(this.message, {String? userMessage, this.failureHint})
     : _userMessage = userMessage;
   final String message;
+  // Fixed display text, never the native error's URL, credentials or IP address.
+  final String? failureHint;
   final String? _userMessage;
   String get userMessage => _userMessage ?? message;
   @override

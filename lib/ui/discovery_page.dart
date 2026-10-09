@@ -189,7 +189,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           _warning = result.warning;
         });
       }
-    } catch (_) {
+    } catch (failure) {
       if (current()) {
         setState(() {
           _error = store.offline
@@ -197,6 +197,11 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
               : _rows.isEmpty
               ? '栏目暂时无法加载，请重试'
               : '栏目更新失败，已保留现有内容';
+          if (!store.offline &&
+              failure is ProviderException &&
+              failure.failureHint != null) {
+            _error = '$_error\n${failure.failureHint}';
+          }
         });
       }
     } finally {

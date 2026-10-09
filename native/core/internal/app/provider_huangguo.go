@@ -522,6 +522,7 @@ func (d *Downloader) fetchProviderTextURL(ctx context.Context, rawURL, referer s
 			if huangguoAIIsKnownHost(candidate) {
 				// Reuse pinned public-DNS transport for discovered HTML routes and redirects.
 				requestCtx = context.WithValue(ctx, coverRequestKey{}, true)
+				requestCtx = context.WithValue(requestCtx, coverSourceKey{}, sourceHuangguoAI)
 			}
 			req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, candidate, nil)
 			if err != nil {

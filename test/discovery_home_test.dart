@@ -104,6 +104,50 @@ List<String> _ids(WidgetTester tester) => tester
     .toList();
 
 void main() {
+  testWidgets('cold Huangguo home refresh calls the core again after failure', (
+    tester,
+  ) async {
+    final (:store, :provider) = await _fixture(
+      tester,
+      source: DramaSource.huangguo,
+    );
+    await tester.pumpWidget(_discovery(store));
+    void completeBoards() => provider.requests.last.result.complete({
+      'items': [
+        {'id': 'huangguo-hot', 'name': '热播榜'},
+      ],
+    });
+    completeBoards();
+    await tester.pump();
+    provider.requests.last.result.completeError(
+      const ProviderException(
+        'https://site.invalid/?token=secret DNS failed before dialing',
+        failureHint: '站点域名解析异常，可尝试切换网络后重试',
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('站点域名解析异常'), findsOneWidget);
+    expect(find.textContaining('secret'), findsNothing);
+    await tester.tap(find.byTooltip('更新首页栏目'));
+    await tester.pump();
+    completeBoards();
+    await tester.pump();
+    expect(provider.requests.map((r) => r.method), [
+      'boards',
+      'ranking',
+      'boards',
+      'ranking',
+    ]);
+    expect(provider.requests.last.args['refresh'], isTrue);
+    provider.requests.last.result.complete(
+      _column([
+        DiscoveryRow(_drama('117', source: DramaSource.huangguo), rank: 1),
+      ], DiscoveryKind.ranking),
+    );
+    await tester.pumpAndSettle();
+    expect(_ids(tester), ['117']);
+  });
+
   testWidgets(
     'Huangguo home refresh forces a new board read and keeps fallback age',
     (tester) async {
