@@ -64,6 +64,7 @@ type mobileRequest struct {
 	URL            string                     `json:"url"`
 	Board          string                     `json:"board"`
 	Page           int                        `json:"page"`
+	Refresh        bool                       `json:"refresh"`
 	Quality        int                        `json:"quality"`
 	Chapter        Chapter                    `json:"chapter"`
 }
@@ -357,7 +358,7 @@ func (c *MobileClient) Call(raw string) (string, error) {
 		if page > 100 {
 			return "", errors.New("页码超出范围")
 		}
-		result, err := c.downloader.loadRankingPage(ctx, board, page, false)
+		result, err := c.downloader.loadRankingPage(ctx, board, page, request.Refresh)
 		if err != nil {
 			return "", publicError(err)
 		}
@@ -365,7 +366,7 @@ func (c *MobileClient) Call(raw string) (string, error) {
 		for _, item := range result.Items {
 			rows = append(rows, map[string]any{"rank": item.Rank, "position": item.Position, "drama": mobileDramas([]Drama{item.Drama})[0]})
 		}
-		value = map[string]any{"items": rows, "hasMore": result.HasMore, "warning": result.Warning, "kind": result.Kind, "description": result.Description}
+		value = map[string]any{"boardId": result.BoardID, "page": result.Page, "items": rows, "hasMore": result.HasMore, "warning": result.Warning, "kind": result.Kind, "description": result.Description, "fetchedAt": result.FetchedAt, "stale": result.Stale}
 	case "resolve":
 		if request.Chapter.ID == "" {
 			return "", errors.New("缺少分集 ID")

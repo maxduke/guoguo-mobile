@@ -206,8 +206,9 @@ extension ProviderOperations on ProviderClient {
     DramaSource source,
     String board, {
     int page = 1,
+    bool refresh = false,
   }) async => DiscoveryColumnResult.fromJson(
-    await call('ranking', {'board': board, 'page': page}),
+    await call('ranking', {'board': board, 'page': page, 'refresh': refresh}),
     source,
     board: board,
     page: page,

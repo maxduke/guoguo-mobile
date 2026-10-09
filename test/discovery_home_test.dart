@@ -105,6 +105,56 @@ List<String> _ids(WidgetTester tester) => tester
 
 void main() {
   testWidgets(
+    'Huangguo home refresh forces a new board read and keeps fallback age',
+    (tester) async {
+      final (:store, :provider) = await _fixture(
+        tester,
+        source: DramaSource.huangguo,
+      );
+      await tester.pumpWidget(_discovery(store));
+      provider.requests.last.result.complete({
+        'items': [
+          {'id': 'huangguo-hot', 'name': '热播榜'},
+        ],
+      });
+      await tester.pump();
+      final fetchedAt = DateTime.utc(2026, 10, 8, 12);
+      expect(provider.requests.last.args['refresh'], isFalse);
+      final rows = [
+        DiscoveryRow(_drama('117', source: DramaSource.huangguo), rank: 1),
+      ];
+      provider.requests.last.result.complete({
+        ..._column(rows, DiscoveryKind.ranking),
+        'fetchedAt': fetchedAt.toIso8601String(),
+      });
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('更新首页栏目'));
+      await tester.pump();
+      provider.requests.last.result.complete({
+        'items': [
+          {'id': 'huangguo-hot', 'name': '热播榜'},
+        ],
+      });
+      await tester.pump();
+      expect(provider.requests.last.args['refresh'], isTrue);
+      provider.requests.last.result.complete({
+        ..._column(rows, DiscoveryKind.ranking),
+        'fetchedAt': fetchedAt.toIso8601String(),
+        'stale': true,
+        'warning': '站点暂不可用',
+      });
+      await tester.pumpAndSettle();
+      expect(find.textContaining('缓存 · 上次获取'), findsOneWidget);
+      expect(
+        store.catalog.discoveryCache
+            .ranking(DramaSource.huangguo, 'huangguo-hot')!
+            .savedAt,
+        fetchedAt,
+      );
+    },
+  );
+
+  testWidgets(
     'the app defers its directory until library entry and keeps the preview on return',
     (tester) async {
       final (:store, :provider) = await _fixture(tester);
@@ -193,7 +243,11 @@ void main() {
         await tester.pump();
         await tester.pump();
         expect(provider.requests.map((r) => r.method), ['boards', 'ranking']);
-        expect(provider.requests.last.args, {'board': 'actual', 'page': 1});
+        expect(provider.requests.last.args, {
+          'board': 'actual',
+          'page': 1,
+          'refresh': false,
+        });
         provider.requests.last.result.complete(
           _column([
             DiscoveryRow(

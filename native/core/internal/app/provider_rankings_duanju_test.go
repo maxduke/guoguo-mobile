@@ -19,12 +19,12 @@ func TestDuanjuRankingDefinitionsAndKinds(t *testing.T) {
 		}
 		count++
 		sources[board.Source] = true
-		if board.ID != "yaguo-rank" && (board.Kind == rankingKindRanking || !strings.Contains(board.Description, "不代表官方排名")) {
+		if board.ID != "yaguo-rank" && board.ID != "chaoguo-hot" && (board.Kind == rankingKindRanking || !strings.Contains(board.Description, "不代表官方排名")) {
 			t.Fatalf("directory disguised as official ranks: %+v", board)
 		}
 	}
-	if count != 25 || len(sources) != 10 {
-		t.Fatalf("want 25 boards across 10 sources: %d %d", count, len(sources))
+	if count != 47 || len(sources) != 13 {
+		t.Fatalf("want 47 boards across 13 sources: %d %d", count, len(sources))
 	}
 	for _, id := range []string{"huangju-hot", "huangju-new", "yeguo-recommend", "dsd-catalog"} {
 		board, ok := findRankingBoard(id)
@@ -86,7 +86,13 @@ func TestDuanjuRankingDispatchPreservesProviderAndOrder(t *testing.T) {
 						t.Errorf("wrong niuguo category: %s", r.URL)
 					}
 					body = `{"data":[{"vod_id":"88","vod_name":"乙"},{"vod_id":"77","vod_name":"甲"}]}`
-				case sourceHuaguo, sourcePiguo, sourceWuguo:
+				case sourceChaoguo:
+					if board.path == "" {
+						body = `<li class="rank-item"><span class="rank-no">1</span><a class="rank-title" href="/drama/000088">乙</a></li><li class="rank-item"><span class="rank-no">2</span><a class="rank-title" href="/drama/000077">甲</a></li>`
+					} else {
+						body = `<a class="card" href="/drama/000088" title="乙"></a><a class="card" href="/drama/000077" title="甲"></a>`
+					}
+				case sourceHuaguo, sourcePiguo, sourceWuguo, sourceMiguo, sourceShuangguo:
 					switch board.Source {
 					case sourceHuaguo:
 						if r.URL.Query().Get("tid") != board.path {
@@ -115,7 +121,11 @@ func TestDuanjuRankingDispatchPreservesProviderAndOrder(t *testing.T) {
 				t.Fatalf("ranking dispatch: %+v err=%v", result, err)
 			}
 			for i, item := range result.Items {
-				if item.Drama.Source != board.Source || item.Drama.SourceID != []string{"88", "77"}[i] {
+				id := []string{"88", "77"}[i]
+				if board.Source == sourceChaoguo {
+					id = "0000" + id
+				}
+				if item.Drama.Source != board.Source || item.Drama.SourceID != id {
 					t.Fatalf("source/order changed: %+v", item)
 				}
 				if board.Kind == rankingKindRanking {

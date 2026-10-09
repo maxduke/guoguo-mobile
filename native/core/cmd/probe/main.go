@@ -17,17 +17,18 @@ import (
 )
 
 func main() {
-	query := flag.String("query", "", "inspect Hongguo search")
+	query := flag.String("query", "", "inspect source search")
 	genre := flag.String("genre", "", "inspect Hongguo recommendations: short_play, comic_series, ai_series")
-	source := flag.String("source", "hongguo", "hongguo, huangdou or huangguo")
+	source := flag.String("source", "hongguo", "source ID, including chaoguo, miguo and shuangguo")
+	detailProbe := flag.Bool("detail", false, "fetch the first drama's details and chapters without reading media")
 	mediaProbe := flag.Bool("media", false, "resolve one episode and fetch only its first 1024 bytes")
 	decodeProbe := flag.Bool("decode", false, "prepare and decode one full episode using a locally installed ffmpeg")
 	pages := flag.Int("pages", 1, "number of catalog pages to inspect")
 	covers := flag.Bool("covers", false, "fetch and decode up to three cover images through the mobile facade")
 	board := flag.String("board", "", "inspect a ranking board instead of the catalog")
 	flag.Parse()
-	if (*query != "" || *genre != "") && (*source != "hongguo" || *board != "" || *pages != 1 || (*query != "" && *genre != "")) {
-		fmt.Fprintln(os.Stderr, "query/genre requires hongguo, one page, and no board; use only one of query or genre")
+	if (*query != "" && (*board != "" || *genre != "")) || (*genre != "" && (*source != "hongguo" || *board != "" || *pages != 1)) {
+		fmt.Fprintln(os.Stderr, "query cannot combine with board/genre; genre requires hongguo, one page and no board")
 		os.Exit(2)
 	}
 	dir, err := os.MkdirTemp("", "guoguo-probe-")
@@ -45,7 +46,7 @@ func main() {
 		request, _ = json.Marshal(map[string]string{"method": "ranking", "board": *board})
 	}
 	if *query != "" {
-		request, _ = json.Marshal(map[string]string{"method": "search", "source": "hongguo", "query": *query})
+		request, _ = json.Marshal(map[string]string{"method": "search", "source": *source, "query": *query})
 	}
 	if *genre != "" {
 		request, _ = json.Marshal(map[string]any{"method": "recommendations", "recommendation": map[string]string{"genre": *genre}})
@@ -90,6 +91,9 @@ func main() {
 	more := rows.HasMore
 	for page := 2; page <= *pages && more; page++ {
 		request, _ = json.Marshal(map[string]any{"method": "catalog", "source": *source, "page": page})
+		if *query != "" {
+			request, _ = json.Marshal(map[string]any{"method": "search", "source": *source, "query": *query, "page": page})
+		}
 		if *board != "" {
 			request, _ = json.Marshal(map[string]any{"method": "ranking", "board": *board, "page": page})
 		}
@@ -148,7 +152,7 @@ func main() {
 			fmt.Printf("cover=%d bytes=%d type=%s\n", index+1, len(bytes), result.ContentType)
 		}
 	}
-	if (!*mediaProbe && !*decodeProbe) || len(rows.Items) == 0 {
+	if (!*detailProbe && !*mediaProbe && !*decodeProbe) || len(rows.Items) == 0 {
 		return
 	}
 	var drama struct {
@@ -157,6 +161,7 @@ func main() {
 	if err := json.Unmarshal(rows.Items[0], &drama); err != nil {
 		panic(err)
 	}
+	fmt.Printf("detailID=%s\n", drama.ID)
 	request, _ = json.Marshal(map[string]any{"method": "chapters", "id": drama.ID})
 	detail, err := c.Call(string(request))
 	if err != nil {
@@ -172,6 +177,10 @@ func main() {
 	if len(chapters.Chapters) == 0 {
 		fmt.Fprintln(os.Stderr, "no episodes")
 		os.Exit(1)
+	}
+	fmt.Printf("detail=passed episodes=%d\n", len(chapters.Chapters))
+	if !*mediaProbe && !*decodeProbe {
+		return
 	}
 	request, _ = json.Marshal(map[string]any{"method": "resolve", "id": drama.ID, "chapter": chapters.Chapters[0]})
 	resolved, err := c.Call(string(request))

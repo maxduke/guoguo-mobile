@@ -68,6 +68,28 @@ var rankingBoards = []rankingBoard{
 	{ID: "wuguo-travel", Source: sourceWuguo, Name: "穿越目录", Kind: rankingKindCatalog, Description: "伍果穿越分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "穿越"},
 	{ID: "wuguo-female", Source: sourceWuguo, Name: "女频目录", Kind: rankingKindCatalog, Description: "伍果女频分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "女频"},
 	{ID: "wuguo-male", Source: sourceWuguo, Name: "男频目录", Kind: rankingKindCatalog, Description: "伍果男频分类顺序，按源站返回顺序展示，序号为当前页目录位置，不代表官方排名。", path: "男频"},
+	{ID: "chaoguo-hot", Source: sourceChaoguo, Kind: rankingKindRanking, Name: "热播榜", Description: "超短剧站点官方热播榜，按站点播放量排序。", upstreamKey: "rank"},
+	{ID: "chaoguo-mainstream", Source: sourceChaoguo, Kind: rankingKindCatalog, Name: "主流剧情目录", Description: "超短剧主流剧情分类顺序，按源站返回顺序展示，不代表官方排名。", path: "class:mainstream"},
+	{ID: "chaoguo-adult", Source: sourceChaoguo, Kind: rankingKindCatalog, Name: "成人向目录", Description: "超短剧成人向分类顺序，按源站返回顺序展示，不代表官方排名。", path: "class:adult"},
+	{ID: "chaoguo-anime", Source: sourceChaoguo, Kind: rankingKindCatalog, Name: "动漫风格目录", Description: "超短剧动漫风格分类顺序，按源站返回顺序展示，不代表官方排名。", path: "class:anime_ip"},
+	{ID: "chaoguo-urban", Source: sourceChaoguo, Kind: rankingKindCatalog, Name: "都市目录", Description: "超短剧都市题材顺序，按源站返回顺序展示，不代表官方排名。", path: "tag:都市"},
+	{ID: "chaoguo-counter", Source: sourceChaoguo, Kind: rankingKindCatalog, Name: "逆袭目录", Description: "超短剧逆袭题材顺序，按源站返回顺序展示，不代表官方排名。", path: "tag:逆袭"},
+	{ID: "chaoguo-costume", Source: sourceChaoguo, Kind: rankingKindCatalog, Name: "古风目录", Description: "超短剧古风题材顺序，按源站返回顺序展示，不代表官方排名。", path: "tag:古风"},
+	{ID: "chaoguo-travel", Source: sourceChaoguo, Kind: rankingKindCatalog, Name: "穿越目录", Description: "超短剧穿越题材顺序，按源站返回顺序展示，不代表官方排名。", path: "tag:穿越"},
+	{ID: "miguo-short", Source: sourceMiguo, Kind: rankingKindCatalog, Name: "短剧目录", Description: "大米星球短剧分类顺序，按源站返回顺序展示，不代表官方排名。", path: "36"},
+	{ID: "miguo-series", Source: sourceMiguo, Kind: rankingKindCatalog, Name: "电视剧目录", Description: "大米星球电视剧分类顺序，按源站返回顺序展示，不代表官方排名。", path: "21"},
+	{ID: "miguo-movie", Source: sourceMiguo, Kind: rankingKindCatalog, Name: "电影目录", Description: "大米星球电影分类顺序，按源站返回顺序展示，不代表官方排名。", path: "20"},
+	{ID: "miguo-anime", Source: sourceMiguo, Kind: rankingKindCatalog, Name: "动漫目录", Description: "大米星球动漫分类顺序，按源站返回顺序展示，不代表官方排名。", path: "22"},
+	{ID: "miguo-variety", Source: sourceMiguo, Kind: rankingKindCatalog, Name: "综艺目录", Description: "大米星球综艺分类顺序，按源站返回顺序展示，不代表官方排名。", path: "23"},
+	{ID: "miguo-netflix", Source: sourceMiguo, Kind: rankingKindCatalog, Name: "Netflix目录", Description: "大米星球站点 Netflix 专区顺序，按源站返回顺序展示，不代表官方排名。", path: "netflix"},
+	{ID: "shuangguo-all", Source: sourceShuangguo, Kind: rankingKindCatalog, Name: "全部目录", Description: "爽果短剧网全部内容顺序，按源站返回顺序展示，不代表官方排名。", path: "all"},
+	{ID: "shuangguo-reversal", Source: sourceShuangguo, Kind: rankingKindCatalog, Name: "反转爽文目录", Description: "爽果反转爽文题材顺序，按源站返回顺序展示，不代表官方排名。", path: "反转爽文"},
+	{ID: "shuangguo-costume", Source: sourceShuangguo, Kind: rankingKindCatalog, Name: "古装仙侠目录", Description: "爽果古装仙侠题材顺序，按源站返回顺序展示，不代表官方排名。", path: "古装仙侠"},
+	{ID: "shuangguo-female", Source: sourceShuangguo, Kind: rankingKindCatalog, Name: "女频恋爱目录", Description: "爽果女频恋爱题材顺序，按源站返回顺序展示，不代表官方排名。", path: "女频恋爱"},
+	{ID: "shuangguo-era", Source: sourceShuangguo, Kind: rankingKindCatalog, Name: "年代穿越目录", Description: "爽果年代穿越题材顺序，按源站返回顺序展示，不代表官方排名。", path: "年代穿越"},
+	{ID: "shuangguo-romance", Source: sourceShuangguo, Kind: rankingKindCatalog, Name: "现代言情目录", Description: "爽果现代言情题材顺序，按源站返回顺序展示，不代表官方排名。", path: "现代言情"},
+	{ID: "shuangguo-urban", Source: sourceShuangguo, Kind: rankingKindCatalog, Name: "现代都市目录", Description: "爽果现代都市题材顺序，按源站返回顺序展示，不代表官方排名。", path: "现代都市"},
+	{ID: "shuangguo-short", Source: sourceShuangguo, Kind: rankingKindCatalog, Name: "短剧目录", Description: "爽果短剧题材顺序，按源站返回顺序展示，不代表官方排名。", path: "短剧"},
 }
 
 type rankingItem struct {
@@ -146,6 +168,9 @@ func (d *Downloader) loadRankingPage(ctx context.Context, board rankingBoard, pa
 	cache.pending[key] = pending
 	cache.mu.Unlock()
 
+	if refresh {
+		ctx = context.WithValue(ctx, providerTextNoCacheKey{}, true)
+	}
 	result, err := d.fetchRankingPage(ctx, board, page)
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
@@ -196,13 +221,12 @@ func (d *Downloader) fetchRankingPage(ctx context.Context, board rankingBoard, p
 		if page != 1 {
 			return rankingPage{}, errors.New("该榜单只有一页")
 		}
-		base := d.huangguoAIContentBaseURL(ctx)
-		pageURL := base + "/ranks/" + board.path + "/"
-		body, pageURL, err := d.fetchProviderTextURL(ctx, pageURL, base+"/")
-		if err != nil {
-			return rankingPage{}, err
+		return d.fetchHuangguoRankingPage(ctx, board)
+	case sourceChaoguo:
+		if board.path == "" {
+			return d.fetchChaoguoRankingPage(ctx, board, page)
 		}
-		return parseHuangguoRanking(body, board, pageURL)
+		return d.fetchCatalogRankingPage(ctx, board, page)
 	case sourceHuangju, sourceYeguo, sourceDSD:
 		return d.fetchCatalogRankingPage(ctx, board, page)
 	default:

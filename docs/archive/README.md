@@ -26,6 +26,7 @@
 - [upstream-refresh-2026-09-28.md](upstream-refresh-2026-09-28.md)
 - [upstream-refresh-2026-09.md](upstream-refresh-2026-09.md)
 - [upstream-refresh-2026-10-03.md](upstream-refresh-2026-10-03.md)
+- [upstream-refresh-2026-10-09.md](upstream-refresh-2026-10-09.md)
 - [upstream-review-2026-10-03-files.md](upstream-review-2026-10-03-files.md)
 - [upstream-review-2026-10-03.md](upstream-review-2026-10-03.md)
 - [v1-spec.md](v1-spec.md)

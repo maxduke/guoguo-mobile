@@ -94,7 +94,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     }
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool refresh = false}) async {
     if (!mounted || _loading || !widget.ready || !widget.active) return;
     final request = ++_generation;
     final store = widget.store, source = widget.source;
@@ -160,11 +160,18 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           _kind = board.kind;
           _description = board.description;
         });
-        final result = await store.provider.discoveryColumn(source, board.id);
+        final result = await store.provider.discoveryColumn(
+          source,
+          board.id,
+          refresh: refresh,
+        );
         if (!current()) return;
         final column = CachedDiscoveryColumn(
           result.rows,
-          savedAt: store.now(),
+          savedAt:
+              result.fetchedAt ??
+              (result.stale ? _savedAt : null) ??
+              store.now(),
           kind: result.kind,
           description: result.description,
           warning: result.warning,
@@ -178,7 +185,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
               ? board.description
               : result.description;
           _savedAt = column.savedAt;
-          _cached = false;
+          _cached = result.stale;
           _warning = result.warning;
         });
       }
@@ -213,7 +220,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           ? '真人剧推荐'
           : _board?.name ?? '当前站源栏目';
       return RefreshIndicator(
-        onRefresh: _load,
+        onRefresh: () => _load(refresh: true),
         child: CustomScrollView(
           key: PageStorageKey('discovery-${widget.source.name}'),
           physics: const AlwaysScrollableScrollPhysics(),
@@ -279,7 +286,9 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                         ),
                         IconButton(
                           tooltip: '更新首页栏目',
-                          onPressed: widget.ready && !_loading ? _load : null,
+                          onPressed: widget.ready && !_loading
+                              ? () => _load(refresh: true)
+                              : null,
                           icon: const Icon(Icons.refresh),
                         ),
                       ],
@@ -317,7 +326,9 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                       if (_error != null) ...[
                         Text(_error!),
                         TextButton.icon(
-                          onPressed: widget.ready && !_loading ? _load : null,
+                          onPressed: widget.ready && !_loading
+                              ? () => _load(refresh: true)
+                              : null,
                           icon: const Icon(Icons.refresh),
                           label: const Text('重试栏目'),
                         ),

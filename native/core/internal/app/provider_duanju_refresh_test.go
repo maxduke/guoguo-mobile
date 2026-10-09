@@ -16,12 +16,12 @@ import (
 )
 
 func TestDuanjuRemovedProvidersHaveNoRegistration(t *testing.T) {
-	for _, source := range []string{"wangguo", "faguo", "duanjuwangzhan", "短剧网站", "168", "xzyx168", "www.duanju2.com", "www.xzyx168.com"} {
+	for _, source := range []string{"wangguo", "faguo", "duanjuwangzhan", "短剧网站", "168", "xzyx168", "www.xzyx168.com"} {
 		if isDuanjuProviderSource(source) || duanjuSupportsSearch(source) {
 			t.Fatalf("removed provider still registered: %s", source)
 		}
 	}
-	for _, host := range []string{"www.duanju2.com", "duanju2.com", "www.xzyx168.com", "xzyx168.com"} {
+	for _, host := range []string{"www.xzyx168.com", "xzyx168.com"} {
 		if got := duanjuSourceForHost(host); got != "" {
 			t.Fatalf("removed host maps to %s", got)
 		}

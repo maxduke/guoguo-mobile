@@ -59,3 +59,17 @@ metadata is upgraded to HTTPS rather than allowing plaintext image requests.
 Yeguo's current `.callawtj.cc` routes and exact-origin configuration discovery
 are local fixes verified against the published routes (the reference revision
 still has the old behavior). See [the cover repair record](../../docs/archive/source-catalog-covers-2026-10-05.md) for tests, per-source network sampling and remaining limits.
+
+## October 9 provider refresh
+
+Chaoguo, Miguo and Shuangguo parsing, and selected MacCMS identity, title,
+playback and HTML request compatibility helpers are adapted from guoapp
+`8b98b4731d` (`0.2.120+2127`). The mobile registry, paged search, records,
+credentials and media proxy remain local. Catalog ordering is labeled as catalog
+position; Chaoguo's official hot chart retains its published ranks and artwork
+addresses. Miguo's single-page catalog does not advertise continuation.
+
+Ranking refresh and original fetch timestamps now cross the mobile facade;
+Huangguo route recovery and recognition of the current Shuangguo verification
+page are local fixes. See [the adoption record](../../docs/archive/upstream-refresh-2026-10-09.md)
+for selection decisions and live-network limits.

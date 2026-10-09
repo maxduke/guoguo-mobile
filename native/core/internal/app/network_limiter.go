@@ -41,6 +41,8 @@ func catalogResponseBlockReason(response *http.Response, body []byte) string {
 		reason = "Cloudflare 拒绝了当前请求"
 	} else if strings.EqualFold(response.Header.Get("Cf-Mitigated"), "challenge") || strings.Contains(page, "_cf_chl_opt") || strings.Contains(page, "<title>just a moment") && strings.Contains(page, "cloudflare") {
 		reason = "站点要求浏览器验证，当前请求无法通过"
+	} else if strings.Contains(page, "<title>安全验证</title>") && strings.Contains(page, `id="verifyform"`) && strings.Contains(page, `class="verify-card"`) {
+		reason = "站点要求浏览器验证，当前请求无法通过"
 	}
 	return reason
 }

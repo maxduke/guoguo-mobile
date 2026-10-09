@@ -35,8 +35,8 @@ func TestDuanjuRegistryKeepsDistinctIdentitiesFromExistingSources(t *testing.T) 
 	for _, source := range existing {
 		seen[source] = true
 	}
-	if len(duanjuProviderCatalog) != 10 {
-		t.Fatalf("duanju catalog should register 10 sources, got %d", len(duanjuProviderCatalog))
+	if len(duanjuProviderCatalog) != 13 {
+		t.Fatalf("duanju catalog should register 13 sources, got %d", len(duanjuProviderCatalog))
 	}
 	for _, spec := range duanjuProviderCatalog {
 		if seen[spec.ID] {
@@ -461,13 +461,13 @@ func TestDuanjuHeguoParsesNextDataWrappedResponses(t *testing.T) {
 }
 
 func TestDuanjuSearchSupportMatchesReferenceScripts(t *testing.T) {
-	supported := []string{sourceYaguo, sourceMaoguo, sourceFanguo, sourceGuanguo, sourceHeguo, sourceXingguo, sourceHuaguo, sourceNiuguo, sourcePiguo, sourceWuguo}
+	supported := []string{sourceYaguo, sourceMaoguo, sourceFanguo, sourceGuanguo, sourceHeguo, sourceXingguo, sourceHuaguo, sourceNiuguo, sourcePiguo, sourceWuguo, sourceChaoguo, sourceMiguo, sourceShuangguo}
 	for _, source := range supported {
 		if !duanjuSupportsSearch(source) {
 			t.Fatalf("%s should support online search", source)
 		}
 	}
-	if duanjuSupportsSearch("shuangguo") || duanjuSupportsSearch("muguo") {
+	if duanjuSupportsSearch("muguo") {
 		t.Fatal("removed sources must not advertise search")
 	}
 	if duanjuSupportsSearch(sourceHongguo) {

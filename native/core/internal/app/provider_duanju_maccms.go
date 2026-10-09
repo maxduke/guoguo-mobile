@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/net/html"
 )
@@ -28,7 +29,12 @@ type maccmsSourceProfile struct {
 
 var maccmsEpisodeLink = regexp.MustCompile(`(?i)/(?:vod/)?play/|/vodplay/|/drama-play|episode_id=`)
 
-var maccmsDetailLink = regexp.MustCompile(`(?i)/(?:index\.php/vod/)?(?:detail|vod|show|view|movie|drama|zywview|xzyxvd)/`)
+var maccmsDetailLink = regexp.MustCompile(`(?i)/(?:index\.php/vod/)?(?:voddetail|detail|vod|show|view|movie|drama|zywview|xzyxvd)/`)
+var maccmsCategoryLink = regexp.MustCompile(`(?i)/(?:[a-z]*type|search|vodshow|label|gbook|rss|map|topic|actor)/`)
+
+func maccmsIsCategoryLink(link string) bool {
+	return maccmsCategoryLink.MatchString(link) || strings.Contains(link, "/show/") && strings.Contains(link, "---")
+}
 
 func maccmsEpisodeNodes(document *html.Node) []*html.Node {
 	var nodes []*html.Node
@@ -98,12 +104,20 @@ func maccmsCardCover(card *html.Node, pageURL string) string {
 	return ""
 }
 
+var maccmsAttributeTag = regexp.MustCompile(`<[^>]*>`)
+
+func maccmsCleanAttribute(value string) string {
+	cleaned := maccmsAttributeTag.ReplaceAllString(value, "")
+	cleaned = html.UnescapeString(cleaned)
+	return strings.Join(strings.Fields(cleaned), " ")
+}
+
 func maccmsCardTitle(card *html.Node) string {
 	for _, attribute := range []string{"title", "alt"} {
 		for _, node := range providerHTMLNodes(card, func(node *html.Node) bool {
 			return node.Data == "a" || node.Data == "img"
 		}) {
-			if text := strings.TrimSpace(providerHTMLAttr(node, attribute)); text != "" {
+			if text := maccmsCleanAttribute(providerHTMLAttr(node, attribute)); text != "" {
 				return text
 			}
 		}
@@ -119,7 +133,7 @@ func maccmsCardTitle(card *html.Node) string {
 func maccmsCardLink(card *html.Node, base string) string {
 	for _, anchor := range providerHTMLNodes(card, func(node *html.Node) bool { return node.Data == "a" }) {
 		link := providerHTMLAttr(anchor, "href")
-		if link == "" || strings.Contains(link, "javascript:") {
+		if link == "" || strings.Contains(link, "javascript:") || maccmsIsCategoryLink(link) || maccmsSourceIDFromURL(link) == "" {
 			continue
 		}
 		if address := duanjuAbsolute(base, link); address != "" {
@@ -197,7 +211,8 @@ func maccmsAnchorCards(document *html.Node) []*html.Node {
 	var cards []*html.Node
 	seen := map[*html.Node]bool{}
 	for _, anchor := range providerHTMLNodes(document, func(node *html.Node) bool {
-		return node.Data == "a" && maccmsDetailLink.MatchString(providerHTMLAttr(node, "href"))
+		link := providerHTMLAttr(node, "href")
+		return node.Data == "a" && maccmsDetailLink.MatchString(link) && !maccmsIsCategoryLink(link)
 	}) {
 		for parent := anchor.Parent; parent != nil && parent.Type == html.ElementNode; parent = parent.Parent {
 			if seen[parent] {
@@ -217,10 +232,10 @@ var maccmsCardClasses = []string{
 	"col-lg-2", "col-xl-2", "module-item", "module-poster-item", "public-list-box",
 	"videoBox", "detail-list-item", "col-md-6", "col-6", "listItem", "FeaturedList_featuredItem",
 	"BrowseList_listItem", "SecondList_secondListItem", "vodlist__item", "v_list",
-	"entry-wrapper", "TagBookList_tagItem",
+	"entry-wrapper", "TagBookList_tagItem", "video-item", "vodlist_item", "myui-vodlist__box", "thumbnail",
 }
 
-var maccmsDetailPath = regexp.MustCompile(`(?i)/(?:voddetail|detail|show|vod|drama|movie|tv)/([0-9]+)(?:[-./]|$)`)
+var maccmsDetailPath = regexp.MustCompile(`(?i)/(?:voddetail|vodplay|detail|show|vod|drama|movie|tv|id|play|zywview|zywdetail|xzyxvd)/([0-9]+)(?:[-./]|$)`)
 
 func maccmsSourceIDFromURL(link string) string {
 	parsed, err := url.Parse(link)
@@ -284,6 +299,26 @@ func (d *Downloader) fetchMaccmsCatalogPage(ctx context.Context, source string, 
 		} else {
 			address = fmt.Sprintf("%s/p/66/c/%s?year=&page=%d", base, url.PathEscape(class), page)
 		}
+	case sourceMiguo:
+		if page > 1 {
+			return []Drama{}, false, nil
+		}
+		class := firstNonEmpty(strings.TrimSpace(category), duanjuFirstCategory(sourceMiguo))
+		if class == "netflix" {
+			address = base + "/label/netflix.html"
+		} else {
+			address = fmt.Sprintf("%s/vodtype/%s.html", base, url.PathEscape(class))
+		}
+	case sourceShuangguo:
+		class := strings.TrimSpace(category)
+		path := "/show/26-----------.html"
+		if class != "" && class != "all" {
+			path = fmt.Sprintf("/show/26---%s--------.html", url.PathEscape(class))
+		}
+		if page > 1 {
+			path = fmt.Sprintf("%s%d---.html", strings.TrimSuffix(path, "---.html"), page)
+		}
+		address = base + path
 	default:
 		return nil, false, errors.New("该站源没有网页目录")
 	}
@@ -291,24 +326,27 @@ func (d *Downloader) fetchMaccmsCatalogPage(ctx context.Context, source string, 
 	if err != nil {
 		return nil, false, err
 	}
-	items := maccmsCards(document, source, base)
-	_ = finalURL
-	return items, len(items) > 0, nil
+	items := maccmsCards(document, source, finalURL)
+	return items, source != sourceMiguo && maccmsHasMore(document, page, len(items)), nil
 }
 
 func (d *Downloader) fetchMaccmsDetail(ctx context.Context, source, sourceID string) (Drama, []Chapter, error) {
 	base := d.duanjuBaseURL(source)
 	candidates := maccmsDetailCandidates(source, base, sourceID)
-	var lastErr error
+	var lastErr, contentErr error
 	for _, address := range candidates {
 		document, finalURL, err := d.fetchProviderPage(ctx, address, base+"/", duanjuUserAgent)
 		if err != nil {
 			lastErr = err
 			continue
 		}
+		if actualID := maccmsSourceIDFromURL(finalURL); actualID != "" && actualID != sourceID {
+			lastErr = errors.New("站源返回了其他剧集的详情页")
+			continue
+		}
 		episodes := maccmsEpisodesFromDocument(document)
 		if len(episodes) == 0 {
-			lastErr = errors.New("未解析到分集列表")
+			contentErr = errors.New("当前详情未提供可播放分集，请稍后刷新")
 			continue
 		}
 		drama := Drama{
@@ -322,21 +360,35 @@ func (d *Downloader) fetchMaccmsDetail(ctx context.Context, source, sourceID str
 			ChannelName: duanjuSourceName(source),
 		}
 		var chapters []Chapter
+		seen := map[int]bool{}
 		for index, episode := range episodes {
+			if id := maccmsSourceIDFromURL(episode.URL); id != "" && id != sourceID {
+				continue
+			}
+			if maccmsDetailLink.MatchString(episode.URL) && !maccmsEpisodeLink.MatchString(episode.URL) {
+				continue
+			}
 			number := duanjuEpisodeNumber(firstNonEmpty(episode.Title, episode.Key), index+1)
-			link := duanjuAbsolute(base, episode.URL)
+			if seen[number] {
+				continue
+			}
+			link := duanjuAbsolute(finalURL, episode.URL)
 			if link == "" {
 				continue
 			}
+			seen[number] = true
 			chapters = append(chapters, duanjuChapter(source, sourceID, number, episode.Title, link, link, base+"/"))
 		}
 		if len(chapters) == 0 {
-			lastErr = errors.New("未解析到可播放分集")
+			contentErr = errors.New("当前详情未提供本剧的可播放分集，请稍后刷新")
 			continue
 		}
 		sortDuanjuChapters(chapters)
 		drama.EpisodeCount = json.Number(strconv.Itoa(len(chapters)))
 		return drama, chapters, nil
+	}
+	if contentErr != nil {
+		lastErr = contentErr
 	}
 	if lastErr == nil {
 		lastErr = errors.New("未找到该剧的详情页")
@@ -363,12 +415,20 @@ func maccmsDetailCandidates(source, base, sourceID string) []string {
 			fmt.Sprintf("%s/zywdetail/%s.html", base, sourceID),
 			fmt.Sprintf("%s/detail/%s.html", base, sourceID),
 		}
+	case sourceMiguo:
+		return []string{fmt.Sprintf("%s/voddetail/%s.html", base, sourceID), fmt.Sprintf("%s/detail/%s.html", base, sourceID)}
+	case sourceShuangguo:
+		return []string{fmt.Sprintf("%s/vod/%s.html", base, sourceID), fmt.Sprintf("%s/detail/%s.html", base, sourceID)}
 	default:
 		return nil
 	}
 }
 
 func maccmsDetailTitle(document *html.Node) string {
+	return maccmsDetailTitleFor(document, "")
+}
+
+func maccmsDetailTitleFor(document *html.Node, source string) string {
 	for _, name := range []string{"module-info-heading", "detail-title", "video-info-title", "page-title"} {
 		if node := providerHTMLFirstClass(document, name); node != nil {
 			if text := providerHTMLText(node); text != "" {
@@ -376,18 +436,65 @@ func maccmsDetailTitle(document *html.Node) string {
 			}
 		}
 	}
+	// 部分模板把集数、站名直接拼进 <title>，而正文标题元素是干净的。
+	// 正文里也存在「猜你喜欢」这类栏目标题，必须跳过。
+	for _, tag := range []string{"h1", "h2"} {
+		for _, node := range providerHTMLNodes(document, func(node *html.Node) bool { return node.Data == tag }) {
+			text := maccmsCleanTitle(providerHTMLText(node))
+			if text == "" || maccmsIsSectionHeading(text) {
+				continue
+			}
+			return text
+		}
+	}
 	if node := providerHTMLNodes(document, func(node *html.Node) bool { return node.Data == "title" }); len(node) > 0 {
-		return maccmsCleanTitle(providerHTMLText(node[0]))
+		return maccmsCleanTitle(maccmsCleanAttribute(providerHTMLText(node[0])))
 	}
 	return ""
 }
 
-var maccmsTitleSuffixes = []string{"在线观看", "免费观看", "高清完整版", "完整版", "全集", "在线播放", "高清", "免费"}
+// 这些串一旦出现在标题中段，其后都是 SEO 拼接内容。
+var maccmsTitleCutMarkers = []string{"详情介绍", "剧情介绍", "剧情简介", "在线播放", "在线观看", "免费观看"}
+
+// 「剧名 2026 中国大陆 女频 / 甜宠 / ...」这类串由站点拼装，年份起就是说明文字。
+// 要求年份前有空白，避免误伤「2001太空漫游」这类真实剧名。
+var maccmsTitleYearMarker = regexp.MustCompile(`\s+20\d{2}(?:\s|$)`)
+
+var maccmsTitleSuffixes = []string{"剧情介绍", "剧情简介", "在线观看", "免费观看", "高清完整版", "完整版", "全集", "在线播放", "已完结", "完结", "高清", "免费"}
+
+// 更新状态常以「更新至第N集」这类形式贴在标题尾部。
+var maccmsTitleUpdateTail = regexp.MustCompile(`\s*更新至(?:第)?\d+(?:集|话|期)?\s*$`)
+
+// 章节序号用阿拉伯数字，中文数字（第二季）属于真实剧名，不能裁。
+var maccmsTitlePartTail = regexp.MustCompile(`\s*第\s*\d+\s*[集话期]\s*$`)
+
+// 画质标记以空格分隔贴在标题尾部，要求有分隔空白才不会切坏剧名本身。
+var maccmsTitleQualityTail = regexp.MustCompile(`\s+(?:HD|HDR|4K|1080P|720P|蓝光|超清|高清|HD中字|中字|国语|粤语|日语)\s*$`)
 
 func maccmsCleanTitle(raw string) string {
 	text := strings.TrimSpace(raw)
 	if text == "" {
 		return ""
+	}
+	for _, marker := range maccmsTitleCutMarkers {
+		at := strings.Index(text, marker)
+		if at < 0 {
+			continue
+		}
+		if at == 0 {
+			text = strings.TrimSpace(text[len(marker):])
+		} else {
+			text = strings.TrimSpace(text[:at])
+		}
+		break
+	}
+	// 站点常在标题末尾追加「--站点名」。单连字符会用于「第二季」这类
+	// 真实后缀，双连字符也可能出现在剧名的季数连接处，因此只在尾部不像
+	// 季数/篇章标记时才裁掉。
+	if at := strings.LastIndex(text, "--"); at > 0 {
+		if tail := strings.TrimSpace(text[at+2:]); maccmsTitleTailIsSiteName(tail) {
+			text = strings.TrimSpace(text[:at])
+		}
 	}
 	if cut, _, found := strings.Cut(text, " - "); found {
 		text = strings.TrimSpace(cut)
@@ -408,8 +515,17 @@ func maccmsCleanTitle(raw string) string {
 			text = head
 		}
 	}
+	if at := maccmsTitleYearMarker.FindStringIndex(text); at != nil && at[0] > 0 {
+		text = strings.TrimSpace(text[:at[0]])
+	}
 	for changed := true; changed; {
 		changed = false
+		for _, tail := range []*regexp.Regexp{maccmsTitleUpdateTail, maccmsTitlePartTail, maccmsTitleQualityTail} {
+			if trimmed := tail.ReplaceAllString(text, ""); trimmed != text && trimmed != "" {
+				text = strings.TrimSpace(trimmed)
+				changed = true
+			}
+		}
 		for _, suffix := range maccmsTitleSuffixes {
 			if strings.HasSuffix(text, suffix) && len(text) > len(suffix) {
 				text = strings.TrimSpace(strings.TrimSuffix(text, suffix))
@@ -422,6 +538,49 @@ func maccmsCleanTitle(raw string) string {
 		return strings.TrimSpace(raw)
 	}
 	return text
+}
+
+var maccmsSectionHeadings = []string{
+	"猜你喜欢", "猜你想看", "相关推荐", "播放列表", "热门推荐",
+	"最新推荐", "热门视频", "为你推荐", "网友评论", "影片评论",
+	"在线播放", "立即播放", "在线观看", "播放", "下载",
+	"猜你喜歡", "猜你想看", "相關推薦", "播放列表", "熱門推薦",
+	"最新推薦", "熱門視頻", "為你推薦", "網友評論", "影片評論",
+	"在線播放", "立即播放", "在線觀看", "下集",
+}
+
+func maccmsIsSectionHeading(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return true
+	}
+	// 「同分類熱門推薦」「名字類似影片」这类栏目名随模板变化，按结尾判定更稳。
+	for _, suffix := range []string{"推薦", "推荐", "類似影片", "类似影片", "相關影片", "相关影片"} {
+		if strings.HasSuffix(trimmed, suffix) {
+			return true
+		}
+	}
+	for _, heading := range maccmsSectionHeadings {
+		if trimmed == heading {
+			return true
+		}
+	}
+	return false
+}
+
+func maccmsTitleTailIsSiteName(tail string) bool {
+	if tail == "" || utf8.RuneCountInString(tail) > 16 {
+		return false
+	}
+	if strings.HasPrefix(tail, "第") {
+		return false
+	}
+	for _, marker := range []string{"季", "部", "集", "篇", "卷", "话", "章"} {
+		if strings.HasSuffix(tail, marker) {
+			return false
+		}
+	}
+	return true
 }
 
 func maccmsTitleTailIsSeo(tail string) bool {
@@ -506,15 +665,19 @@ func (d *Downloader) searchMaccmsPage(ctx context.Context, source, query string,
 		address = fmt.Sprintf("%s/index.php/vod/search/page/%d/wd/%s.html", base, page, url.PathEscape(query))
 	case sourcePiguo:
 		address = fmt.Sprintf("%s/q/%s?page=%d", base, url.PathEscape(query), page)
+	case sourceMiguo:
+		address = fmt.Sprintf("%s/vodsearch/%s----------%d---.html", base, url.PathEscape(query), page)
+	case sourceShuangguo:
+		address = fmt.Sprintf("%s/search/%s----------%d---.html", base, url.PathEscape(query), page)
 	default:
 		return nil, false, errors.New("该站源不支持在线搜索")
 	}
-	document, _, err := d.fetchProviderPage(ctx, address, base+"/", duanjuUserAgent)
+	document, finalURL, err := d.fetchProviderPage(ctx, address, base+"/", duanjuUserAgent)
 	if err != nil {
 		return nil, false, err
 	}
-	items := maccmsCards(document, source, base)
-	return items, len(items) > 0, nil
+	items := maccmsCards(document, source, finalURL)
+	return items, maccmsHasMore(document, page, len(items)), nil
 }
 
 func maccmsPlayerURL(body string) string {
@@ -525,14 +688,47 @@ func maccmsPlayerURL(body string) string {
 	}
 	for _, pattern := range []*regexp.Regexp{
 		regexp.MustCompile(`(?i)\$\.url\s*=\s*"([^"]+)"`),
+		// 部分站点的播放页把正片地址写成 const source = '...'，同一页面还会
+		// 混入播放器自带的示例片地址（例如 artplayer 的 sample/test1.mp4），
+		// 必须比通用兜底正则先匹配，否则会取到示例片而不是正片。
+		regexp.MustCompile(`(?i)const\s+source\s*=\s*'([^']+)'`),
 		regexp.MustCompile(`(?i)"url"\s*:\s*"([^"]+\.(?:m3u8|mp4)[^"]*)"`),
 		regexp.MustCompile(`(?i)(https?://[^\s"'<>]+\.(?:m3u8|mp4)[^\s"'<>]*)`),
 	} {
-		if matches := pattern.FindStringSubmatch(body); len(matches) > 1 {
-			return strings.ReplaceAll(matches[1], `\/`, `/`)
+		for _, matches := range pattern.FindAllStringSubmatch(body, -1) {
+			if len(matches) <= 1 {
+				continue
+			}
+			candidate := strings.ReplaceAll(matches[1], `\/`, `/`)
+			if maccmsIsPlaceholderAddress(candidate) {
+				continue
+			}
+			return candidate
 		}
 	}
 	return ""
+}
+
+// 站点会把未替换的模板串当地址输出（例如下载按钮写成
+// https://mp4.#.mp4），这类串看着像媒体地址但不可播，必须剔除。
+func maccmsIsPlaceholderAddress(address string) bool {
+	trimmed := strings.TrimSpace(address)
+	if !isProviderHTTPMediaURL(trimmed) {
+		return true
+	}
+	if strings.ContainsAny(trimmed, "#{}") {
+		return true
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return true
+	}
+	host := parsed.Hostname()
+	if !strings.Contains(host, ".") {
+		return true
+	}
+	parts := strings.Split(host, ".")
+	return len(parts[len(parts)-1]) < 2
 }
 
 func maccmsNormalizePlaybackURL(raw string) string {
