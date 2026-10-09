@@ -1,21 +1,7 @@
 import 'dart:convert';
 
 import '../domain/models.dart';
-
-class CatalogSearchResult {
-  const CatalogSearchResult(
-    this.items, {
-    this.warning = '',
-    this.limited = false,
-    this.hasMore = false,
-    this.total = 0,
-    this.fromCache = false,
-  });
-  final List<Drama> items;
-  final String warning;
-  final bool limited, hasMore, fromCache;
-  final int total;
-}
+import '../domain/catalog_response.dart';
 
 class CachedSearch {
   const CachedSearch(
@@ -103,19 +89,9 @@ class SearchCache {
         final key = entry.key as String;
         final source = DramaSource.parse(key.split('|').first);
         final row = entry.value as Map;
-        final items = (row['items'] as List)
-            .map((v) => Drama.fromJson(Map<String, dynamic>.from(v as Map)))
-            .toList();
-        if (items.any((d) => d.source != source)) continue;
         put(
           key,
-          CatalogSearchResult(
-            items,
-            warning: row['warning'] as String? ?? '',
-            limited: row['limited'] == true,
-            hasMore: row['hasMore'] == true,
-            total: row['total'] as int? ?? 0,
-          ),
+          CatalogSearchResult.fromJson(row, source),
           DateTime.parse(row['savedAt'] as String),
         );
       } catch (_) {

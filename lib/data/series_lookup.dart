@@ -1,4 +1,4 @@
-import 'search_cache.dart';
+import '../domain/catalog_response.dart';
 
 class SeriesLookup {
   SeriesLookup(this.result, this.cancel);

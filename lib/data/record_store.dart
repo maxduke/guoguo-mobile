@@ -7,7 +7,7 @@ import '../domain/watch_resume.dart';
 import '../domain/catalog_query.dart';
 import '../domain/series_title.dart';
 import '../platform/provider_client.dart';
-import 'search_cache.dart';
+import '../domain/catalog_response.dart';
 import 'series_lookup.dart';
 import 'store_persistence.dart';
 

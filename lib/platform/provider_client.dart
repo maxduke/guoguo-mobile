@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 import '../domain/models.dart';
 import '../domain/discovery.dart';
+import '../domain/catalog_response.dart';
+import '../domain/download_plan.dart';
 
 abstract interface class ProviderClient {
   Future<Map<String, dynamic>> call(
@@ -95,6 +97,102 @@ class ProviderException implements Exception {
 }
 
 extension ProviderOperations on ProviderClient {
+  Future<List<SourceCategory>> categories(DramaSource source) async {
+    final result = await call('categories', {'source': source.name});
+    return List.unmodifiable(
+      (result['items'] as List).map(
+        (raw) => SourceCategory.fromJson(raw as Map),
+      ),
+    );
+  }
+
+  Future<CatalogPage> catalogPage(
+    DramaSource source, {
+    String? category,
+    int? page,
+  }) async => CatalogPage.fromJson(
+    await call('catalog', {
+      'source': source.name,
+      'category': ?category,
+      'page': ?page,
+    }),
+    source,
+  );
+
+  Future<CatalogSearchResult> searchPage(
+    DramaSource source,
+    String query, {
+    int page = 1,
+    required String requestId,
+  }) async => CatalogSearchResult.fromJson(
+    await call('search', {
+      'source': source.name,
+      'query': query,
+      'page': page,
+      'requestId': requestId,
+    }),
+    source,
+  );
+
+  Future<CatalogSearchResult?> searchProgress(
+    DramaSource source,
+    String query, {
+    int page = 1,
+    required String requestId,
+  }) async {
+    final result = await call('searchProgress', {
+      'source': source.name,
+      'query': query,
+      'page': page,
+      'requestId': requestId,
+    });
+    if (result['source'] != source.name || result['query'] != query) {
+      return null;
+    }
+    return CatalogSearchResult.fromJson(result, source);
+  }
+
+  Future<void> cancelSearch(
+    DramaSource source,
+    String query,
+    String requestId,
+  ) async {
+    await call('cancelSearch', {
+      'source': source.name,
+      'query': query,
+      'requestId': requestId,
+    });
+  }
+
+  Future<List<String>> suggestions(String query) async {
+    final result = await call('suggestions', {
+      'source': DramaSource.hongguo.name,
+      'query': query,
+    });
+    return List.unmodifiable(
+      (result['items'] as List? ?? []).map(
+        (raw) => (raw as Map)['name'] as String,
+      ),
+    );
+  }
+
+  Future<Drama> dramaDetail(Drama drama) async {
+    final result = await call('detail', {'id': drama.id});
+    final patch = Drama.fromJson(
+      Map<String, dynamic>.from(result['item'] as Map),
+    );
+    if (patch.key != drama.key) throw const FormatException('剧集资料不匹配');
+    return patch;
+  }
+
+  Future<DownloadPlan> downloadPlan(Drama drama, Episode episode) async {
+    final plan = DownloadPlan.fromJson(
+      await call('downloadPlan', {'id': drama.id, 'chapter': episode.raw}),
+    );
+    if (plan.assets.isEmpty) throw const ProviderException('未找到可下载资源');
+    return plan;
+  }
+
   Future<List<DiscoveryBoard>> discoveryBoards(DramaSource source) async {
     final result = await call('boards', {'source': source.name});
     return List.unmodifiable(
@@ -134,10 +232,10 @@ extension ProviderOperations on ProviderClient {
   Future<List<Episode>> chapters(Drama drama) async {
     final result = await call('chapters', {'id': drama.id});
     final rows = result['chapters'] as List? ?? [];
-    return [
+    return List.unmodifiable([
       for (var i = 0; i < rows.length; i++)
         Episode.fromJson(Map<String, dynamic>.from(rows[i] as Map), i),
-    ];
+    ]);
   }
 
   Future<ResolvedMedia> resolve(

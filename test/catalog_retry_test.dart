@@ -63,6 +63,28 @@ class _CacheFailure extends MemoryStorage implements PartitionedStorage {
 void main() {
   for (final source in [DramaSource.hongguo, DramaSource.huangju]) {
     test(
+      '${source.name} malformed tags preserve the installed page and cursor',
+      () async {
+        final provider = _Provider();
+        final store = AppStore(storage: MemoryStorage(), provider: provider);
+        addTearDown(store.dispose);
+        await store.catalog.selectSource(source);
+        var request = store.catalog.refresh();
+        provider.pending.last.complete(_page(source, 'old'));
+        await request;
+        request = store.catalog.loadMore();
+        final invalid = _page(source, 'bad', more: false);
+        (invalid['items'] as List).single['tags'] = ['valid', 1];
+        provider.pending.last.complete(invalid);
+        await request;
+        expect(store.catalog.library.single.title, 'old');
+        expect(store.catalog.libraryHasMore, isTrue);
+        expect(store.catalog.libraryCanRetry, isTrue);
+        expect(store.catalog.catalogs[source]!.single.title, 'old');
+      },
+    );
+
+    test(
       '${source.name} refresh retry preserves the operation and malformed metadata preserves rows',
       () async {
         final provider = _Provider();

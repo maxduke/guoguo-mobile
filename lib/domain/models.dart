@@ -93,7 +93,7 @@ class Drama {
       date: json['date'] as String? ?? '',
       status: json['status'] as String? ?? '',
       vip: json['vip'] as bool?,
-      tags: (json['tags'] as List? ?? []).cast<String>(),
+      tags: List<String>.unmodifiable(json['tags'] as List? ?? []),
     );
   }
   Drama merge(Drama patch, {bool replaceTags = false}) {
@@ -147,7 +147,7 @@ class Episode {
     id: json['id'] as String,
     title: json['title'] as String? ?? '第 ${index + 1} 集',
     number: int.tryParse('${json['currentEpisode']}') ?? index + 1,
-    raw: json,
+    raw: Map.unmodifiable(json),
   );
 }
 
@@ -226,8 +226,10 @@ class ResolvedMedia {
       prefetchMs = json['prefetchMs'] as int? ?? 0,
       session = json['session'] as String? ?? '',
       contentKey = json['contentKey'] as String? ?? '',
-      headers = Map<String, String>.from(json['headers'] as Map? ?? {}),
-      qualities = (json['qualities'] as List? ?? []).cast<int>(),
+      headers = Map.unmodifiable(
+        Map<String, String>.from(json['headers'] as Map? ?? {}),
+      ),
+      qualities = List<int>.unmodifiable(json['qualities'] as List? ?? []),
       quality = json['quality'] as int? ?? 0,
       routeIndex = json['routeIndex'] as int? ?? 0,
       routeCount = json['routeCount'] as int? ?? 1,

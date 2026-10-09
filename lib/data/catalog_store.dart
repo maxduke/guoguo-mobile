@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../domain/models.dart';
 import '../domain/discovery.dart';
+import '../domain/catalog_response.dart';
 import '../domain/user_input_exception.dart';
 import '../domain/series_title.dart';
 import '../domain/catalog_query.dart';
@@ -11,11 +12,6 @@ import 'search_cache.dart';
 import 'discovery_cache.dart';
 import 'series_lookup.dart';
 import 'store_persistence.dart';
-
-class SourceCategory {
-  const SourceCategory(this.id, this.name);
-  final String id, name;
-}
 
 class _CatalogSlice {
   List<Drama> items = [];
@@ -167,11 +163,9 @@ class CatalogStore extends ChangeNotifier {
     }
     notifyListeners();
     try {
-      final result = await provider.call('categories', {'source': target.name});
+      final result = await provider.categories(target);
       if (_closed) return;
-      sourceCategories[target] = (result['items'] as List)
-          .map((v) => SourceCategory(v['id'] as String, v['name'] as String))
-          .toList();
+      sourceCategories[target] = result;
       categoryErrors.remove(target);
       await _saveCache();
     } catch (_) {
@@ -210,22 +204,20 @@ class CatalogStore extends ChangeNotifier {
     notifyListeners();
     try {
       final page = more ? slice.page + 1 : 1;
-      final result = await provider.call('catalog', {
-        'source': target.name,
-        'category': category,
-        'page': page,
-      });
+      final result = await provider.catalogPage(
+        target,
+        category: category,
+        page: page,
+      );
       if (_closed) return;
-      final rows = _parseRows(result, target);
-      final hasMore = result['hasMore'] as bool? ?? false;
-      final warning = result['warning'] as String? ?? '';
+      final rows = result.items;
       slice.items = {
         for (final row in [...(more ? slice.items : <Drama>[]), ...rows])
           row.key: row,
       }.values.toList();
       slice.page = page;
-      slice.more = hasMore;
-      slice.error = warning.isEmpty ? null : warning;
+      slice.more = result.hasMore;
+      slice.error = result.warning.isEmpty ? null : result.warning;
       _mergeCatalog(target, rows);
       await _saveCache();
     } catch (_) {
@@ -268,9 +260,7 @@ class CatalogStore extends ChangeNotifier {
       final loadedCategories = <DramaSource, List<SourceCategory>>{
         for (final entry in (state['sourceCategories'] as Map? ?? {}).entries)
           DramaSource.parse(entry.key): (entry.value as List)
-              .map(
-                (v) => SourceCategory(v['id'] as String, v['name'] as String),
-              )
+              .map((v) => SourceCategory.fromJson(v as Map))
               .toList(),
       };
       final loadedPages = <DramaSource, int>{
@@ -376,14 +366,12 @@ class CatalogStore extends ChangeNotifier {
     notifyListeners();
     try {
       final page = more ? (catalogPages[target] ?? 1) + 1 : 1;
-      final response = await provider.call('catalog', {
-        'source': target.name,
-        if (more) 'page': page,
-      });
+      final response = await provider.catalogPage(
+        target,
+        page: more ? page : null,
+      );
       if (_closed) return;
-      final rows = _parseRows(response, target);
-      final nextMore = response['hasMore'] as bool? ?? false;
-      final warning = response['warning'] as String? ?? '';
+      final rows = response.items;
       final slice = _slices.putIfAbsent(key, _CatalogSlice.new);
       slice.items = {
         if (more)
@@ -391,11 +379,11 @@ class CatalogStore extends ChangeNotifier {
         for (final row in rows) row.key: row,
       }.values.toList();
       slice.page = page;
-      slice.more = nextMore;
+      slice.more = response.hasMore;
       _mergeCatalog(target, rows);
       catalogPages[target] = page;
-      hasMore[target] = nextMore;
-      if (warning.isNotEmpty) sourceErrors[target] = warning;
+      hasMore[target] = response.hasMore;
+      if (response.warning.isNotEmpty) sourceErrors[target] = response.warning;
       await _saveCache();
     } catch (_) {
       if (!_closed) {
@@ -479,17 +467,6 @@ class CatalogStore extends ChangeNotifier {
     }
   }
 
-  CatalogSearchResult _searchResult(
-    Map<String, dynamic> response,
-    DramaSource target,
-  ) => CatalogSearchResult(
-    _parseRows(response, target),
-    warning: response['warning'] as String? ?? '',
-    limited: response['limited'] == true,
-    hasMore: response['hasMore'] == true,
-    total: response['total'] as int? ?? 0,
-  );
-
   Future<CatalogSearchResult> _searchCatalog(
     DramaSource target,
     String query,
@@ -501,12 +478,6 @@ class CatalogStore extends ChangeNotifier {
   ) async {
     Timer? timer;
     bool polling = false, completed = false;
-    final args = {
-      'source': target.name,
-      'query': query,
-      'page': page,
-      'requestId': id,
-    };
     if (target == DramaSource.hongguo && onPartial != null) {
       timer = Timer.periodic(const Duration(milliseconds: 700), (_) async {
         if (isActive?.call() == false) {
@@ -516,12 +487,13 @@ class CatalogStore extends ChangeNotifier {
         if (polling || completed) return;
         polling = true;
         try {
-          final response = await provider.call('searchProgress', args);
-          if (!completed &&
-              isActive?.call() != false &&
-              response['source'] == target.name &&
-              response['query'] == query) {
-            final partial = _searchResult(response, target);
+          final partial = await provider.searchProgress(
+            target,
+            query,
+            page: page,
+            requestId: id,
+          );
+          if (!completed && isActive?.call() != false && partial != null) {
             if (partial.items.isNotEmpty) onPartial(partial);
           }
         } catch (_) {
@@ -532,10 +504,14 @@ class CatalogStore extends ChangeNotifier {
       });
     }
     try {
-      final response = await provider.call('search', args);
+      final result = await provider.searchPage(
+        target,
+        query,
+        page: page,
+        requestId: id,
+      );
       completed = true;
       if (isActive?.call() == false) throw const SeriesLookupCancelled();
-      final result = _searchResult(response, target);
       searchCache.put('${target.name}|$query|$page', result, now());
       if (rememberQuery) {
         recentSearches.remove(query);
@@ -561,11 +537,11 @@ class CatalogStore extends ChangeNotifier {
 
   Future<void> cancelSearch(DramaSource target, String query, String id) async {
     try {
-      await provider.call('cancelSearch', {
-        'source': target.name,
-        'query': query.trim().replaceAll(RegExp(r'\s+'), ' '),
-        'requestId': id,
-      });
+      await provider.cancelSearch(
+        target,
+        query.trim().replaceAll(RegExp(r'\s+'), ' '),
+        id,
+      );
     } catch (_) {
       /* Cancellation is best effort on detached platforms. */
     }
@@ -768,14 +744,7 @@ class CatalogStore extends ChangeNotifier {
 
   Future<List<String>> suggestions(String query) async {
     if (isOffline() || query.trim().isEmpty) return [];
-    final result = await provider.call('suggestions', {
-      'source': 'hongguo',
-      'query': query.trim(),
-    });
-    return (result['items'] as List? ?? [])
-        .map((row) => (row as Map)['name'] as String)
-        .take(10)
-        .toList();
+    return (await provider.suggestions(query.trim())).take(10).toList();
   }
 
   Drama currentDrama(Drama drama) =>
@@ -811,10 +780,7 @@ class CatalogStore extends ChangeNotifier {
 
   Future<Drama> _fetchDetail(Drama drama) async {
     try {
-      final result = await provider.call('detail', {'id': drama.id});
-      final patch = Drama.fromJson(
-        Map<String, dynamic>.from(result['item'] as Map),
-      );
+      final patch = await provider.dramaDetail(drama);
       final replaceTags = drama.source == DramaSource.huangguo;
       final updated = currentDrama(
         drama,
@@ -833,16 +799,6 @@ class CatalogStore extends ChangeNotifier {
       notifyListeners();
       return currentDrama(drama);
     }
-  }
-
-  List<Drama> _parseRows(Map<String, dynamic> result, DramaSource target) {
-    final rows = (result['items'] as List? ?? [])
-        .map((v) => Drama.fromJson(Map<String, dynamic>.from(v as Map)))
-        .toList();
-    if (rows.any((v) => v.source != target)) {
-      throw const FormatException('站源返回了不匹配的内容');
-    }
-    return rows;
   }
 
   void _mergeCatalog(
