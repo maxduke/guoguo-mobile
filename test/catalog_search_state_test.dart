@@ -320,7 +320,7 @@ void main() {
   );
 
   testWidgets(
-    'opening actual details preserves the search input, results and scroll position',
+    'split windows and actual details preserve search input, results and position',
     (tester) async {
       final (:provider, :store) = await _mount(
         tester,
@@ -343,13 +343,36 @@ void main() {
         List.generate(40, (index) => _drama('$index', title: '故事$index')),
       );
       final input = tester.widget<TextField>(find.byType(TextField)).controller;
+      final page = tester.state(find.byType(SearchPage));
       await tester.drag(find.byType(CustomScrollView), const Offset(0, -1000));
       await tester.pumpAndSettle();
-      final position = tester
+      final scroll = tester
           .state<ScrollableState>(find.byType(Scrollable))
-          .position
-          .pixels;
+          .position;
+      scroll.jumpTo(200);
+      await tester.pump();
+      final position = scroll.pixels;
       expect(position, greaterThan(0));
+      for (final size in [
+        const Size(1024, 768),
+        const Size(500, 768),
+        const Size(390, 844),
+      ]) {
+        tester.view.physicalSize = size;
+        await tester.pumpAndSettle();
+        expect(tester.state(find.byType(SearchPage)), same(page));
+        expect(
+          tester
+              .widget<TextField>(find.byType(TextField, skipOffstage: false))
+              .controller,
+          same(input),
+        );
+        expect(input!.text, '故事');
+        expect(store.catalog.source, DramaSource.hongguo);
+        expect(scroll.pixels, closeTo(position, .1));
+        expect(_ids(tester), isNotEmpty);
+        expect(provider.searches, hasLength(1));
+      }
       final card = tester.widget<DramaCard>(
         find.byType(DramaCard).hitTestable().first,
       );
@@ -407,9 +430,25 @@ void main() {
   );
 
   testWidgets(
-    'empty search shows loading and retries failure without updating catalog',
+    'small keyboard search keeps failure and retry reachable without updating catalog',
     (tester) async {
-      final (:provider, store: _) = await _mount(tester);
+      final (:provider, :store) = await _mount(
+        tester,
+        size: const Size(320, 640),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              textScaler: const TextScaler.linear(2),
+              viewInsets: const EdgeInsets.only(bottom: 280),
+            ),
+            child: child!,
+          ),
+          home: SearchPage(store: store, onOpen: (_) {}, autofocus: false),
+        ),
+      );
       await _submit(tester);
       expect(find.text('正在搜索…'), findsOneWidget);
       expect(find.text('暂时没有找到'), findsNothing);
@@ -418,9 +457,19 @@ void main() {
         StateError('first-page-error'),
       );
       await tester.pumpAndSettle();
-      expect(find.text('重试搜索'), findsOneWidget);
       expect(find.textContaining('first-page-error'), findsNothing);
       expect(find.text('更新剧库'), findsNothing);
+      await tester.scrollUntilVisible(
+        find.text('重试搜索').hitTestable(),
+        150,
+        scrollable: find
+            .descendant(
+              of: find.byType(CustomScrollView),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      expect(find.text('重试搜索').hitTestable(), findsOneWidget);
       await tester.tap(find.text('重试搜索'));
       await tester.pump();
       expect(provider.searches.map((request) => request.args['page']), [1, 1]);

@@ -109,6 +109,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
   final Set<String> _expanded = {};
   String? _openingEntry;
   int _playGeneration = 0;
+  bool _routeActive = true;
 
   bool get _locked => _busy || _openingEntry != null;
   bool get _interactive =>
@@ -119,6 +120,19 @@ class _DownloadsPageState extends State<DownloadsPage> {
     super.initState();
     widget.downloads.addListener(_downloadsChanged);
     unawaited(widget.downloads.refreshUsage());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final active = ModalRoute.of(context)?.isCurrent != false;
+    if (_routeActive && !active) _cancelOpening();
+    _routeActive = active;
+  }
+
+  void _cancelOpening() {
+    ++_playGeneration;
+    _openingEntry = null;
   }
 
   void _downloadsChanged() {
@@ -146,8 +160,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
     if ((oldWidget.active && !widget.active) ||
         oldWidget.downloads != widget.downloads ||
         oldWidget.store != widget.store) {
-      ++_playGeneration;
-      _openingEntry = null;
+      _cancelOpening();
     }
   }
 
