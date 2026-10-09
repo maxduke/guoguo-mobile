@@ -7,6 +7,7 @@ import 'provider_client.dart';
 import 'media_commands.dart';
 import 'media_executor.dart';
 import 'progressive_media.dart';
+import 'playback_temporary_files.dart';
 export 'progressive_media.dart' show ProgressiveTimeline;
 
 /// Owns each preparation's native job, loopback origin and temporary files.
@@ -45,10 +46,9 @@ class MediaPreparer {
     if (media.contentKey.isEmpty) return media.url;
     final root = await _temporaryDirectory();
     _checkCancelled();
-    final playback = await Directory(
-      '${root.path}/playback',
-    ).create(recursive: true);
-    _ownedDirectory = await playback.createTemp('session-');
+    _ownedDirectory = await PlaybackTemporaryFiles.allocate(
+      Directory('${root.path}/playback'),
+    );
     _checkCancelled();
     if (progressive && !media.hls) {
       final directory = await Directory(
@@ -173,8 +173,14 @@ class MediaPreparer {
     }
     final directory = _ownedDirectory;
     _ownedDirectory = null;
-    if (directory != null && await directory.exists()) {
-      await directory.delete(recursive: true);
+    if (directory != null) {
+      try {
+        if (await directory.exists()) await directory.delete(recursive: true);
+      } finally {
+        // Cancellation and native writes have drained before releasing this
+        // directory, even if filesystem deletion needs a later retry.
+        PlaybackTemporaryFiles.released(directory);
+      }
     }
   }
 }

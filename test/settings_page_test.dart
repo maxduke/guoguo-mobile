@@ -15,12 +15,15 @@ import 'package:guoguo_mobile/data/download_store.dart';
 import 'package:guoguo_mobile/data/storage.dart';
 import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/ui/settings_page.dart';
+import 'package:guoguo_mobile/ui/storage_page.dart';
 import 'package:guoguo_mobile/ui/playback_diagnostics_page.dart';
 import 'package:guoguo_mobile/ui/theme.dart';
 import 'widget_test.dart' show NoNetwork;
 
 class _CountingDownloads extends DownloadStore {
-  _CountingDownloads(super.app);
+  _CountingDownloads(super.app) {
+    manifestLoaded = true;
+  }
   int scans = 0;
   int bytes = 1024;
   @override
@@ -244,6 +247,23 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('settings has one storage entry leading to scoped management', (
+    tester,
+  ) async {
+    await mountSettings(tester);
+    await tester.scrollUntilVisible(find.text('存储管理').hitTestable(), 200);
+    expect(find.text('清理封面缓存'), findsNothing);
+    await tester.tap(find.text('存储管理'));
+    // Verify navigation without waiting for real filesystem work in the
+    // widget test's fake clock. Measurements have real-directory coverage.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byType(StoragePage), findsOneWidget);
+    expect(find.text('下载文件'), findsOneWidget);
+    expect(find.byTooltip('重新统计'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'library picker and record backup share a guard and cancellation releases it',
@@ -481,7 +501,7 @@ void main() {
       await tester.scrollUntilVisible(find.textContaining('1.0 KB'), -200);
       downloads.updateUsage(0);
       await tester.pumpAndSettle();
-      expect(find.text('0 B · 在下载页按剧管理'), findsOneWidget);
+      expect(find.text('0 B 下载 · 查看缓存与清理'), findsOneWidget);
       expect(downloads.scans, 1);
       await tester.pumpWidget(const SizedBox());
       downloads.dispose();
