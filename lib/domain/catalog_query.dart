@@ -60,30 +60,40 @@ int _seasonNumber(String value) {
   return total + current;
 }
 
-bool matchesDrama(Drama drama, String query) {
+List<String> _searchWords(String query) => query
+    .trim()
+    .split(RegExp(r'\s+'))
+    .map(searchText)
+    .where((word) => word.isNotEmpty)
+    .toList();
+
+bool _matchesWords(Drama drama, List<String> words) {
+  if (words.isEmpty) return true;
   final title = searchText(drama.title);
-  return query
-      .trim()
-      .split(RegExp(r'\s+'))
-      .every((word) => title.contains(searchText(word)));
+  return words.every(title.contains);
 }
 
-int naturalTitleCompare(String left, String right) {
-  final a = RegExp(
-    r'\d+|\D+',
-  ).allMatches(searchText(left)).map((m) => m[0]!).toList();
-  final b = RegExp(
-    r'\d+|\D+',
-  ).allMatches(searchText(right)).map((m) => m[0]!).toList();
+bool matchesDrama(Drama drama, String query) =>
+    _matchesWords(drama, _searchWords(query));
+
+List<(String, int?)> _titleParts(String title) => RegExp(r'\d+|\D+')
+    .allMatches(searchText(title))
+    .map((match) => (match[0]!, int.tryParse(match[0]!)))
+    .toList();
+
+int _compareTitleParts(List<(String, int?)> a, List<(String, int?)> b) {
   for (var i = 0; i < a.length && i < b.length; i++) {
-    final x = int.tryParse(a[i]), y = int.tryParse(b[i]);
+    final x = a[i].$2, y = b[i].$2;
     final order = x != null && y != null
         ? x.compareTo(y)
-        : a[i].compareTo(b[i]);
+        : a[i].$1.compareTo(b[i].$1);
     if (order != 0) return order;
   }
   return a.length.compareTo(b.length);
 }
+
+int naturalTitleCompare(String left, String right) =>
+    _compareTitleParts(_titleParts(left), _titleParts(right));
 
 double? heatValue(String text) {
   final match = RegExp(
@@ -108,20 +118,27 @@ List<Drama> queryCatalog(
   bool hideVip = false,
   CatalogSort sort = CatalogSort.recommended,
 }) {
+  final words = _searchWords(query);
   final rows = catalog
       .where(
         (d) =>
-            matchesDrama(d, query) &&
+            _matchesWords(d, words) &&
             (category == '全部' || d.category == category) &&
             (!hideVip || d.vip != true),
       )
       .toList();
   if (sort == CatalogSort.recommended) return rows;
+  // Keys live for this sort only, so refreshed metadata cannot leave stale keys.
+  final titles = <Drama, List<(String, int?)>>{};
+  int compareTitle(Drama a, Drama b) => _compareTitleParts(
+    titles.putIfAbsent(a, () => _titleParts(a.title)),
+    titles.putIfAbsent(b, () => _titleParts(b.title)),
+  );
   rows.sort((a, b) {
     var order = 0;
     switch (sort) {
       case CatalogSort.title:
-        order = naturalTitleCompare(a.title, b.title);
+        order = compareTitle(a, b);
       case CatalogSort.newest:
         final x = DateTime.tryParse(a.date), y = DateTime.tryParse(b.date);
         order = x == null
@@ -139,7 +156,7 @@ List<Drama> queryCatalog(
       case CatalogSort.recommended:
         break;
     }
-    return order != 0 ? order : naturalTitleCompare(a.title, b.title);
+    return order != 0 ? order : compareTitle(a, b);
   });
   return rows;
 }
