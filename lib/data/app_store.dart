@@ -183,6 +183,15 @@ class AppStore extends ChangeNotifier implements StorePersistence {
     }
   }
 
+  Future<void> clearCatalogCache() async {
+    if (_closed) throw StateError('记录存储已关闭');
+    final target = storage;
+    if (target is! AppFileStorage) throw StateError('目录缓存清理不可用');
+    await target.clearCatalogCache();
+    cachePersistenceError = null;
+    if (!_closed) notifyListeners();
+  }
+
   Future<void> recordPlayback(PlaybackDiagnostic sample) async {
     playbackDiagnostics.insert(0, sample);
     if (playbackDiagnostics.length > maxPlaybackDiagnostics) {

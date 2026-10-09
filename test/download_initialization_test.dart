@@ -115,6 +115,42 @@ void main() {
   });
 
   test(
+    'usage waits for the manifest without waiting for native task recovery',
+    () async {
+      storage.gate = Completer<Map<String, dynamic>?>();
+      driver.trackGate = Completer<void>();
+      final initialization = downloads.initialize();
+      await storage.reading.future;
+      var measured = false;
+      final measuring = downloads.refreshUsage().then((_) => measured = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(measured, isFalse);
+      storage.gate!.complete(storage.value);
+      await measuring;
+      expect(downloads.bytesFor(downloads.entries), 'saved video'.length);
+      expect(downloads.manifestLoaded, isTrue);
+      expect(downloads.initializing, isTrue);
+      driver.trackGate!.complete();
+      await initialization;
+    },
+  );
+
+  test(
+    'manifest read failure leaves usage unknown and allows measurement to finish',
+    () async {
+      storage.gate = Completer<Map<String, dynamic>?>();
+      final initialization = downloads.initialize();
+      await storage.reading.future;
+      final measuring = downloads.refreshUsage();
+      storage.gate!.completeError(StateError('manifest unavailable'));
+      await Future.wait([initialization, measuring]);
+      expect(downloads.manifestLoaded, isFalse);
+      expect(downloads.usageError, isNotNull);
+      expect(downloads.measuringUsage, isFalse);
+    },
+  );
+
+  test(
     'saved videos are available before core readiness; mutations cannot race restoration',
     () async {
       downloads.dispose();

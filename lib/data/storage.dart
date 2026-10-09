@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
+import '../platform/file_usage.dart';
+
 abstract interface class LocalStorage {
   Future<Map<String, dynamic>?> read();
   Future<void> write(Map<String, dynamic> value);
@@ -81,6 +83,13 @@ class AppFileStorage implements PartitionedStorage {
     'cache': _cachePart(value),
   });
 
+  Future<int?> catalogCacheBytes() => _cache.bytes();
+
+  Future<void> clearCatalogCache() async {
+    await _cache.clear();
+    cacheReadError = null;
+  }
+
   @override
   Future<void> write(Map<String, dynamic> value) async {
     // Detach both parts at invocation, before awaiting either write.
@@ -106,16 +115,42 @@ class FileStorage implements LocalStorage {
   @override
   Future<void> write(Map<String, dynamic> value) {
     final detached = _detachJson(value) as Map<String, dynamic>;
-    final operation = _pending.catchError((Object _) {}).then((_) async {
+    return _serialized(() async {
       final snapshot = await encodeJsonInBackground(detached);
       await directory.create(recursive: true);
       final temporary = File('${_file.path}.tmp');
       await temporary.writeAsString(snapshot, flush: true);
       await temporary.rename(_file.path);
     });
-    _pending = operation;
-    return operation;
   }
+
+  Future<T> _serialized<T>(Future<T> Function() operation) {
+    final next = _pending.then((_) => operation());
+    _pending = next.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return next;
+  }
+
+  // Include the unfinished atomic-write file, but never sweep the parent.
+  Future<int?> bytes() => _serialized(() async {
+    final sizes = await Future.wait([
+      fileBytes(_file),
+      fileBytes(File('${_file.path}.tmp')),
+    ]);
+    return sizes.any((size) => size == null)
+        ? null
+        : sizes.fold<int>(0, (sum, size) => sum + size!);
+  });
+
+  Future<void> clear() => _serialized(() async {
+    for (final file in [_file, File('${_file.path}.tmp')]) {
+      try {
+        // File deletion unlinks a symlink and refuses a directory collision.
+        await file.delete();
+      } on FileSystemException catch (error) {
+        if (!missingFileScope(error, file.path)) rethrow;
+      }
+    }
+  });
 }
 
 // Keep the isolate closure outside storage instances and their pending Futures.

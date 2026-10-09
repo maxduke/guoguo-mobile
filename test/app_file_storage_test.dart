@@ -75,6 +75,105 @@ void main() {
   File file(String name) => File('${directory.path}/$name');
 
   test(
+    'cache clearing drains earlier writes and preserves durable and live state',
+    () async {
+      final storage = AppFileStorage(directory);
+      await storage.write(await savedState());
+      final store = makeStore(storage);
+      addTearDown(store.dispose);
+      await store.load();
+      final records = await file('records.json').readAsBytes();
+      final saving = storage.writeCache({
+        'pages': {'hongguo': 4},
+      });
+      final clearing = store.clearCatalogCache();
+      await Future.wait([saving, clearing]);
+      expect(await storage.catalogCacheBytes(), 0);
+      expect(await file('records.json').readAsBytes(), records);
+      expect(store.catalog.catalogs[DramaSource.hongguo], hasLength(2));
+      expect(store.catalog.catalogPages[DramaSource.hongguo], 3);
+      final restarted = makeStore(AppFileStorage(directory));
+      addTearDown(restarted.dispose);
+      await restarted.load();
+      expect(restarted.catalog.catalogs, isEmpty);
+      expect(restarted.records.history[anchor.key]!.positionMs, 1);
+      expect(restarted.records.favorites[anchor.key]!.title, anchor.title);
+      expect(restarted.records.episodeSeenIds[anchor.key], {'e1'});
+      expect(restarted.records.seasonReminders.keys, [anchor.key]);
+      expect(restarted.preferences.themeMode, ThemeMode.dark);
+      expect(restarted.preferences.playbackSpeed, 1.5);
+      // New actual use can populate the cache again, in its original queue.
+      await storage.writeCache({
+        'pages': {'hongguo': 5},
+      });
+      expect((await storage.read())!['pages'], {'hongguo': 5});
+    },
+  );
+
+  test(
+    'cache bytes include the unfinished write and exclude records and unrelated files',
+    () async {
+      final storage = AppFileStorage(directory);
+      await storage.write(await savedState());
+      await file('catalog-cache.json.tmp').writeAsBytes([1, 2, 3]);
+      await file('unrelated').writeAsBytes(List.filled(300, 1));
+      expect(
+        await storage.catalogCacheBytes(),
+        await file('catalog-cache.json').length() + 3,
+      );
+      await storage.clearCatalogCache();
+      expect(await file('catalog-cache.json.tmp').exists(), isFalse);
+      expect(await file('records.json').exists(), isTrue);
+      expect(await file('unrelated').length(), 300);
+    },
+  );
+
+  test(
+    'directory collisions are unknown and cannot trigger recursive deletion',
+    () async {
+      final storage = AppFileStorage(directory);
+      await storage.write(await savedState());
+      final obstacle = await Directory(
+        '${directory.path}/catalog-cache.json.tmp',
+      ).create();
+      await File('${obstacle.path}/keep').writeAsString('keep');
+      expect(await storage.catalogCacheBytes(), isNull);
+      await expectLater(
+        storage.clearCatalogCache(),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(await File('${obstacle.path}/keep').readAsString(), 'keep');
+      expect(await file('records.json').exists(), isTrue);
+      await obstacle.delete(recursive: true);
+      await storage.writeCache({
+        'pages': {'hongguo': 9},
+      });
+      expect(await storage.catalogCacheBytes(), greaterThan(0));
+      await storage.clearCatalogCache();
+      expect(await storage.catalogCacheBytes(), 0);
+    },
+  );
+
+  test(
+    'clearing a cache symlink only unlinks it and preserves the target',
+    () async {
+      final storage = AppFileStorage(directory);
+      await storage.writeRecords(await savedState());
+      final records = await file('records.json').readAsBytes();
+      await Link(
+        file('catalog-cache.json').path,
+      ).create(file('records.json').path);
+      expect(await storage.catalogCacheBytes(), isNull);
+      await storage.clearCatalogCache();
+      expect(await file('records.json').readAsBytes(), records);
+      expect(
+        await FileSystemEntity.isLink(file('catalog-cache.json').path),
+        isFalse,
+      );
+    },
+  );
+
+  test(
     'discovery columns roundtrip through the cache file without rewriting records',
     () async {
       final store = makeStore(AppFileStorage(directory));

@@ -11,6 +11,7 @@ import 'data/app_startup.dart';
 import 'data/download_store.dart';
 import 'data/storage.dart';
 import 'platform/provider_client.dart';
+import 'platform/playback_temporary_files.dart';
 import 'ui/home_page.dart';
 import 'ui/theme.dart';
 
@@ -123,8 +124,9 @@ Future<AppStartup> _loadStartup() async {
   // Keep cleanup before any player can acquire a file in this directory.
   try {
     final temporary = await getTemporaryDirectory();
-    final playback = Directory('${temporary.path}/playback');
-    if (await playback.exists()) await playback.delete(recursive: true);
+    await PlaybackTemporaryFiles.clearUnused(
+      Directory('${temporary.path}/playback'),
+    );
   } catch (_) {
     // Reconstructible cache cleanup cannot block access to durable records.
   }

@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../domain/models.dart';
 import '../platform/media_preparer.dart';
+import '../platform/file_usage.dart';
 import '../platform/provider_client.dart';
 import 'app_store.dart';
 import 'storage.dart';
@@ -974,6 +975,15 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     await Future<void>.delayed(Duration.zero);
     if (!_disposed) notifyListeners();
     try {
+      try {
+        // Files can be measured before native task recovery, but only after
+        // the saved download list has supplied the scopes to scan.
+        await _manifestLoad;
+      } catch (_) {
+        usageError = '下载记录暂无法读取，文件占用尚未统计';
+        return;
+      }
+      if (_disposed) return;
       do {
         _usageAgain = false;
         usageError = null;
@@ -989,27 +999,13 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _measureEntryUsage(DownloadEntry entry) async {
-    try {
-      var bytes = 0;
-      final directory = Directory(entry.directory);
-      if (await directory.exists()) {
-        await for (final file in directory.list(
-          recursive: true,
-          followLinks: false,
-        )) {
-          if (file is File) {
-            try {
-              bytes += await file.length();
-            } on FileSystemException {
-              if (await file.exists()) rethrow;
-            }
-          }
-        }
-      }
-      if (entries.contains(entry)) bytesByEntry[entry.id] = bytes;
-    } on FileSystemException {
+    final bytes = await directoryFileBytes(Directory(entry.directory));
+    if (!entries.contains(entry)) return;
+    if (bytes == null) {
       bytesByEntry.remove(entry.id);
       usageError = '部分文件占用暂时无法统计，下拉可重新统计';
+    } else {
+      bytesByEntry[entry.id] = bytes;
     }
   }
 

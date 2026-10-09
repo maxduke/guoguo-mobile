@@ -5,11 +5,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/platform/media_executor.dart';
 import 'package:guoguo_mobile/platform/media_preparer.dart';
+import 'package:guoguo_mobile/platform/playback_temporary_files.dart';
 import 'package:guoguo_mobile/platform/provider_client.dart';
 
 class _Job implements MediaExecution {
   final _result = Completer<void>();
   int cancellations = 0;
+  Completer<void>? cancelGate;
   _Job() {
     unawaited(
       _result.future.then<void>((_) {}, onError: (Object _, StackTrace _) {}),
@@ -24,6 +26,7 @@ class _Job implements MediaExecution {
   @override
   Future<void> cancel() async {
     cancellations++;
+    await cancelGate?.future;
     if (!_result.isCompleted) {
       _result.completeError(const ProviderException('已取消准备'));
     }
@@ -85,6 +88,57 @@ void main() {
   tearDown(() async {
     if (await root.exists()) await root.delete(recursive: true);
   });
+
+  test(
+    'cleanup protects native output until cancellation and disposal finish',
+    () async {
+      final executor = _Executor()
+        ..onStart = (args, job) => _publish(args.last);
+      final preparer = MediaPreparer(
+        executor: executor,
+        temporaryDirectory: () async => root,
+      );
+      await preparer.prepare(_media(), progressive: true);
+      final session = File(executor.arguments.single.last).parent.parent;
+      final playback = Directory('${root.path}/playback');
+      await PlaybackTemporaryFiles.clearUnused(playback);
+      expect(await session.exists(), isTrue);
+      final gate = executor.jobs.single.cancelGate = Completer<void>();
+      final disposing = preparer.dispose();
+      await Future<void>.delayed(Duration.zero);
+      await PlaybackTemporaryFiles.clearUnused(playback);
+      expect(await session.exists(), isTrue);
+      expect(
+        (await PlaybackTemporaryFiles.measure(playback)).activeBytes,
+        greaterThan(0),
+      );
+      gate.complete();
+      await disposing;
+      expect(await session.exists(), isFalse);
+      expect((await PlaybackTemporaryFiles.measure(playback)).totalBytes, 0);
+    },
+  );
+
+  test(
+    'canceled preparation keeps playable files protected until owner disposal',
+    () async {
+      final executor = _Executor()
+        ..onStart = (args, job) => _publish(args.last);
+      final preparer = MediaPreparer(
+        executor: executor,
+        temporaryDirectory: () async => root,
+      );
+      await preparer.prepare(_media(), progressive: true);
+      final playlist = File(executor.arguments.single.last);
+      await preparer.cancel();
+      await PlaybackTemporaryFiles.clearUnused(
+        Directory('${root.path}/playback'),
+      );
+      expect(await playlist.exists(), isTrue);
+      await preparer.dispose();
+      expect(await playlist.exists(), isFalse);
+    },
+  );
 
   test(
     'progressive returns while native job runs; dispose cancels then removes files',

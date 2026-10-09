@@ -11,9 +11,10 @@ String coverRequest(Drama drama) => Uri(
 ).toString();
 
 /// Cache decoded image bytes, not upstream encrypted responses.
+const coverCacheKey = 'guoguo-decoded-covers-v1';
 final coverCache = CacheManager(
   Config(
-    'guoguo-decoded-covers-v1',
+    coverCacheKey,
     maxNrOfCacheObjects: 600,
     fileService: ProviderCoverService(NativeProviderClient.shared),
   ),

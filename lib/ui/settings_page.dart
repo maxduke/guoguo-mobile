@@ -4,7 +4,6 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -12,10 +11,10 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../data/app_store.dart';
 import '../data/library_exchange.dart';
 import '../data/download_store.dart';
-import '../data/cover_cache.dart';
 import '../domain/user_input_exception.dart';
 import 'components.dart';
 import 'playback_diagnostics_page.dart';
+import 'storage_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, required this.store, required this.downloads});
@@ -35,7 +34,6 @@ class _SettingsPageState extends State<SettingsPage> {
     unawaited(downloads.refreshUsage());
   }
 
-  bool _clearing = false;
   bool _backingUp = false;
   bool _exchangingLibrary = false;
   bool get _fileBusy => _backingUp || _exchangingLibrary;
@@ -304,48 +302,30 @@ class _SettingsPageState extends State<SettingsPage> {
               const SizedBox(height: 24),
               _heading(context, '存储'),
               Card(
-                child: Column(
-                  children: [
-                    ListenableBuilder(
-                      listenable: downloads,
-                      builder: (context, _) {
-                        final bytes = downloads.bytesFor(downloads.entries);
-                        return ListTile(
-                          leading: const Icon(Icons.storage_outlined),
-                          title: const Text('下载文件占用'),
-                          subtitle: Text(
-                            bytes == null
-                                ? '暂未完成统计 · 在下载页下拉更新'
-                                : '${formatDownloadBytes(bytes)} · 在下载页按剧管理',
-                          ),
-                        );
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.cleaning_services_outlined),
-                      title: Text(_clearing ? '正在清理…' : '清理封面缓存'),
-                      subtitle: const Text('收藏、历史和已下载视频会保留'),
-                      onTap: _clearing
-                          ? null
-                          : () => perform(context, () async {
-                              setState(() => _clearing = true);
-                              try {
-                                await DefaultCacheManager().emptyCache();
-                                await coverCache.emptyCache();
-                                PaintingBinding.instance.imageCache.clear();
-                                PaintingBinding.instance.imageCache
-                                    .clearLiveImages();
-                              } finally {
-                                if (mounted) setState(() => _clearing = false);
-                              }
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('封面缓存已清理')),
-                                );
-                              }
-                            }),
-                    ),
-                  ],
+                child: ListenableBuilder(
+                  listenable: downloads,
+                  builder: (context, _) {
+                    final bytes = downloads.manifestLoaded
+                        ? downloads.bytesFor(downloads.entries)
+                        : null;
+                    return ListTile(
+                      leading: const Icon(Icons.storage_outlined),
+                      title: const Text('存储管理'),
+                      subtitle: Text(
+                        bytes == null
+                            ? '查看下载与缓存占用，按需清理'
+                            : '${formatDownloadBytes(bytes)} 下载 · 查看缓存与清理',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute<void>(
+                          builder: (_) =>
+                              StoragePage(store: store, downloads: downloads),
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
               const SizedBox(height: 24),
