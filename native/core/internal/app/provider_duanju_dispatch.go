@@ -45,8 +45,10 @@ func (d *Downloader) fetchDuanjuCatalogPage(ctx context.Context, source string, 
 		return d.fetchXingguoCatalogPage(ctx, page, category)
 	case sourceNiuguo:
 		return d.fetchNiuguoCatalogPage(ctx, page, category)
-	case sourceHuaguo, sourceWuguo, sourcePiguo:
+	case sourceHuaguo, sourceWuguo, sourcePiguo, sourceMiguo, sourceShuangguo:
 		return d.fetchMaccmsCatalogPage(ctx, source, page, category)
+	case sourceChaoguo:
+		return d.fetchChaoguoCatalogPage(ctx, page, category)
 	}
 	return nil, false, errors.New("该站源暂未接入目录")
 }
@@ -68,8 +70,10 @@ func (d *Downloader) fetchDuanjuDetail(ctx context.Context, source, sourceID str
 		return d.fetchXingguoDetail(ctx, sourceID)
 	case sourceNiuguo:
 		return d.fetchNiuguoDetail(ctx, sourceID)
-	case sourceHuaguo, sourceWuguo, sourcePiguo:
+	case sourceHuaguo, sourceWuguo, sourcePiguo, sourceMiguo, sourceShuangguo:
 		return d.fetchMaccmsDetail(ctx, source, sourceID)
+	case sourceChaoguo:
+		return d.fetchChaoguoDetail(ctx, sourceID)
 	}
 	return Drama{}, nil, errors.New("该站源暂未接入详情")
 }
@@ -91,8 +95,11 @@ func (d *Downloader) searchDuanju(ctx context.Context, source, query string) ([]
 		return d.searchXingguo(ctx, query)
 	case sourceNiuguo:
 		return d.searchNiuguo(ctx, query)
-	case sourceHuaguo, sourceWuguo, sourcePiguo:
+	case sourceHuaguo, sourceWuguo, sourcePiguo, sourceMiguo, sourceShuangguo:
 		return d.searchMaccms(ctx, source, query)
+	case sourceChaoguo:
+		items, _, err := d.searchChaoguoPage(ctx, query, 1)
+		return items, err
 	}
 	return nil, errors.New("该站源不支持在线搜索")
 }
@@ -112,8 +119,10 @@ func (d *Downloader) searchDuanjuPage(ctx context.Context, source, query string,
 		return d.searchGuanguoPage(ctx, query, page)
 	case sourceNiuguo:
 		return d.searchNiuguoPage(ctx, query, page)
-	case sourceHuaguo, sourceWuguo, sourcePiguo:
+	case sourceHuaguo, sourceWuguo, sourcePiguo, sourceMiguo, sourceShuangguo:
 		return d.searchMaccmsPage(ctx, source, query, page)
+	case sourceChaoguo:
+		return d.searchChaoguoPage(ctx, query, page)
 	default:
 		if page > 1 {
 			return nil, false, nil
@@ -209,15 +218,29 @@ func duanjuLooksLikeMedia(address string) bool {
 }
 
 func (d *Downloader) resolveDuanjuWebPage(ctx context.Context, source, pageURL, referer string) (providerMedia, error) {
-	body, err := d.fetchProviderText(ctx, pageURL, referer)
+	body, current, err := d.fetchProviderTextURL(ctx, pageURL, referer)
 	if err != nil {
 		return providerMedia{}, err
 	}
 	address := maccmsNormalizePlaybackURL(maccmsPlayerURL(body))
-	if address == "" {
+	for hop := 0; hop < 2 && address != "" && !duanjuLooksLikeMedia(address); hop++ {
+		if !isProviderHTTPMediaURL(address) || address == current {
+			break
+		}
+		nested, finalURL, err := d.fetchProviderTextURL(ctx, address, current)
+		if err != nil {
+			return providerMedia{}, err
+		}
+		if strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(nested, "\ufeff")), "#EXTM3U") {
+			return providerMedia{URL: finalURL, Playlist: nested, Referer: current}, nil
+		}
+		current = finalURL
+		address = maccmsNormalizePlaybackURL(maccmsPlayerURL(nested))
+	}
+	if address == "" || !duanjuLooksLikeMedia(address) {
 		return providerMedia{}, fmt.Errorf("%s未返回有效播放地址，请刷新章节后重试", duanjuSourceName(source))
 	}
-	return providerMedia{URL: address, Referer: pageURL}, nil
+	return providerMedia{URL: address, Referer: current}, nil
 }
 
 func (d *Downloader) duanjuSourceProbe(ctx context.Context, source string) (string, error) {

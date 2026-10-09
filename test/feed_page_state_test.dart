@@ -227,6 +227,38 @@ void _expectFirstPage(_Fixture fixture) {
 }
 
 void main() {
+  testWidgets('ranking refresh bypasses native cache and preserves stale age', (
+    tester,
+  ) async {
+    final fixture = await _mount(tester, _Feed.rankings);
+    final fetchedAt = DateTime.utc(2026, 10, 8, 12);
+    expect(fixture.latest.args['refresh'], isFalse);
+    fixture.latest.result.complete({
+      ..._page(_Feed.rankings, [_drama('first')], more: true),
+      'fetchedAt': fetchedAt.toIso8601String(),
+    });
+    await tester.pumpAndSettle();
+    final refresh = _refresh(tester);
+    expect(fixture.latest.args['refresh'], isTrue);
+    fixture.latest.result.complete({
+      ..._page(_Feed.rankings, [_drama('first')], more: true),
+      'fetchedAt': fetchedAt.toIso8601String(),
+      'stale': true,
+      'warning': '站点暂不可用，显示上次取得的榜单',
+    });
+    await refresh;
+    await tester.pumpAndSettle();
+    expect(_ids(tester), ['first']);
+    expect(find.textContaining('缓存 · 上次获取'), findsOneWidget);
+    expect(find.text('加载更多'), findsNothing);
+    expect(
+      fixture.store.catalog.discoveryCache
+          .ranking(DramaSource.hongguo, 'a')!
+          .savedAt,
+      fetchedAt,
+    );
+  });
+
   for (final feed in _Feed.values) {
     testWidgets(
       '${feed.name} cached refresh failure fits a narrow screen with large text',

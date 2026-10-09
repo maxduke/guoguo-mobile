@@ -76,3 +76,22 @@ func TestCatalogChallenge200StopsWithoutPublishingSuccess(t *testing.T) {
 		t.Fatal("ordinary description was mistaken for a challenge")
 	}
 }
+
+func TestCatalogSliderVerificationDoesNotBecomeAnEmptySuccess(t *testing.T) {
+	var calls atomic.Int32
+	d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return rankingHTTPResponse(r, 200, `<title>安全验证</title><main class="verify-card"><form id="verifyForm">滑动拼图验证</form></main>`), nil
+	})
+	for i := 0; i < 2; i++ {
+		if _, err := d.fetchProviderText(context.Background(), "https://challenge.example/show/26", ""); err == nil || !strings.Contains(err.Error(), "浏览器验证") {
+			t.Fatal("slider challenge was treated as content", err)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatal("challenge requests were not backed off")
+	}
+	if catalogResponseBlockReason(&http.Response{Header: make(http.Header)}, []byte(`<title>短剧目录</title><p>安全验证</p>`)) != "" {
+		t.Fatal("ordinary content was classified as a challenge")
+	}
+}

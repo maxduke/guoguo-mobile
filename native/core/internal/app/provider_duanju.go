@@ -7,36 +7,42 @@ import (
 )
 
 const (
-	sourceYaguo   = "yaguo"
-	sourceMaoguo  = "maoguo"
-	sourceFanguo  = "fanguo"
-	sourceGuanguo = "guanguo"
-	sourceHeguo   = "heguo"
-	sourceXingguo = "xingguo"
-	sourceHuaguo  = "huaguo"
-	sourceNiuguo  = "niuguo"
-	sourcePiguo   = "piguo"
-	sourceWuguo   = "wuguo"
+	sourceYaguo     = "yaguo"
+	sourceMaoguo    = "maoguo"
+	sourceFanguo    = "fanguo"
+	sourceGuanguo   = "guanguo"
+	sourceHeguo     = "heguo"
+	sourceXingguo   = "xingguo"
+	sourceHuaguo    = "huaguo"
+	sourceNiuguo    = "niuguo"
+	sourcePiguo     = "piguo"
+	sourceWuguo     = "wuguo"
+	sourceChaoguo   = "chaoguo"
+	sourceMiguo     = "miguo"
+	sourceShuangguo = "shuangguo"
 
 	duanjuMaxBodyBytes = 8 * 1024 * 1024
 	duanjuUserAgent    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 
 var (
-	yaguoBaseURL    = "https://app.whjzjx.cn"
-	yaguoLoginURL   = "https://u.shytkjgs.com/user/v1/account/login"
-	maoguoBaseURL   = "https://api-store.qmplaylet.com"
-	maoguoReadURL   = "https://api-read.qmplaylet.com"
-	fanguoBaseURL   = "https://xifan-api-cn.youlishipin.com"
-	guanguoBaseURL  = "https://api.drama.9ddm.com"
-	heguoBaseURL    = "https://www.kuaikaw.cn"
-	xingguoBaseURL  = "http://read.api.duodutek.com"
-	huaguoBaseURL   = "https://www.zywest263.com"
-	niuguoBaseURL   = "https://ccc.chaojichaojichanga.com:35620"
-	niuguoParseURL  = "http://ccs.jshh.gzbaoxian.com"
-	niuguoParseURL2 = "http://101.42.92.211:5560"
-	piguoBaseURL    = "https://ptt.red"
-	wuguoBaseURL    = "https://www.duanju55.com"
+	yaguoBaseURL     = "https://app.whjzjx.cn"
+	yaguoLoginURL    = "https://u.shytkjgs.com/user/v1/account/login"
+	maoguoBaseURL    = "https://api-store.qmplaylet.com"
+	maoguoReadURL    = "https://api-read.qmplaylet.com"
+	fanguoBaseURL    = "https://xifan-api-cn.youlishipin.com"
+	guanguoBaseURL   = "https://api.drama.9ddm.com"
+	heguoBaseURL     = "https://www.kuaikaw.cn"
+	xingguoBaseURL   = "http://read.api.duodutek.com"
+	huaguoBaseURL    = "https://www.zywest263.com"
+	niuguoBaseURL    = "https://ccc.chaojichaojichanga.com:35620"
+	niuguoParseURL   = "http://ccs.jshh.gzbaoxian.com"
+	niuguoParseURL2  = "http://101.42.92.211:5560"
+	piguoBaseURL     = "https://ptt.red"
+	wuguoBaseURL     = "https://www.duanju55.com"
+	chaoguoBaseURL   = "https://www.shanekids.com"
+	miguoBaseURL     = "https://dmxq40.com"
+	shuangguoBaseURL = "https://www.duanju2.com"
 )
 
 type duanjuSourceSpec struct {
@@ -62,6 +68,9 @@ var duanjuProviderCatalog = []duanjuSourceSpec{
 	{ID: sourceNiuguo, Name: "牛果", Base: niuguoBaseURL, Kind: "api", Searcher: true, Paged: true},
 	{ID: sourcePiguo, Name: "皮果", Base: piguoBaseURL, Kind: "maccms", Searcher: true, Paged: true, Browser: true},
 	{ID: sourceWuguo, Name: "伍果", Base: wuguoBaseURL, Kind: "maccms", Searcher: true, Paged: true},
+	{ID: sourceChaoguo, Name: "超果", Base: chaoguoBaseURL, Kind: "web", Searcher: true, Paged: true},
+	{ID: sourceMiguo, Name: "米果", Base: miguoBaseURL, Kind: "maccms", Searcher: true},
+	{ID: sourceShuangguo, Name: "爽果", Base: shuangguoBaseURL, Kind: "maccms", Searcher: true, Paged: true},
 }
 
 var duanjuMarkupPattern = regexp.MustCompile(`<[^>]{1,80}>`)
@@ -93,6 +102,9 @@ var duanjuSourceAliases = map[string]string{
 	"niuguo": "niuguo", "niuniu": sourceNiuguo, "牛牛": sourceNiuguo,
 	"piguo": "piguo", "ptt": sourcePiguo, "ptt.red": sourcePiguo,
 	"wuguo": "wuguo", "wuwu": sourceWuguo, "五五": sourceWuguo, "www.duanju55.com": sourceWuguo,
+	"chaoguo": sourceChaoguo, "chaoduanju": sourceChaoguo, "超果": sourceChaoguo, "shanekids.com": sourceChaoguo, "www.shanekids.com": sourceChaoguo,
+	"miguo": sourceMiguo, "大米星球": sourceMiguo, "米果": sourceMiguo, "dmxq40.com": sourceMiguo, "www.dmxq40.com": sourceMiguo,
+	"shuangguo": sourceShuangguo, "爽果": sourceShuangguo, "duanju2.com": sourceShuangguo, "www.duanju2.com": sourceShuangguo,
 }
 
 var duanjuSourcesByName = func() map[string]duanjuSourceSpec {
@@ -157,6 +169,12 @@ func duanjuSourceForHost(host string) string {
 		return sourcePiguo
 	case host == "www.duanju55.com" || host == "duanju55.com":
 		return sourceWuguo
+	case host == "www.shanekids.com" || host == "shanekids.com":
+		return sourceChaoguo
+	case host == "www.dmxq40.com" || host == "dmxq40.com":
+		return sourceMiguo
+	case host == "www.duanju2.com" || host == "duanju2.com":
+		return sourceShuangguo
 	default:
 		return ""
 	}
@@ -170,6 +188,8 @@ func validDuanjuCategory(source, category string) bool {
 		return false
 	}
 	switch canonicalProviderSource(source) {
+	case sourceChaoguo:
+		return validChaoguoCategory(category)
 	case sourceMaoguo:
 		return validMaoguoCategory(category)
 	case sourceHeguo, sourceXingguo, sourceYaguo, sourceNiuguo:
@@ -200,6 +220,45 @@ type duanjuCategory struct {
 }
 
 var duanjuStaticCategories = map[string][]duanjuCategory{
+	sourceShuangguo: {
+		{ID: "all", Name: "全部"},
+		{ID: "反转爽文", Name: "反转爽文"},
+		{ID: "古装仙侠", Name: "古装仙侠"},
+		{ID: "女频恋爱", Name: "女频恋爱"},
+		{ID: "年代穿越", Name: "年代穿越"},
+		{ID: "现代言情", Name: "现代言情"},
+		{ID: "现代都市", Name: "现代都市"},
+		{ID: "短剧", Name: "短剧"},
+	},
+
+	sourceMiguo: {
+		{ID: "36", Name: "短剧"},
+		{ID: "netflix", Name: "Netflix"},
+		{ID: "21", Name: "电视剧"},
+		{ID: "20", Name: "电影"},
+		{ID: "22", Name: "动漫"},
+		{ID: "23", Name: "综艺"},
+	},
+
+	sourceChaoguo: {
+		{ID: "class:mainstream", Name: "主流剧情"},
+		{ID: "class:adult", Name: "成人向"},
+		{ID: "class:anime_ip", Name: "动漫风格"},
+		{ID: "class:unknown", Name: "其他"},
+		{ID: "tag:都市", Name: "都市"},
+		{ID: "tag:高颜值", Name: "高颜值"},
+		{ID: "tag:现代", Name: "现代"},
+		{ID: "tag:剧情", Name: "剧情"},
+		{ID: "tag:古风", Name: "古风"},
+		{ID: "tag:校园", Name: "校园"},
+		{ID: "tag:逆袭", Name: "逆袭"},
+		{ID: "tag:职场", Name: "职场"},
+		{ID: "tag:甜宠", Name: "甜宠"},
+		{ID: "tag:穿越", Name: "穿越"},
+		{ID: "tag:玄幻", Name: "玄幻"},
+		{ID: "tag:重生", Name: "重生"},
+	},
+
 	sourceYaguo: {
 		{ID: "1", Name: "剧场"},
 		{ID: "9", Name: "榜单"},

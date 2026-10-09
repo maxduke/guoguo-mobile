@@ -140,10 +140,10 @@ void main() {
       expect(store.preferences.recentSources, [
         DramaSource.wuguo,
         DramaSource.huangdou,
+        DramaSource.shuangguo,
+        DramaSource.miguo,
+        DramaSource.chaoguo,
         DramaSource.piguo,
-        DramaSource.niuguo,
-        DramaSource.huaguo,
-        DramaSource.xingguo,
       ]);
       final restored = _store(storage: storage);
       addTearDown(restored.dispose);
@@ -223,7 +223,12 @@ void main() {
           'hiddenSources': ['unknown'],
         },
         {'favoriteSources': false},
-        {'recentSources': List.filled(17, 'hongguo')},
+        {
+          'recentSources': List.filled(
+            DramaSource.values.length + 1,
+            'hongguo',
+          ),
+        },
       ]) {
         expect(
           () => preferences.restore({'theme': 'light', ...invalid}),

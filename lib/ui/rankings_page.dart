@@ -124,9 +124,9 @@ class _RankingsPageState extends State<RankingsPage> {
 
   Future<void> _retry() => failedBoards || selected == null
       ? _loadBoards()
-      : _load(more: failedMore ?? false);
+      : _load(more: failedMore ?? false, refresh: failedMore != true);
 
-  Future<void> _load({bool more = false}) async {
+  Future<void> _load({bool more = false, bool refresh = false}) async {
     final board = selected;
     if (!mounted ||
         board == null ||
@@ -150,6 +150,7 @@ class _RankingsPageState extends State<RankingsPage> {
         requestSource,
         board,
         page: nextPage,
+        refresh: refresh,
       );
       if (!mounted || request != generation) return;
       final nextRows = List<DiscoveryRow>.unmodifiable(
@@ -157,7 +158,10 @@ class _RankingsPageState extends State<RankingsPage> {
           for (final row in [...previous, ...result.rows]) row.drama.key: row,
         }.values,
       );
-      final fetchedAt = requestStore.now();
+      final fetchedAt =
+          result.fetchedAt ??
+          (result.stale ? updatedAt : null) ??
+          requestStore.now();
       await requestStore.catalog.saveRankingColumn(
         requestSource,
         board,
@@ -173,8 +177,8 @@ class _RankingsPageState extends State<RankingsPage> {
       setState(() {
         rows = nextRows;
         updatedAt = fetchedAt;
-        cachedOnly = false;
-        hasMore = result.hasMore;
+        cachedOnly = result.stale;
+        hasMore = result.hasMore && !result.stale;
         kind = result.kind;
         description = result.description;
         warning = result.warning?.isNotEmpty == true ? result.warning : null;
@@ -283,7 +287,7 @@ class _RankingsPageState extends State<RankingsPage> {
                           : null,
                     )
                   : RefreshIndicator(
-                      onRefresh: () => _load(),
+                      onRefresh: () => _load(refresh: true),
                       child: ListView.builder(
                         physics: const AlwaysScrollableScrollPhysics(),
                         padding: const EdgeInsets.all(16),

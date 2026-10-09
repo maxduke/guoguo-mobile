@@ -86,7 +86,7 @@ void main() {
   }
 
   testWidgets(
-    'sixteen sources remain accessible and new sources paginate online search',
+    'nineteen sources remain accessible and new sources paginate online search',
     (tester) async {
       tester.view.physicalSize = const Size(320, 740);
       tester.view.devicePixelRatio = 1;
@@ -112,6 +112,12 @@ void main() {
       expect(find.widgetWithText(ChoiceChip, '帝果'), findsOneWidget);
       final lastSource = find.widgetWithText(ChoiceChip, '伍果');
       expect(lastSource.hitTestable(), findsOneWidget);
+      for (final label in ['超果', '米果', '爽果']) {
+        final choice = find.widgetWithText(ChoiceChip, label);
+        expect(choice, findsOneWidget);
+        await tester.ensureVisible(choice);
+        expect(choice.hitTestable(), findsOneWidget);
+      }
       await tester.tap(find.byTooltip('关闭站源选择'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('搜索剧名'));

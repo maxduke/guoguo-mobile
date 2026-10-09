@@ -8,6 +8,7 @@
 - 真实 FFmpeg 媒体回归验证受支持的准备与解码路径，测试构建和模拟事件保留各自范围。
 - 当前交付要求 PR HEAD 的 Flutter/core 与 iOS unsigned CI 通过，再确认合并后对应 main 提交的两项检查和 iOS 产物。具体结果按 [Actions](https://github.com/maxduke/guoguo-mobile/actions) 的提交/运行核对，不能用其他提交的通过记录代替。
 - [性能基线](performance-baseline.md) 提供可复现的合成主机样本、原始数据和局部优化结果，不提供设备性能承诺。
+- [2026-10-09 站源抽查](archive/upstream-refresh-2026-10-09.md) 记录黄果刷新修复、超果/米果/爽果接入、现有站源结果及浏览器验证限制；当次文本解析成功不等于设备播放验收或持续可用率。
 
 ## 仍需设备验收
 

@@ -112,12 +112,16 @@ class DiscoveryColumnResult {
     required this.description,
     required this.hasMore,
     this.warning,
+    this.fetchedAt,
+    this.stale = false,
   });
   final List<DiscoveryRow> rows;
   final DiscoveryKind kind;
   final String description;
   final String? warning;
   final bool hasMore;
+  final DateTime? fetchedAt;
+  final bool stale;
 
   factory DiscoveryColumnResult.fromJson(
     Map<String, dynamic> value,
@@ -139,6 +143,10 @@ class DiscoveryColumnResult {
       description: value['description'] as String? ?? '',
       warning: value['warning'] as String?,
       hasMore: value['hasMore'] as bool? ?? false,
+      fetchedAt: value['fetchedAt'] == null
+          ? null
+          : DateTime.parse(value['fetchedAt'] as String),
+      stale: value['stale'] as bool? ?? false,
     );
   }
 }

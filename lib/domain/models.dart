@@ -16,7 +16,10 @@ enum DramaSource {
   huaguo('花果', '更多短剧随心看'),
   niuguo('牛果', '发现更多好故事'),
   piguo('皮果', '发现新的故事'),
-  wuguo('伍果', '精彩故事继续看');
+  wuguo('伍果', '精彩故事继续看'),
+  chaoguo('超果', '短剧随心搜'),
+  miguo('米果', '短剧 · 电影 · 电视剧'),
+  shuangguo('爽果', '更多短剧随心看');
 
   const DramaSource(this.label, this.subtitle);
   final String label;

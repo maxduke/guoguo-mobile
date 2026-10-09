@@ -58,7 +58,7 @@ void main() {
     const Size(320, 740),
     const Size(1024, 768),
   ]) {
-    testWidgets('all sixteen sources are immediately selectable on $size', (
+    testWidgets('all nineteen sources remain selectable on $size', (
       tester,
     ) async {
       final changes = <DramaSource?>[];
@@ -67,12 +67,16 @@ void main() {
       await _open(tester);
       for (final source in DramaSource.values) {
         final tile = find.widgetWithText(ChoiceChip, source.label);
+        await tester.ensureVisible(tile);
+        await tester.pumpAndSettle();
         expect(tile.hitTestable(), findsOneWidget, reason: source.label);
         expect(
           tester.widget<ChoiceChip>(tile).selected,
           source == DramaSource.hongguo,
         );
       }
+      await tester.ensureVisible(find.widgetWithText(ChoiceChip, '伍果'));
+      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(ChoiceChip, '伍果'));
       await tester.pumpAndSettle();
       expect(changes, [DramaSource.wuguo]);
