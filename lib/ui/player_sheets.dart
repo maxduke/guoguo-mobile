@@ -180,7 +180,9 @@ class PlayerMoreSheet extends StatelessWidget {
           childrenPadding: EdgeInsets.fromLTRB(16, 0, 16, 16),
           expandedCrossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('单击显示或隐藏控件；上下滑动切换分集；左右滑动调节进度。长按 2 倍速，按住后左右滑动可快进快退，松手跳转。'),
+            Text(
+              '单击显示或隐藏控件；读屏模式下控件保持显示。上下滑动切换分集；左右滑动调节进度，松手跳转。长按临时 2 倍速，松手恢复原倍速。也可使用底部播放、暂停、上一集、下一集和选集按钮。',
+            ),
           ],
         ),
       ],

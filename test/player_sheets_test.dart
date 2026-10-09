@@ -146,6 +146,8 @@ void main() {
         await tester.tap(find.text('播放手势'));
         await tester.pumpAndSettle();
         expect(find.textContaining('单击显示或隐藏控件'), findsOneWidget);
+        expect(find.textContaining('长按临时 2 倍速，松手恢复原倍速'), findsOneWidget);
+        expect(find.textContaining('按住后左右滑动'), findsNothing);
         await tester.ensureVisible(find.textContaining('单击显示或隐藏控件'));
         await tester.pumpAndSettle();
         expect(find.textContaining('单击显示或隐藏控件').hitTestable(), findsOneWidget);

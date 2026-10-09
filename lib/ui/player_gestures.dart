@@ -76,13 +76,8 @@ class _PlayerGesturesState extends State<PlayerGestures>
   }
 
   void _move(double dx) {
-    if (_origin == null) return;
+    if (_origin == null || !_horizontalGesture) return;
     _distance += dx;
-    if (_boost && _distance.abs() < 18) return;
-    if (_boost) {
-      _boost = false;
-      widget.onBoost(false);
-    }
     final span = widget.duration().clamp(0, 120000);
     setState(
       () => _preview =
@@ -113,6 +108,7 @@ class _PlayerGesturesState extends State<PlayerGestures>
   @override
   Widget build(BuildContext context) => GestureDetector(
     behavior: HitTestBehavior.opaque,
+    excludeFromSemantics: true,
     onTap: widget.onTap,
     onHorizontalDragStart: widget.enabled ? (_) => _start() : null,
     onHorizontalDragUpdate: widget.enabled
@@ -123,9 +119,6 @@ class _PlayerGesturesState extends State<PlayerGestures>
       if (_horizontalGesture) _finish(commit: false);
     },
     onLongPressStart: widget.enabled ? (_) => _start(boost: true) : null,
-    onLongPressMoveUpdate: widget.enabled
-        ? (event) => _move(event.offsetFromOrigin.dx - _distance)
-        : null,
     onLongPressEnd: (_) => _finish(),
     onLongPressCancel: () {
       if (_longGesture) _finish(commit: false);
@@ -149,7 +142,7 @@ class _PlayerGesturesState extends State<PlayerGestures>
                   ),
                   child: Text(
                     _boost
-                        ? '2 倍速 · 左右滑动调节进度'
+                        ? '2 倍速 · 松手恢复'
                         : '${_preview! >= _origin! ? '快进' : '快退'}  ${_time(_preview!)} / ${_time(widget.duration())}\n松手跳转',
                     textAlign: TextAlign.center,
                     style: const TextStyle(
