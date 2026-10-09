@@ -27,11 +27,15 @@ void main() {
     json.remove('compatibilityFallback');
     json.remove('prefetchBytes');
     json.remove('prefetchMs');
+    json.remove('operation');
+    json.remove('targetMs');
     final legacy = PlaybackDiagnostic.fromJson(json);
     expect(legacy.preparation, 'direct');
     expect(legacy.compatibilityFallback, isFalse);
     expect(legacy.prefetchBytes, 0);
     expect(legacy.prefetchMs, 0);
+    expect(legacy.operation, 'startup');
+    expect(legacy.targetMs, 0);
   });
 
   test(
@@ -72,6 +76,8 @@ void main() {
         'compatibilityFallback',
         'prefetchBytes',
         'prefetchMs',
+        'operation',
+        'targetMs',
       });
       await restored.clearPlaybackDiagnostics();
       expect(storage.value!['playbackDiagnostics'], isEmpty);

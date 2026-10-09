@@ -91,7 +91,7 @@ func (proxy *hlsProxy) prefetch(ctx context.Context, quality int, budget int64) 
 			if err != nil {
 				return false
 			}
-			if (response.StatusCode != http.StatusOK && response.StatusCode != http.StatusPartialContent) || !identityMediaResponse(response) {
+			if (response.StatusCode != http.StatusOK && response.StatusCode != http.StatusPartialContent) || !identityMediaResponse(response) || mediaNoStore(response.Header) {
 				response.Body.Close()
 				return false
 			}

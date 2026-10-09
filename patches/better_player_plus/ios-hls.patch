@@ -9,7 +9,13 @@
      public private(set) var player: AVPlayer
      public private(set) var loaderDelegate: BetterPlayerEzDrmAssetsLoaderDelegate?
      public var eventChannel: FlutterEventChannel?
-@@ -52,6 +54,8 @@
+@@ -47,11 +49,14 @@
+     private var restoreUIOnPipStop: ((Bool) -> Void)?
+     /// Invalidates a pending background-pause check when a newer one supersedes it.
+     private var backgroundPauseGeneration = 0
++    private let seeks = GuoguoSeekCoordinator()
+ 
+     public override init() {
          self.player = AVPlayer()
          super.init()
          self.player.actionAtItemEnd = .none
@@ -18,7 +24,28 @@
          if #available(iOS 10.0, *) {
              self.player.automaticallyWaitsToMinimizeStalling = false
          }
-@@ -203,7 +207,7 @@
+@@ -64,6 +69,10 @@
+             selector: #selector(onDidEnterBackground),
+             name: UIApplication.didEnterBackgroundNotification,
+             object: nil
++        )
++        NotificationCenter.default.addObserver(
++            self, selector: #selector(onDidBecomeActive),
++            name: UIApplication.didBecomeActiveNotification, object: nil
+         )
+     }
+ 
+@@ -141,6 +150,9 @@
+                 p.seek(to: .zero, completionHandler: nil)
+             }
+         } else {
++            // EOF is a native pause too. A later seek back must not inherit the
++            // previous item's playing flag and restart a deliberately ended video.
++            pause()
+             if let eventSink = eventSink {
+                 eventSink(["event": "completed", "key": key as Any])
+                 removeObservers()
+@@ -203,7 +215,7 @@
          }
      }
  
@@ -27,7 +54,7 @@
          self.overriddenDuration = 0
          var finalHeaders = headers
          if finalHeaders["dummy"] == nil {} // keep dictionary type stable
-@@ -231,31 +235,31 @@
+@@ -231,31 +243,33 @@
          if #available(iOS 10.0, *), overriddenDuration > 0 {
              self.overriddenDuration = overriddenDuration
          }
@@ -39,6 +66,8 @@
 +    }
 +
 +    private func setDataSourcePlayerItem(_ item: AVPlayerItem, key: String?, useVideoComposition: Bool) {
++        seeks.invalidate()
++        stopStalledCheck()
          self.key = key
          self.stalledCount = 0
          self.isStalledCheckStarted = false
@@ -76,7 +105,46 @@
                              #if !targetEnvironment(simulator)
                              let videoComposition = self.getVideoComposition(transform: self.preferredTransform, asset: asset, videoTrack: videoTrack)
                              item.videoComposition = videoComposition
-@@ -379,6 +383,11 @@
+@@ -268,16 +282,28 @@
+         addObservers(item)
+     }
+ 
++    private func stopStalledCheck() {
++        NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(startStalledCheckObjC), object: nil)
++        stalledCount = 0
++        isStalledCheckStarted = false
++    }
++
+     private func handleStalled() {
++        guard isPlaying, isInitialized, !disposed, !seeks.isSeeking else { return }
+         if isStalledCheckStarted { return }
+         isStalledCheckStarted = true
+         startStalledCheck()
+     }
+ 
+     private func startStalledCheck() {
++        guard isPlaying, isInitialized, !disposed, !seeks.isSeeking else {
++            stopStalledCheck()
++            return
++        }
+         if let currentItem = player.currentItem {
+             if currentItem.isPlaybackLikelyToKeepUp || (availableDuration() - CMTimeGetSeconds(currentItem.currentTime())) > 10.0 {
+-                play()
++                stopStalledCheck()
++                applyPlayerRate()
+             } else {
+                 stalledCount += 1
+                 if stalledCount > 60 {
+@@ -303,7 +329,7 @@
+ 
+     public override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
+         if keyPath == "rate" {
+-            if #available(iOS 10.0, *), let pipController = pipController, pipController.isPictureInPictureActive {
++            if #available(iOS 10.0, *), let pipController = pipController, pipController.isPictureInPictureActive, !seeks.isSeeking {
+                 if let last = lastAvPlayerTimeControlStatus, last == player.timeControlStatus {
+                     return
+                 }
+@@ -379,6 +405,11 @@
      }
  
      public func updatePlayingState() {
@@ -88,7 +156,7 @@
          guard isInitialized, key != nil else { return }
          if !observersAdded, let current = player.currentItem { addObservers(current) }
          if isPlaying {
-@@ -388,7 +397,24 @@
+@@ -388,7 +419,25 @@
          }
      }
  
@@ -97,6 +165,7 @@
 +    }
 +
      private func applyPlayerRate() {
++        guard !disposed, isPlaying, !seeks.isSeeking else { return }
 +        // Close the system-route query/play race, including delayed stall/seek
 +        // callbacks. Never resume phone video with its audio still on the TV.
 +        if Self.airPlaySessionActive {
@@ -113,6 +182,119 @@
          if #available(iOS 16, *) {
              player.defaultRate = playerRate
          }
+@@ -440,15 +489,16 @@
+     }
+ 
+     public func play() {
+-        stalledCount = 0
+-        isStalledCheckStarted = false
++        stopStalledCheck()
+         isPlaying = true
++        restoreDisplayLayer()
+         armPictureInPicture()
+         updatePlayingState()
+     }
+ 
+     public func pause() {
+         isPlaying = false
++        stopStalledCheck()
+         updatePlayingState()
+     }
+ 
+@@ -474,13 +524,40 @@
+         return BetterPlayerTimeUtils.cmTimeToMillis(time)
+     }
+ 
+-    public func seekTo(_ location: Int) {
+-        let wasPlaying = isPlaying
+-        if wasPlaying { player.pause() }
+-        player.seek(to: CMTimeMake(value: Int64(location), timescale: 1000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+-            guard let self = self else { return }
+-            if wasPlaying { self.applyPlayerRate() }
+-        }
++    public func seekTo(_ location: Int, completion: @escaping (GuoguoSeekResult) -> Void = { _ in }) {
++        guard !disposed, isInitialized, let item = player.currentItem, item.status == .readyToPlay else {
++            completion(.failed)
++            return
++        }
++        stopStalledCheck()
++        let target = max(0, location)
++        let tolerance = CMTimeMake(value: 250, timescale: 1000)
++        seeks.seek(perform: { [weak self] finished in
++            guard let self, self.player.currentItem === item, !self.disposed else {
++                finished(false)
++                return
++            }
++            // Pause the engine, keeping the viewer's current intent in isPlaying.
++            // Small tolerance avoids costly sample-accurate decoding for scrubbing.
++            self.player.pause()
++            self.player.seek(to: CMTimeMake(value: Int64(target), timescale: 1000),
++                             toleranceBefore: target == 0 ? .zero : tolerance,
++                             toleranceAfter: Int64(target) >= self.duration() ? .zero : tolerance) { succeeded in
++                DispatchQueue.main.async { finished(succeeded) }
++            }
++        }, cancel: { item.cancelPendingSeeks() }, completion: { [weak self] outcome in
++            guard let self, !self.disposed, self.player.currentItem === item else {
++                completion(.cancelled)
++                return
++            }
++            if outcome == .completed && !self.seeks.isSeeking && self.isPlaying {
++                self.applyPlayerRate()
++            } else if outcome == .failed || outcome == .timedOut {
++                self.pause()
++                self.eventSink?(["event": "pause", "key": self.key as Any])
++            }
++            completion(outcome)
++        })
+     }
+ 
+     public func setVolume(_ volume: Double) {
+@@ -596,7 +673,7 @@
+     /// than `didEnterBackground`. `backgroundPauseGeneration` drops a stale check if
+     /// another background transition lands first.
+     @objc private func onDidEnterBackground() {
+-        guard isPlaying, !disposed else { return }
++        guard !disposed, player.currentItem != nil else { return }
+         backgroundPauseGeneration += 1
+         let generation = backgroundPauseGeneration
+         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+@@ -605,8 +682,25 @@
+             guard UIApplication.shared.applicationState == .background else { return }
+             guard self.pipController?.isPictureInPictureActive != true else { return }
+             self.pause()
+-            self.eventSink?(["event": "pause"])
+-        }
++            self.seeks.invalidate()
++            // Keep the AVPlayerItem and its buffers; only release presentation
++            // while locked. Reattach the same player on foreground/manual play.
++            if self.displayLayer?.player === self.player { self.displayLayer?.player = nil }
++            self.eventSink?(["event": "pause", "key": self.key as Any])
++        }
++    }
++
++    @objc private func onDidBecomeActive() {
++        backgroundPauseGeneration += 1
++        restoreDisplayLayer()
++        armPictureInPicture()
++    }
++
++    private func restoreDisplayLayer() {
++        guard !disposed, pipController?.isPictureInPictureActive != true,
++              UIApplication.shared.applicationState != .background,
++              let layer = displayLayer else { return }
++        if layer.player !== player { layer.player = player }
+     }
+ 
+     /// Ends the PiP session now and makes sure the window actually closes.
+@@ -684,6 +778,8 @@
+     }
+ 
+     public func clear() {
++        seeks.invalidate()
++        stopStalledCheck()
+         isInitialized = false
+         isPlaying = false
+         disposed = false
 --- a/ios/better_player_plus/Sources/better_player_plus/SwiftBetterPlayerPlugin.swift
 +++ b/ios/better_player_plus/Sources/better_player_plus/SwiftBetterPlayerPlugin.swift
 @@ -8,6 +8,7 @@
@@ -337,7 +519,48 @@
          for (_, player) in players {
              player.dispose()
              disposeNotificationData(player)
-@@ -244,6 +308,7 @@
+@@ -213,6 +277,11 @@
+ }
+ 
+ extension BetterPlayerPlugin {
++    private static func seekError(_ outcome: GuoguoSeekResult) -> FlutterError {
++        let code = outcome == .cancelled ? "seek_cancelled" : outcome == .timedOut ? "seek_timeout" : "seek_failed"
++        return FlutterError(code: code, message: "Seek did not complete", details: nil)
++    }
++
+     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+         if call.method == "init" {
+             disposeAllPlayers()
+@@ -222,6 +291,28 @@
+         if call.method == "create" {
+             let player = BetterPlayer(frame: .zero)
+             onPlayerSetup(player, result: result)
++            return
++        }
++
++        // App seeks bypass the dependency's Dart seekTo implementation, which
++        // restores a stale play/pause snapshot after awaiting the native seek.
++        // URI identifies our unique session source without private texture IDs.
++        if call.method == "guoguoSeek" {
++            guard let args = call.arguments as? [String: Any], let uri = args["uri"] as? String,
++                  let location = (args["location"] as? NSNumber)?.intValue else {
++                result(FlutterError(code: "seek_failed", message: "Invalid seek", details: nil))
++                return
++            }
++            let matches = players.filter { dataSourceDict[$0.key]?["uri"] as? String == uri }
++            guard matches.count == 1, let player = matches.first?.value else {
++                result(FlutterError(code: "seek_cancelled", message: "Media changed", details: nil))
++                return
++            }
++            player.seekTo(location) { outcome in
++                if outcome == .completed {
++                    result(NSNumber(value: player.position()))
++                } else { result(Self.seekError(outcome)) }
++            }
+             return
+         }
+ 
+@@ -244,6 +335,7 @@
              let cacheKey = dataSource["cacheKey"] as? String
              let maxCacheSize = dataSource["maxCacheSize"] as? NSNumber
              let videoExtension = dataSource["videoExtension"] as? String
@@ -345,7 +568,7 @@
              let overriddenDuration = (dataSource["overriddenDuration"] as? NSNumber)?.intValue ?? 0
  
              let useCache = (dataSource["useCache"] as? NSNumber)?.boolValue ?? false
-@@ -258,7 +323,7 @@
+@@ -258,7 +350,7 @@
                  }
                  player.setDataSourceAsset(assetPath, key: key, certificateUrl: certificateUrl, licenseUrl: licenseUrl, cacheKey: cacheKey, cacheManager: cacheManager, overriddenDuration: overriddenDuration)
              } else if let uriArg = uriArg, let url = URL(string: uriArg) {
@@ -354,7 +577,7 @@
              } else {
                  result(FlutterMethodNotImplemented)
                  return
-@@ -273,7 +338,7 @@
+@@ -273,7 +365,7 @@
              setRemoteCommandsNotificationNotActive()
              players.removeValue(forKey: textureId)
              dataSourceDict.removeValue(forKey: textureId)
@@ -363,7 +586,7 @@
              result(nil)
          case "setLooping":
              if let looping = (argsMap["looping"] as? NSNumber)?.boolValue { player.isLooping = looping }
-@@ -282,6 +347,15 @@
+@@ -282,6 +374,15 @@
              if let vol = (argsMap["volume"] as? NSNumber)?.doubleValue { player.setVolume(vol) }
              result(nil)
          case "play":
@@ -379,7 +602,23 @@
              setupRemoteNotification(player)
              player.play(); result(nil)
          case "position":
-@@ -377,6 +451,9 @@
+@@ -289,8 +390,13 @@
+         case "absolutePosition":
+             result(NSNumber(value: player.absolutePosition()))
+         case "seekTo":
+-            if let location = (argsMap["location"] as? NSNumber)?.intValue { player.seekTo(location) }
+-            result(nil)
++            guard let location = (argsMap["location"] as? NSNumber)?.intValue else {
++                result(Self.seekError(.failed))
++                return
++            }
++            player.seekTo(location) { outcome in
++                result(outcome == .completed ? nil : Self.seekError(outcome))
++            }
+         case "pause":
+             player.pause(); result(nil)
+         case "setSpeed":
+@@ -377,6 +483,9 @@
      }
  
      public func detachFromEngine(for registrar: FlutterPluginRegistrar) {

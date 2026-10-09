@@ -1,6 +1,6 @@
 import 'models.dart';
 
-enum PlaybackResult { started, failed, cancelled }
+enum PlaybackResult { started, completed, failed, cancelled }
 
 /// Explicit fields only: never store upstream URLs, keys or exception strings.
 class PlaybackDiagnostic {
@@ -20,10 +20,14 @@ class PlaybackDiagnostic {
     this.compatibilityFallback = false,
     this.prefetchBytes = 0,
     this.prefetchMs = 0,
+    this.operation = 'startup',
+    this.targetMs = 0,
   });
   final DramaSource source;
   final int episode, resolveMs, prepareMs, setupMs, waitMs, elapsedMs;
   final int prefetchBytes, prefetchMs;
+  final String operation;
+  final int targetMs;
   final DateTime at;
   final PlaybackResult result;
   final bool local, preloaded;
@@ -45,6 +49,8 @@ class PlaybackDiagnostic {
     'compatibilityFallback': compatibilityFallback,
     'prefetchBytes': prefetchBytes,
     'prefetchMs': prefetchMs,
+    'operation': operation,
+    'targetMs': targetMs,
   };
   factory PlaybackDiagnostic.fromJson(Map<String, dynamic> json) =>
       PlaybackDiagnostic(
@@ -70,6 +76,8 @@ class PlaybackDiagnostic {
         compatibilityFallback: json['compatibilityFallback'] == true,
         prefetchBytes: json['prefetchBytes'] as int? ?? 0,
         prefetchMs: json['prefetchMs'] as int? ?? 0,
+        operation: json['operation'] == 'seek' ? 'seek' : 'startup',
+        targetMs: json['targetMs'] as int? ?? 0,
       );
 }
 

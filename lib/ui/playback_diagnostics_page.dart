@@ -51,7 +51,9 @@ class PlaybackDiagnosticsPage extends StatelessWidget {
         children: [
           const Text('遇到播放问题时，可复制诊断并附在问题反馈中。'),
           const SizedBox(height: 16),
-          const Text('仅保留最近 30 条本地记录，不含剧名、播放地址或密钥。开播时间以播放进度首次前进为准，并非精确首帧时间。'),
+          const Text(
+            '仅保留最近 30 条本地记录，不含剧名、播放地址或密钥。开播时间以播放进度首次前进为准；定位时间截至播放器完成定位，均不是画面恢复时间。',
+          ),
           const SizedBox(height: 16),
           if (store.playbackDiagnostics.isEmpty)
             const Text('暂无记录，观看视频后可在这里查看。'),
@@ -65,6 +67,7 @@ class PlaybackDiagnosticsPage extends StatelessWidget {
                     Text(
                       '${sample.source.label} · 第 ${sample.episode} 集 · ${switch (sample.result) {
                         PlaybackResult.started => '已开播',
+                        PlaybackResult.completed => '定位完成',
                         PlaybackResult.failed => '失败',
                         PlaybackResult.cancelled => '已取消',
                       }}',
@@ -86,9 +89,14 @@ class PlaybackDiagnosticsPage extends StatelessWidget {
                       }}${sample.compatibilityFallback ? ' · 已回退兼容方式' : ''}',
                     ),
                     const SizedBox(height: 8),
-                    Text(
-                      '解析 ${sample.resolveMs} ms · 媒体准备 ${sample.prepareMs} ms\n播放器准备 ${sample.setupMs} ms · 本次等待准备 ${sample.waitMs} ms\n${sample.result == PlaybackResult.started ? '到进度开始前进' : '到结束'} ${sample.elapsedMs} ms',
-                    ),
+                    if (sample.operation == 'seek')
+                      Text(
+                        '定位到 ${(sample.targetMs / 1000).toStringAsFixed(1)} 秒 · ${sample.elapsedMs} ms',
+                      )
+                    else
+                      Text(
+                        '解析 ${sample.resolveMs} ms · 媒体准备 ${sample.prepareMs} ms\n播放器准备 ${sample.setupMs} ms · 本次等待准备 ${sample.waitMs} ms\n${sample.result == PlaybackResult.started ? '到进度开始前进' : '到结束'} ${sample.elapsedMs} ms',
+                      ),
                     if (sample.preloaded || sample.prefetchBytes > 0)
                       Text(
                         sample.prefetchBytes > 0
