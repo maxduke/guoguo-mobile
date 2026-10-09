@@ -6,26 +6,24 @@
 
 ## 界面预览
 
-以下使用明确标注的布局示例内容，不是站源实测截图。
+以下为当前导航的布局示例（2026-10-09），使用示例内容，不是站源实测截图。
 
 <img src="screenshots/phone-light.png" width="260" alt="手机浅色界面" /> <img src="screenshots/tablet-dark.png" width="560" alt="平板深色界面" />
-
-[发现页预览](screenshots/recommendations-light.png) · [深色发现页](screenshots/recommendations-dark.png) · [新版详情页](screenshots/detail-phone-light.png) · [平板详情页](screenshots/detail-tablet-dark.png)
 
 ## 当前开发约定
 
 按全新安装维护：记录使用 `records.json`，可重建缓存使用 `catalog-cache.json`；记录备份只接受和生成 v2，不导入旧 `state.json`。旧文件不会自动删除。
 
-历史版本说明见 [更新记录](CHANGELOG.md)，当前限制见 [实现状态](docs/implementation-status.md)。
+当前行为见 [产品规格](docs/product-spec.md)，验证与限制见 [实现状态](docs/implementation-status.md)，历史版本说明见 [更新记录](CHANGELOG.md)。
 
 ## 使用方式
 
-- 点击当前站源打开网格，支持搜索站源名称；剧库按十六站分别浏览，收藏、历史和下载支持“全部站源”筛选。
-- 选集、上下滑切集、续播、倍速、画中画；单击切换控件，左右滑动预览进度，长按 2 倍速，长按后左右滑动快进/快退。
-- 榜单采用大封面与排名卡片；黄果、黄豆以及历史/下载记录会自动补取缺失或过期的封面。
-- 浅色、深色、跟随系统，手机与平板布局。
-- 分集与整剧下载、直接播放、滑动删除；按剧统计空间和大小排序，跨状态整剧多选删除，按失败/暂停状态筛选与批量重试；离线浏览、记录备份与导入。
-- iOS AirPlay；Google Cast、DLNA 设备发现、在线／本地投屏及结束后的进度交接。投屏期间保持应用前台。
+- 发现、追剧、下载为主导航；发现保留推荐、榜单、完整剧库及独立搜索入口，追剧提供最近续播与明确的记录操作。
+- 十六站分别浏览，可管理常用、最近和隐藏站源；收藏、历史和下载支持“全部站源”筛选。联网搜索和本地缓存筛选按站源能力区分。
+- 选集、上下滑切集、续播、倍速、画中画；单击切换控件，普通横滑预览进度，长按临时加速，并保留明确的播放和相邻分集控件。
+- 浅色、深色、跟随系统；按可用窗口切换侧栏与底部导航，保留页面状态，支持大字号和读屏操作。
+- 下载按剧分组，展开后可操作分集与滑动删除；保留选定范围/整剧下载、离线播放、筛选与批量重试，以及次级空间管理。设置提供真实统计范围与安全清理，记录备份包含收藏、历史和新季提醒。
+- 统一设备入口提供 iOS AirPlay、Google Cast、DLNA 及进度交接。Cast/DLNA 手机中转需保持前台；AirPlay 独立原生队列的后台与接收器兼容性仍需真机验收。
 - 站源解析嵌入应用内，不需要部署电脑或业务服务器。
 
 ## 安装 iOS 开发版本
@@ -97,13 +95,16 @@ go run ./cmd/probe -source huangguo
 | `lib/platform` | 原生桥接、媒体准备、局域网投屏 |
 | `packages/guoguo_core` | Swift/Kotlin 平台插件 |
 | `native/core` | 从参考项目复用的 Go 解析核心与移动端接口 |
-| `docs` | 需求、ADR、验收场景与实现状态 |
+| `docs` | 当前规格、工程边界、性能证据、验收与历史档案 |
 
 ## 文档
 
-- [首版规格](docs/v1-spec.md)
+- [当前产品规格](docs/product-spec.md)
 - [实现状态与已知限制](docs/implementation-status.md)
 - [状态职责与页面更新边界](docs/app-state.md)
-- [移动端技术调研](docs/mobile-feasibility.md)
+- [性能基线与取舍](docs/performance-baseline.md)
+- [iPhone / iPad 真机验收](docs/ios-device-checklist.md)
+- [历史规划与实施记录](docs/archive/README.md)
+- [架构决策](docs/adr/0001-standalone-mobile-app.md)
 - [领域术语](CONTEXT.md)
 - [参考代码来源](native/core/UPSTREAM.md)

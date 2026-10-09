@@ -1,3 +1,5 @@
+> 历史记录：保留当时的设计、实现和验证范围，不代表当前行为。参见 [当前产品规格](../product-spec.md)。
+
 # guoapp 融合实施记录
 
 ## 决策与范围
@@ -36,7 +38,7 @@ Dart 将恢复预算、卡顿判断和预加载触发条件提取为独立策略
 
 测试使用合成数据和媒体，不访问站源图片。iOS 构建结论以本提交 CI 为准；真机首帧、PiP、AirPlay、后台下载以及不同设备上的耗电仍需设备验收，Linux 自动化不能代替这些结果。
 
-界面预览：[手机浅色](../screenshots/detail-phone-light.png)、[手机深色](../screenshots/detail-phone-dark.png)、[平板浅色](../screenshots/detail-tablet-light.png)、[平板深色](../screenshots/detail-tablet-dark.png)。
+界面预览：[手机浅色](../../screenshots/detail-phone-light.png)、[手机深色](../../screenshots/detail-phone-dark.png)、[平板浅色](../../screenshots/detail-tablet-light.png)、[平板深色](../../screenshots/detail-tablet-dark.png)。
 
 ## 第二批：提前开播实验（0.7.0+15）
 
