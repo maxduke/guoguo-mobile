@@ -203,10 +203,9 @@ class _RankingsPageState extends State<RankingsPage> {
     listenable: Listenable.merge([widget.store.catalog, widget.store.records]),
     builder: (context, _) {
       final visible = rows.where((row) {
-        final drama = widget.store.catalog.currentDrama(row.drama);
         return source != DramaSource.huangdou ||
             !widget.store.catalog.hideVip ||
-            drama.vip != true;
+            widget.store.catalog.currentDrama(row.drama).vip != true;
       }).toList();
       return Scaffold(
         appBar: AppBar(title: Text('${source.label}栏目')),

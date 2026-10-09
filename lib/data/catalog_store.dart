@@ -749,7 +749,7 @@ class CatalogStore extends ChangeNotifier {
 
   Drama currentDrama(Drama drama) =>
       (catalogs[drama.source] ?? [])
-          .where((d) => d.key == drama.key)
+          .where((d) => d.source == drama.source && d.id == drama.id)
           .firstOrNull ??
       details[drama.key] ??
       records.favorites[drama.key] ??

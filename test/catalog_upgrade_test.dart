@@ -33,6 +33,84 @@ const drama = Drama(
 
 void main() {
   test(
+    'blank and normalized queries preserve filters and natural order without changing input',
+    () {
+      const tenth = Drama(
+        id: '10',
+        source: DramaSource.hongguo,
+        title: '故事第１０季',
+        category: '爱情',
+      );
+      const second = Drama(
+        id: '2',
+        source: DramaSource.hongguo,
+        title: '故事第二季',
+        category: '爱情',
+      );
+      const vip = Drama(
+        id: '3',
+        source: DramaSource.hongguo,
+        title: '故事第三季',
+        category: '爱情',
+        vip: true,
+      );
+      final rows = [tenth, vip, second];
+      expect(
+        queryCatalog(rows, query: ' \t　 ', category: '爱情', hideVip: true),
+        [tenth, second],
+      );
+      expect(queryCatalog(rows, query: '故事 第２季'), [second]);
+      expect(queryCatalog(rows, sort: CatalogSort.title), [second, vip, tenth]);
+      expect(rows, [tenth, vip, second]);
+      final updated = Drama.fromJson({...tenth.toJson(), 'title': '故事第一季'});
+      expect(queryCatalog([updated, vip, second], sort: CatalogSort.title), [
+        updated,
+        second,
+        vip,
+      ]);
+    },
+  );
+
+  test(
+    'catalog lookup preserves source identity and metadata fallback priority',
+    () {
+      final store = AppStore(
+        storage: MemoryStorage(),
+        provider: UpgradeProvider(),
+      );
+      addTearDown(store.dispose);
+      const target = Drama(
+        id: 'shared',
+        source: DramaSource.hongguo,
+        title: 'original',
+      );
+      const foreign = Drama(
+        id: 'shared',
+        source: DramaSource.huangguo,
+        title: 'foreign',
+      );
+      const current = Drama(
+        id: 'shared',
+        source: DramaSource.hongguo,
+        title: 'current',
+      );
+      const detail = Drama(
+        id: 'shared',
+        source: DramaSource.hongguo,
+        title: 'detail',
+      );
+      store.catalog.catalogs[target.source] = [foreign, current];
+      store.catalog.details[target.key] = detail;
+      store.records.restore(RecordBackup([target], []), {});
+      expect(store.catalog.currentDrama(target), same(current));
+      store.catalog.catalogs[target.source] = [foreign];
+      expect(store.catalog.currentDrama(target), same(detail));
+      store.catalog.details.clear();
+      expect(store.catalog.currentDrama(target), same(target));
+    },
+  );
+
+  test(
     'normalizes fullwidth, punctuation, tokenized queries and natural seasons',
     () {
       expect(matchesDrama(drama, '普通弓箭手 第5季'), isTrue);
