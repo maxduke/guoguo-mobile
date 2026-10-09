@@ -1,3 +1,5 @@
+> 历史记录：保留当时的设计、实现和验证范围，不代表当前行为。参见 [当前产品规格](../product-spec.md)。
+
 # 上游更新实施记录（0.10.0+21）
 
 基于本地 `58bea69`，选择性吸收 guoapp [5999e469e1281e55dcf603c980f83cd0ba00206d](https://github.com/maxduke/guoapp/commit/5999e469e1281e55dcf603c980f83cd0ba00206d)（0.2.79+2086）。完整评估及逐文件清单见 [评估](upstream-review-2026-10-03.md) 和 [文件覆盖清单](upstream-review-2026-10-03-files.md)。没有整仓替换移动播放器、数据模型或 Go 桥接。
