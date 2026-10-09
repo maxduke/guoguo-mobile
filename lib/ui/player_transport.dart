@@ -11,6 +11,10 @@ class PlayerTransport extends StatefulWidget {
     required this.speed,
     this.preparing = false,
     required this.onPlay,
+    this.onPrevious,
+    this.onNext,
+    this.previousLabel = '上一集',
+    this.nextLabel = '下一集',
     required this.onEpisodes,
     required this.onSpeed,
     required this.onScrub,
@@ -20,6 +24,8 @@ class PlayerTransport extends StatefulWidget {
   final double duration, position, speed;
   final bool playing, enabled, preparing;
   final VoidCallback onPlay, onEpisodes;
+  final VoidCallback? onPrevious, onNext;
+  final String previousLabel, nextLabel;
   final ValueChanged<double> onSpeed, onSeek;
   final ValueChanged<bool> onScrub;
   final Object? mediaIdentity;
@@ -103,48 +109,80 @@ class _PlayerTransportState extends State<PlayerTransport>
           // Slider reports pointer cancellation through onChangeEnd too.
           // Clear our preview first so only an ordinary release commits it.
           onPointerCancel: (_) => _finishScrub(),
-          child: Slider(
-            // Reset Slider's gesture recognizers and overlay when its source
-            // or availability changes, including when the chrome is hidden.
-            key: ValueKey((_enabled, widget.mediaIdentity)),
-            value: (_preview ?? widget.position).clamp(0, widget.duration),
-            max: widget.duration > 0 ? widget.duration : 1,
-            activeColor: const Color(0xFF9DCDB0),
-            onChangeStart: _enabled && widget.duration > 0
-                ? (value) {
-                    widget.onScrub(true);
-                    setState(() => _preview = value);
-                  }
-                : null,
-            onChanged: _enabled && widget.duration > 0
-                ? (value) {
-                    if (_preview != null) setState(() => _preview = value);
-                  }
-                : null,
-            onChangeEnd: _enabled && widget.duration > 0
-                ? (value) => _finishScrub(seek: value)
-                : null,
-          ),
-        ),
-        Row(
-          children: [
-            IconButton(
-              tooltip: widget.playing ? '暂停' : '播放',
-              onPressed: _enabled ? widget.onPlay : null,
-              icon: Icon(
-                widget.playing ? Icons.pause : Icons.play_arrow,
-                color: Colors.white,
+          child: MergeSemantics(
+            child: Semantics(
+              label: '播放进度',
+              child: Slider(
+                // Reset Slider's gesture recognizers and overlay when its source
+                // or availability changes, including when the chrome is hidden.
+                key: ValueKey((_enabled, widget.mediaIdentity)),
+                value: (_preview ?? widget.position).clamp(0, widget.duration),
+                max: widget.duration > 0 ? widget.duration : 1,
+                activeColor: const Color(0xFF9DCDB0),
+                semanticFormatterCallback: (value) =>
+                    '${_time(value)} / ${_time(widget.duration)}',
+                onChangeStart: _enabled && widget.duration > 0
+                    ? (value) {
+                        widget.onScrub(true);
+                        setState(() => _preview = value);
+                      }
+                    : null,
+                onChanged: _enabled && widget.duration > 0
+                    ? (value) {
+                        if (_preview != null) setState(() => _preview = value);
+                      }
+                    : null,
+                onChangeEnd: _enabled && widget.duration > 0
+                    ? (value) => _finishScrub(seek: value)
+                    : null,
               ),
             ),
-            Expanded(
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '${_time(_preview ?? widget.position)} / ${widget.preparing ? '已准备 ' : ''}${_time(widget.duration)}',
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '${_time(_preview ?? widget.position)} / ${widget.preparing ? '已准备 ' : ''}${_time(widget.duration)}',
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ),
+        ),
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          runSpacing: 4,
+          spacing: 4,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: widget.previousLabel,
+                  onPressed: _foreground ? widget.onPrevious : null,
+                  style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+                  color: Colors.white,
+                  disabledColor: Colors.white38,
+                  icon: const Icon(Icons.skip_previous),
                 ),
-              ),
+                IconButton(
+                  tooltip: widget.playing ? '暂停' : '播放',
+                  onPressed: _enabled ? widget.onPlay : null,
+                  style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+                  color: Colors.white,
+                  disabledColor: Colors.white38,
+                  icon: Icon(widget.playing ? Icons.pause : Icons.play_arrow),
+                ),
+                IconButton(
+                  tooltip: widget.nextLabel,
+                  onPressed: _foreground ? widget.onNext : null,
+                  style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+                  color: Colors.white,
+                  disabledColor: Colors.white38,
+                  icon: const Icon(Icons.skip_next),
+                ),
+              ],
             ),
             PopupMenuButton<double>(
               tooltip: '播放倍速',
@@ -164,20 +202,30 @@ class _PlayerTransportState extends State<PlayerTransport>
                 for (final speed in [.75, 1.0, 1.25, 1.5, 2.0])
                   PopupMenuItem(value: speed, child: Text('$speed 倍速')),
               ],
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Text(
-                  '${widget.speed}x',
-                  style: const TextStyle(color: Colors.white),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Center(
+                    widthFactor: 1,
+                    child: Text(
+                      '${widget.speed}x',
+                      style: TextStyle(
+                        color: _enabled ? Colors.white : Colors.white38,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
             TextButton(
-              onPressed: widget.onEpisodes,
-              child: const Text(
-                '选集',
-                style: TextStyle(color: Color(0xFF9DCDB0)),
+              style: TextButton.styleFrom(
+                minimumSize: const Size(48, 48),
+                foregroundColor: const Color(0xFF9DCDB0),
+                disabledForegroundColor: Colors.white38,
               ),
+              onPressed: _foreground ? widget.onEpisodes : null,
+              child: const Text('选集'),
             ),
           ],
         ),

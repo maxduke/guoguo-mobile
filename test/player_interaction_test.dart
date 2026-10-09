@@ -237,7 +237,7 @@ void main() {
     store.dispose();
   });
   testWidgets(
-    'hold boosts, sliding previews, release seeks once; cancel restores speed',
+    'holding accelerates without seeking on movement; release and cancel restore speed',
     (tester) async {
       final seeks = <double>[];
       final boosts = <bool>[];
@@ -260,23 +260,25 @@ void main() {
       expect(boosts, [true]);
       await gesture.moveBy(const Offset(-200, 0));
       await tester.pump();
-      expect(boosts, [true, false]);
+      expect(boosts, [true]);
       expect(seeks, isEmpty);
-      expect(find.textContaining('快退'), findsOneWidget);
+      expect(find.text('2 倍速 · 松手恢复'), findsOneWidget);
+      expect(find.textContaining('松手跳转'), findsNothing);
       await gesture.up();
       await tester.pump();
-      expect(seeks, hasLength(1));
-      expect(seeks.single, lessThan(50000));
+      expect(boosts, [true, false]);
+      expect(seeks, isEmpty);
       expect(taps, 0);
       final cancelled = await tester.startGesture(const Offset(400, 300));
       await tester.pump(const Duration(milliseconds: 600));
       await cancelled.cancel();
       await tester.pump();
       expect(boosts.last, false);
-      expect(seeks, hasLength(1));
+      expect(seeks, isEmpty);
       await tester.drag(find.byType(PlayerGestures), const Offset(2000, 0));
       await tester.pump();
       expect(seeks.last, 100000);
+      expect(seeks, hasLength(1));
       expect(taps, 0);
     },
   );

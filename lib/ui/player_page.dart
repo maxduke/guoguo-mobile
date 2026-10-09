@@ -135,6 +135,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _nextAdjacentEpisode == null;
   int get _generation => _session.generation;
   bool _controls = false, _locked = false, _fill = false;
+  bool _accessibleNavigation = false;
   bool _loading = true;
   bool get _foreground => _lifecycle.foreground;
   bool get _pipActive => _lifecycle.pipActive;
@@ -255,6 +256,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky),
     );
     unawaited(_activate(resume: true));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final accessible = MediaQuery.accessibleNavigationOf(context);
+    if (accessible == _accessibleNavigation) return;
+    _accessibleNavigation = accessible;
+    if (accessible) _controls = true;
+    _armHide();
   }
 
   void _phase(int index, String label) {
@@ -380,7 +391,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _loading = true;
       _loadingPhase = '正在准备这一集…';
       _error = null;
-      _controls = false;
+      _controls = _accessibleNavigation;
     });
     _updateMenuState();
     _session.retain({index - 1, index, index + 1});
@@ -1209,6 +1220,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _hideTimer?.cancel();
     if (!mounted ||
         !_foreground ||
+        _accessibleNavigation ||
         _localBlocked ||
         _locked ||
         _loading ||
@@ -1231,12 +1243,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   void _tap() {
     if (_locked) return;
-    setState(() => _controls = !_controls);
+    setState(() => _controls = _accessibleNavigation || !_controls);
     _armHide();
   }
 
   Future<void> _togglePlay() async {
-    if (_active == null || _localBlocked) return;
+    if (!_foreground || _locked || _active == null || _localBlocked) return;
     final controller = _player;
     if (controller.isPlaying() == true) {
       _playIntent = false;
@@ -1276,7 +1288,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   Future<void> _sheet(Widget child) async {
-    if (_modal || !mounted) return;
+    if (_modal || !mounted || !_foreground || _locked) return;
     _modal = true;
     _hideTimer?.cancel();
     await showModalBottomSheet<void>(
@@ -1530,6 +1542,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     final controller = _active == null ? null : _player.videoPlayerController;
     Widget build() {
       final value = controller?.value;
+      final index = _index, generation = _generation;
+      void goTo(int target) {
+        if (!mounted ||
+            !_foreground ||
+            _locked ||
+            index != _index ||
+            generation != _generation) {
+          return;
+        }
+        _goTo(target);
+      }
+
       return PlayerTransport(
         mediaIdentity: _generation,
         duration: value?.duration?.inMilliseconds.toDouble() ?? 0,
@@ -1545,6 +1569,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         preparing:
             _active?.preparer.streaming == true && !_active!.preparer.complete,
         onPlay: _togglePlay,
+        previousLabel: index > 0
+            ? '上一集 · 第 ${widget.episodes[index - 1].number} 集'
+            : '上一集',
+        nextLabel: index + 1 < widget.episodes.length
+            ? '下一集 · 第 ${widget.episodes[index + 1].number} 集'
+            : '下一集',
+        onPrevious: index > 0 && !_localBlocked ? () => goTo(index - 1) : null,
+        onNext: index + 1 < widget.episodes.length && !_localBlocked
+            ? () => goTo(index + 1)
+            : null,
         onEpisodes: _showEpisodes,
         onSpeed: (speed) {
           if (_localBlocked) return;
@@ -1603,6 +1637,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           Semantics(
             container: true,
             explicitChildNodes: true,
+            label: '视频画面',
+            hint: _locked ? null : '显示播放控件',
+            button: !_locked,
+            onTap: _locked ? null : _showControls,
             child: PlayerGestures(
               mediaIdentity: _generation,
               onTap: _tap,
