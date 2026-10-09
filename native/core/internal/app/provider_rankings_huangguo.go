@@ -8,11 +8,13 @@ import (
 )
 
 func (d *Downloader) fetchHuangguoRankingPage(ctx context.Context, board rankingBoard) (rankingPage, error) {
-	ctx, cancel := context.WithTimeout(ctx, 18*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	ctx = context.WithValue(ctx, providerTextExactURLKey{}, true)
 	ctx = context.WithValue(ctx, providerTextSingleAttemptKey{}, true)
-	base := d.huangguoAIContentBaseURL(ctx)
+	discoveryCtx, discoveryCancel := context.WithTimeout(ctx, 8*time.Second)
+	base := d.huangguoAIContentBaseURL(discoveryCtx)
+	discoveryCancel()
 	configured := strings.TrimSpace(d.cfg.HuangguoAIURL)
 	custom := configured != "" && !huangguoAIIsProviderRoute(configured) && !huangguoAIIsDeprecatedRoute(configured)
 	seen := map[string]bool{}
@@ -20,7 +22,7 @@ func (d *Downloader) fetchHuangguoRankingPage(ctx context.Context, board ranking
 	for pass := 0; pass < 2; pass++ {
 		bases := []string{base}
 		if !custom {
-			discoveryCtx, discoveryCancel := context.WithTimeout(ctx, 4*time.Second)
+			discoveryCtx, discoveryCancel := context.WithTimeout(ctx, 8*time.Second)
 			bases = append(bases, d.discoverHuangguoAIRoutes(discoveryCtx, pass == 1)...)
 			discoveryCancel()
 		}
@@ -33,7 +35,8 @@ func (d *Downloader) fetchHuangguoRankingPage(ctx context.Context, board ranking
 			if err := ctx.Err(); err != nil {
 				return rankingPage{}, err
 			}
-			requestCtx, requestCancel := context.WithTimeout(ctx, 3*time.Second)
+			// Allow DNS recovery and TLS setup before abandoning a usable route.
+			requestCtx, requestCancel := context.WithTimeout(ctx, 8*time.Second)
 			requestCtx = context.WithValue(requestCtx, providerTextValidatorKey{}, providerTextValidator(func(body, address string) error {
 				_, err := parseHuangguoRanking(body, board, address)
 				return err

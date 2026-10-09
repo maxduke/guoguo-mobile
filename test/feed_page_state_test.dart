@@ -227,6 +227,43 @@ void _expectFirstPage(_Fixture fixture) {
 }
 
 void main() {
+  testWidgets('cold Huangguo ranking retry calls the core after each failure', (
+    tester,
+  ) async {
+    final fixture = await _mount(
+      tester,
+      _Feed.rankings,
+      source: DramaSource.huangguo,
+    );
+    expect(fixture.pages.length, 1);
+    fixture.latest.result.completeError(
+      const ProviderException(
+        'https://site.invalid/?token=secret DNS failed before dialing',
+        failureHint: '站点域名解析异常，可尝试切换网络后重试',
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('站点域名解析异常'), findsOneWidget);
+    expect(find.textContaining('secret'), findsNothing);
+    await tester.tap(find.widgetWithText(TextButton, '重试'));
+    await tester.pump();
+    expect(fixture.pages.length, 2);
+    expect(fixture.latest.args['refresh'], isTrue);
+    expect(fixture.latest.args['page'], 1);
+    fixture.latest.result.completeError(StateError('route unavailable'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, '重试'));
+    await tester.pump();
+    expect(fixture.pages.length, 3);
+    expect(fixture.latest.args['refresh'], isTrue);
+    fixture.latest.result.complete(
+      _page(_Feed.rankings, [_drama('117', source: DramaSource.huangguo)]),
+    );
+    await tester.pumpAndSettle();
+    expect(_ids(tester), ['117']);
+    expect(find.text('栏目暂时无法加载，请重试'), findsNothing);
+  });
+
   testWidgets('ranking refresh bypasses native cache and preserves stale age', (
     tester,
   ) async {

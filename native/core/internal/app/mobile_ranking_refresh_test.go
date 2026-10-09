@@ -6,9 +6,27 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 const huangguoRankingRefreshFixture = `<script type="application/ld+json">{"@graph":[{"@type":"ItemList","@id":"https://ranking.example.org/ranks/hot/#itemlist","itemListElement":[{"position":1,"name":"测试作品","url":"https://ranking.example.org/video/117/"}]}]}</script>`
+
+func TestHuangguoRankingAllowsSlowConnectionBeforeTryingOtherRoutes(t *testing.T) {
+	d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {
+		select {
+		case <-time.After(3200 * time.Millisecond):
+			return rankingHTTPResponse(r, 200, huangguoRankingRefreshFixture), nil
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		}
+	})
+	d.cfg.HuangguoAIURL = "https://ranking.example.org"
+	board, _ := findRankingBoard("huangguo-hot")
+	result, err := d.loadRankingPage(context.Background(), board, 1, true)
+	if err != nil || len(result.Items) != 1 || result.Stale {
+		t.Fatalf("usable slow route was abandoned before DNS fallback could finish: %+v err=%v", result, err)
+	}
+}
 
 func TestMobileRankingRefreshBypassesCacheAndKeepsStaleTimestamp(t *testing.T) {
 	calls, fail := 0, false
