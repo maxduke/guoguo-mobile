@@ -18,6 +18,20 @@ import 'settings_page.dart';
 import 'rankings_page.dart';
 import 'recommendations_page.dart';
 
+const _destinations = [
+  (icon: Icons.explore_outlined, selectedIcon: Icons.explore, label: '发现'),
+  (
+    icon: Icons.bookmarks_outlined,
+    selectedIcon: Icons.bookmarks_rounded,
+    label: '追剧',
+  ),
+  (
+    icon: Icons.downloading_outlined,
+    selectedIcon: Icons.downloading_rounded,
+    label: '下载',
+  ),
+];
+
 class HomePage extends StatefulWidget {
   const HomePage({
     super.key,
@@ -129,7 +143,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => LayoutBuilder(builder: _buildLayout);
+
+  Widget _buildLayout(BuildContext context, BoxConstraints bounds) {
+    final wide = bounds.maxWidth >= 900 && bounds.maxHeight >= 480;
     return Scaffold(
       appBar: AppBar(
         title: const Text('果果'),
@@ -151,130 +168,160 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           const SizedBox(width: 12),
         ],
       ),
-      body: Column(
-        children: [
-          ListenableBuilder(
-            listenable: Listenable.merge([
-              store,
-              if (widget.startup != null) widget.startup!,
-            ]),
-            builder: (context, _) => Column(
-              children: [
-                if (widget.startup?.coreLoading == true)
-                  const _Notice('正在连接站源，可先浏览已有记录', Icons.hourglass_top_rounded),
-                if (widget.startup?.coreError != null)
-                  _Notice(
-                    widget.startup!.coreError!,
-                    Icons.warning_amber_rounded,
-                    retryLabel: '重试站源',
-                    onRetry: () => unawaited(widget.startup!.retryCore()),
-                  ),
-                if (widget.startup?.networkError != null)
-                  _Notice(
-                    widget.startup!.networkError!,
-                    Icons.wifi_off_rounded,
-                    retryLabel: '重试网络',
-                    onRetry: widget.startup!.networkLoading
-                        ? null
-                        : () => unawaited(widget.startup!.retryNetwork()),
-                  ),
-                if (store.offline)
-                  const _Notice(
-                    '当前离线 · 可以浏览缓存与观看已下载分集',
-                    Icons.wifi_off_rounded,
-                  ),
-                if (store.persistenceError != null)
-                  _Notice(store.persistenceError!, Icons.warning_amber_rounded),
-                if (store.cachePersistenceError != null)
-                  _Notice(
-                    store.cachePersistenceError!,
-                    Icons.warning_amber_rounded,
-                  ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: IndexedStack(
-              index: _tab,
-              children: [
-                ListenableBuilder(
-                  listenable: Listenable.merge([
-                    store.catalog,
-                    store,
-                    if (widget.startup != null) widget.startup!,
-                  ]),
-                  builder: (context, _) => DiscoveryPage(
-                    store: store,
-                    source: store.catalog.source,
-                    active: _tab == 0 && _routeActive,
-                    ready: widget.startup == null || widget.startup!.coreReady,
-                    autoLoad: widget.autoLoad || widget.startup != null,
-                    onOpen: _open,
-                    onSearch: _openSearch,
-                    onLibrary: _openLibrary,
-                    onMore: _openFeed,
-                    continuation: ListenableBuilder(
-                      listenable: Listenable.merge([
-                        store.records,
-                        store.records.progress,
-                      ]),
-                      builder: (context, _) {
-                        final recent = store.records.continuable;
-                        return recent.isEmpty
-                            ? const SizedBox.shrink()
-                            : Padding(
-                                padding: const EdgeInsets.only(top: 16),
-                                child: _continueCard(recent.first),
-                              );
-                      },
+      body: LayoutBuilder(
+        builder: (context, bodyBounds) => Row(
+          children: [
+            if (wide)
+              NavigationRail(
+                selectedIndex: _tab,
+                onDestinationSelected: _selectTab,
+                labelType: NavigationRailLabelType.all,
+                destinations: [
+                  for (final destination in _destinations)
+                    NavigationRailDestination(
+                      icon: Icon(destination.icon),
+                      selectedIcon: Icon(destination.selectedIcon),
+                      label: Text(destination.label),
                     ),
+                ],
+              ),
+            Expanded(
+              key: const ValueKey('home-pages'),
+              child: _content(bodyBounds.maxHeight * .4),
+            ),
+          ],
+        ),
+      ),
+      bottomNavigationBar: wide
+          ? null
+          : NavigationBar(
+              selectedIndex: _tab,
+              onDestinationSelected: _selectTab,
+              destinations: [
+                for (final destination in _destinations)
+                  NavigationDestination(
+                    icon: Icon(destination.icon),
+                    selectedIcon: Icon(destination.selectedIcon),
+                    label: destination.label,
                   ),
-                ),
-                PersonalPage(
-                  store: store,
-                  downloads: widget.downloads,
-                  active: _tab == 1 && _routeActive,
-                ),
-                DownloadsPage(
-                  store: store,
-                  downloads: widget.downloads,
-                  onOpen: _open,
-                  active: _tab == 2 && _routeActive,
-                ),
               ],
             ),
-          ),
-        ],
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _tab,
-        onDestinationSelected: (v) {
-          if (v != _tab) store.records.cancelUpdateChecks();
-          setState(() {
-            _cancelResume();
-            _tab = v;
-          });
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.explore_outlined),
-            selectedIcon: Icon(Icons.explore),
-            label: '发现',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.bookmarks_outlined),
-            selectedIcon: Icon(Icons.bookmarks_rounded),
-            label: '追剧',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.downloading_outlined),
-            selectedIcon: Icon(Icons.downloading_rounded),
-            label: '下载',
-          ),
-        ],
-      ),
     );
   }
+
+  void _selectTab(int value) {
+    if (!mounted ||
+        value == _tab ||
+        ModalRoute.of(context)?.isCurrent == false) {
+      return;
+    }
+    store.records.cancelUpdateChecks();
+    setState(() {
+      _cancelResume();
+      _tab = value;
+    });
+  }
+
+  Widget _content(double maxNoticeHeight) => Column(
+    children: [
+      ListenableBuilder(
+        listenable: Listenable.merge([
+          store,
+          if (widget.startup != null) widget.startup!,
+        ]),
+        builder: (context, _) {
+          final notices = <Widget>[
+            if (widget.startup?.coreLoading == true)
+              const _Notice('正在连接站源，可先浏览已有记录', Icons.hourglass_top_rounded),
+            if (widget.startup?.coreError != null)
+              _Notice(
+                widget.startup!.coreError!,
+                Icons.warning_amber_rounded,
+                retryLabel: '重试站源',
+                onRetry: () => unawaited(widget.startup!.retryCore()),
+              ),
+            if (widget.startup?.networkError != null)
+              _Notice(
+                widget.startup!.networkError!,
+                Icons.wifi_off_rounded,
+                retryLabel: '重试网络',
+                onRetry: widget.startup!.networkLoading
+                    ? null
+                    : () => unawaited(widget.startup!.retryNetwork()),
+              ),
+            if (store.offline)
+              const _Notice('当前离线 · 可以浏览缓存与观看已下载分集', Icons.wifi_off_rounded),
+            if (store.persistenceError != null)
+              _Notice(store.persistenceError!, Icons.warning_amber_rounded),
+            if (store.cachePersistenceError != null)
+              _Notice(
+                store.cachePersistenceError!,
+                Icons.warning_amber_rounded,
+              ),
+          ];
+          if (notices.isEmpty) return const SizedBox.shrink();
+          return ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxNoticeHeight),
+            child: SingleChildScrollView(
+              primary: false,
+              child: Column(children: notices),
+            ),
+          );
+        },
+      ),
+      Expanded(
+        child: IndexedStack(
+          index: _tab,
+          children: [
+            ListenableBuilder(
+              listenable: Listenable.merge([
+                store.catalog,
+                store,
+                if (widget.startup != null) widget.startup!,
+              ]),
+              builder: (context, _) => DiscoveryPage(
+                store: store,
+                source: store.catalog.source,
+                active: _tab == 0 && _routeActive,
+                ready: widget.startup == null || widget.startup!.coreReady,
+                autoLoad: widget.autoLoad || widget.startup != null,
+                onOpen: _open,
+                onSearch: _openSearch,
+                onLibrary: _openLibrary,
+                onMore: _openFeed,
+                continuation: ListenableBuilder(
+                  listenable: Listenable.merge([
+                    store.records,
+                    store.records.progress,
+                  ]),
+                  builder: (context, _) {
+                    final recent = store.records.continuable;
+                    return recent.isEmpty
+                        ? const SizedBox.shrink()
+                        : Padding(
+                            padding: const EdgeInsets.only(top: 16),
+                            child: _continueCard(recent.first),
+                          );
+                  },
+                ),
+              ),
+            ),
+            PersonalPage(
+              store: store,
+              downloads: widget.downloads,
+              active: _tab == 1 && _routeActive,
+            ),
+            DownloadsPage(
+              store: store,
+              downloads: widget.downloads,
+              onOpen: _open,
+              active: _tab == 2,
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
 
   Future<void> _continue(WatchRecord record) async {
     if (_resuming) return;

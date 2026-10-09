@@ -508,4 +508,97 @@ void main() {
       store.dispose();
     },
   );
+
+  for (final covered in [false, true]) {
+    testWidgets(
+      covered
+          ? 'backup cancellation completes without sharing when settings is covered'
+          : 'backup shares from the current window after a resize during preparation',
+      (tester) async {
+        final temporary = await tester.runAsync(
+          () => Directory.systemTemp.createTemp('guoguo-share-resize-'),
+        );
+        late Completer<String> directory;
+        late Completer<void> requested;
+        late Completer<Map<String, dynamic>> shared;
+        await tester.runAsync(() async {
+          directory = Completer<String>();
+          requested = Completer<void>();
+          shared = Completer<Map<String, dynamic>>();
+        });
+        const path = MethodChannel('plugins.flutter.io/path_provider');
+        const share = MethodChannel('dev.fluttercommunity.plus/share');
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(path, (_) async {
+          if (!requested.isCompleted) requested.complete();
+          return directory.future;
+        });
+        messenger.setMockMethodCallHandler(share, (call) async {
+          shared.complete(Map<String, dynamic>.from(call.arguments as Map));
+          return 'dev.fluttercommunity.plus/share/unavailable';
+        });
+        addTearDown(() async {
+          messenger.setMockMethodCallHandler(path, null);
+          messenger.setMockMethodCallHandler(share, null);
+          await temporary!.delete(recursive: true);
+        });
+        await mountSettings(tester, size: const Size(1024, 768));
+        await tester.scrollUntilVisible(find.text('导出记录备份').hitTestable(), 180);
+        await tester.runAsync(() async {
+          await tester.tap(find.text('导出记录备份'));
+          await requested.future.timeout(const Duration(seconds: 5));
+        });
+        await tester.pump();
+        expect(requested.isCompleted, isTrue);
+        if (covered) {
+          Navigator.of(tester.element(find.byType(SettingsPage))).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const Scaffold(body: Text('其他页面')),
+            ),
+          );
+          await tester.pumpAndSettle();
+          await tester.runAsync(() async {
+            directory.complete(temporary!.path);
+            await directory.future;
+          });
+          await tester.pumpAndSettle();
+          expect(shared.isCompleted, isFalse);
+          Navigator.of(tester.element(find.text('其他页面'))).pop();
+          await tester.pumpAndSettle();
+          expect(tester.widget<ListTile>(tile('导出记录备份')).enabled, isTrue);
+          expect(tester.takeException(), isNull);
+          return;
+        }
+        tester.view.physicalSize = const Size(320, 640);
+        await tester.pump();
+        final parameters = await tester.runAsync(() async {
+          directory.complete(temporary!.path);
+          return shared.future.timeout(const Duration(seconds: 5));
+        });
+        expect(parameters!['originWidth'], lessThanOrEqualTo(320));
+        expect(parameters['originHeight'], lessThanOrEqualTo(640));
+        expect(parameters['originX'], greaterThanOrEqualTo(0));
+        expect(parameters['originY'], greaterThanOrEqualTo(0));
+        expect(
+          (parameters['originX'] as double) +
+              (parameters['originWidth'] as double),
+          lessThanOrEqualTo(320),
+        );
+        expect(
+          (parameters['originY'] as double) +
+              (parameters['originHeight'] as double),
+          lessThanOrEqualTo(640),
+        );
+        final exported = await tester.runAsync(
+          () => File(
+            (parameters['paths'] as List).single as String,
+          ).readAsString(),
+        );
+        expect(jsonDecode(exported!)['format'], 'guoguo.records');
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 }

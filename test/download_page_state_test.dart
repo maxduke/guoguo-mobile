@@ -519,25 +519,41 @@ void main() {
     },
   );
 
-  testWidgets(
-    'another route opened during the check is not replaced by a player',
-    (tester) async {
-      final (:downloads, :routes, store: _) = await _mount(tester, [_entry(1)]);
-      _play(tester, 1).onPressed!();
-      routes.navigator!.push(
-        MaterialPageRoute<void>(
-          settings: const RouteSettings(name: '/cover'),
-          builder: (_) => const Scaffold(body: Text('另一页面')),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 350));
-      downloads.checks.single.complete('/offline.mp4');
-      await tester.pumpAndSettle();
-      expect(find.text('另一页面'), findsOneWidget);
-      expect(routes.players, isEmpty);
-      expect(tester.takeException(), isNull);
-    },
-  );
+  for (final returnFirst in [false, true]) {
+    testWidgets(
+      returnFirst
+          ? 'returning to the downloads tab does not revive a covered file check'
+          : 'another route opened during the check is not replaced by a player',
+      (tester) async {
+        final (:downloads, :routes, store: _) = await _mount(tester, [
+          _entry(1),
+        ], home: returnFirst);
+        _play(tester, 1).onPressed!();
+        routes.navigator!.push(
+          MaterialPageRoute<void>(
+            settings: const RouteSettings(name: '/cover'),
+            builder: (_) => const Scaffold(body: Text('另一页面')),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 350));
+        if (returnFirst) {
+          routes.navigator!.pop();
+          await tester.pumpAndSettle();
+        }
+        downloads.checks.single.complete('/offline.mp4');
+        await tester.pumpAndSettle();
+        expect(find.text(returnFirst ? '我的下载' : '另一页面'), findsOneWidget);
+        expect(routes.players, isEmpty);
+        if (returnFirst) {
+          _play(tester, 1).onPressed!();
+          downloads.checks.last.complete('/new.mp4');
+          await tester.idle();
+          expect(routes.players, hasLength(1));
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets(
     'leaving the downloads tab invalidates an old check after returning',

@@ -120,6 +120,7 @@ class DramaCard extends StatelessWidget {
                 child: Semantics(
                   label: '${drama.title}，打开详情',
                   button: true,
+                  excludeSemantics: true,
                   child: Poster(drama),
                 ),
               ),
@@ -128,7 +129,7 @@ class DramaCard extends StatelessWidget {
               top: 5,
               right: 5,
               child: IconButton.filledTonal(
-                tooltip: favorite ? '取消收藏' : '收藏',
+                tooltip: '${favorite ? '取消收藏' : '收藏'} ${drama.title}',
                 onPressed: onFavorite,
                 style: IconButton.styleFrom(
                   backgroundColor: Colors.black.withValues(alpha: .25),

@@ -142,7 +142,7 @@ void main() {
       await tester.pumpWidget(Bootstrap(load: () async => app));
       await tester.pump();
       await tester.pump();
-      expect(find.byType(NavigationBar), findsOneWidget);
+      expect(find.byType(NavigationRail), findsOneWidget);
       expect(find.text('已保存的故事'), findsWidgets);
       expect(
         tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,

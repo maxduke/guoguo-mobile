@@ -53,15 +53,15 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _export(BuildContext context) async {
+    final directory = await getTemporaryDirectory();
+    if (!context.mounted || ModalRoute.of(context)?.isCurrent == false) return;
+    final file = File('${directory.path}/guoguo-records.json');
+    await file.writeAsString(store.records.exportBackup(), flush: true);
+    if (!context.mounted || ModalRoute.of(context)?.isCurrent == false) return;
     final box = context.findRenderObject() as RenderBox?;
     final origin = box == null
         ? const Rect.fromLTWH(0, 0, 1, 1)
         : box.localToGlobal(Offset.zero) & box.size;
-    final directory = await getTemporaryDirectory();
-    if (!context.mounted) return;
-    final file = File('${directory.path}/guoguo-records.json');
-    await file.writeAsString(store.records.exportBackup(), flush: true);
-    if (!context.mounted) return;
     await SharePlus.instance.share(
       ShareParams(
         files: [XFile(file.path, mimeType: 'application/json')],
@@ -191,7 +191,9 @@ class _SettingsPageState extends State<SettingsPage> {
         }
       } else {
         final file = await exchange.export(directory);
-        if (!context.mounted) return;
+        if (!context.mounted || ModalRoute.of(context)?.isCurrent == false) {
+          return;
+        }
         final box = context.findRenderObject() as RenderBox?;
         final origin = box == null
             ? const Rect.fromLTWH(0, 0, 1, 1)
