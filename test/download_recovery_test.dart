@@ -40,13 +40,14 @@ class FakeDriver extends DownloadDriver {
 
 class PlanProvider implements ProviderClient {
   bool fail = false, changed = false, empty = false, signed = false;
+  void Function(Map<String, dynamic>)? mutate;
   @override
   Future<Map<String, dynamic>> call(
     String method, [
     Map<String, dynamic> args = const {},
   ]) async {
     if (fail) throw const ProviderException('暂时无法获取资源');
-    return {
+    final plan = <String, dynamic>{
       'refreshOnResume': signed,
       'input': 'local.m3u8',
       'process': true,
@@ -77,6 +78,8 @@ class PlanProvider implements ProviderClient {
               },
             ],
     };
+    mutate?.call(plan);
+    return plan;
   }
 }
 
@@ -150,6 +153,52 @@ void main() {
     app.dispose();
     await root.delete(recursive: true);
   });
+
+  final invalidPlans = <String, void Function(Map<String, dynamic>)>{
+    'parent path': (plan) => plan['inline'][0]['name'] = '../local.m3u8',
+    'duplicate asset': (plan) =>
+        plan['assets'].add(<String, dynamic>{...plan['assets'][0]}),
+    'inline collision': (plan) => plan['inline'][0]['name'] = '1.bin',
+    'invalid base64': (plan) => plan['inline'][0]['body'] = '!',
+    'missing input': (plan) => plan['input'] = 'missing.m3u8',
+    'invalid headers': (plan) => plan['headers'] = {'Referer': 1},
+    'invalid process': (plan) => plan['process'] = 'true',
+    'invalid refresh': (plan) => plan['refreshOnResume'] = 'true',
+    'invalid URL': (plan) => plan['assets'][0]['url'] = 'file:///1.bin',
+  };
+  for (final invalid in invalidPlans.entries) {
+    test('${invalid.key} is rejected before staging a new download', () async {
+      provider.mutate = invalid.value;
+      final before = await root.list().map((item) => item.path).toList();
+      await expectLater(
+        downloads.enqueue(entry.drama, Episode.fromJson({'id': 'new'}, 0), 0),
+        throwsA(isA<ProviderException>()),
+      );
+      expect(await root.list().map((item) => item.path).toList(), before);
+      expect(downloads.entries, [entry]);
+      expect(driver.submitted, isEmpty);
+    });
+
+    test(
+      '${invalid.key} preserves the original tasks and files on retry',
+      () async {
+        provider.mutate = invalid.value;
+        final original = entry.tasks.toList();
+        await expectLater(downloads.retry(entry), throwsA(anything));
+        expect(entry.tasks, original);
+        expect(driver.canceled, isEmpty);
+        expect(driver.submitted, isEmpty);
+        expect(
+          await File('${entry.directory}/1.bin').readAsString(),
+          'keep this fragment',
+        );
+        expect(
+          await File('${entry.directory}/local.m3u8').readAsString(),
+          'fixture playlist',
+        );
+      },
+    );
+  }
 
   test(
     'lost signed native task is recreated with a fresh grant on restart',

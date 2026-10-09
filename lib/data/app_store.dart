@@ -7,8 +7,9 @@ import 'preferences_store.dart';
 import 'record_store.dart';
 import 'storage.dart';
 import 'store_persistence.dart';
-export 'catalog_store.dart' show CatalogStore, SourceCategory;
-export 'search_cache.dart' show CatalogSearchResult;
+export 'catalog_store.dart' show CatalogStore;
+export '../domain/catalog_response.dart'
+    show CatalogSearchResult, SourceCategory;
 
 class AppStore extends ChangeNotifier implements StorePersistence {
   AppStore({

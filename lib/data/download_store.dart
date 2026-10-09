@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:background_downloader/background_downloader.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -578,43 +578,28 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       )) {
         return;
       }
-      final plan = await app.provider.call('downloadPlan', {
-        'id': drama.id,
-        'chapter': episode.raw,
-      });
+      final plan = await app.provider.downloadPlan(drama, episode);
       final id = '${DateTime.now().microsecondsSinceEpoch}';
       final directory = Directory('${_root!.path}/$id');
       staging = directory;
       await directory.create(recursive: true);
-      String safeName(Object? raw) {
-        final name = raw as String;
-        if (!RegExp(r'^[a-zA-Z0-9_.-]+$').hasMatch(name) ||
-            name == '.' ||
-            name == '..') {
-          throw const FormatException('无效的资源文件名');
-        }
-        return name;
-      }
-
-      for (final inline in plan['inline'] as List) {
+      for (final inline in plan.inline) {
         await File(
-          '${directory.path}/${safeName(inline['name'])}',
-        ).writeAsBytes(base64Decode(inline['body'] as String), flush: true);
+          '${directory.path}/${inline.name}',
+        ).writeAsBytes(inline.bytes, flush: true);
       }
-      final assets = plan['assets'] as List;
-      if (assets.isEmpty) throw const ProviderException('未找到可下载资源');
       final tasks = <DownloadTask>[];
-      for (var i = 0; i < assets.length; i++) {
-        final asset = assets[i] as Map;
+      for (var i = 0; i < plan.assets.length; i++) {
+        final asset = plan.assets[i];
         tasks.add(
           DownloadTask(
             taskId: '${id}_$i',
-            url: asset['url'] as String,
-            filename: safeName(asset['name']),
+            url: asset.url,
+            filename: asset.name,
             directory: 'guoguo/$id',
             baseDirectory: BaseDirectory.applicationDocuments,
             group: group,
-            headers: Map<String, String>.from(plan['headers'] as Map),
+            headers: plan.headers,
             requiresWiFi: !app.preferences.cellularDownloads,
             allowPause: true,
             retries: 3,
@@ -630,14 +615,12 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         episode: episode,
         index: index,
         directory: directory.path,
-        input: safeName(plan['input']),
-        contentKey: plan['contentKey'] as String? ?? '',
-        process: plan['process'] == true,
-        refreshOnResume: plan['refreshOnResume'] == true,
+        input: plan.input,
+        contentKey: plan.contentKey,
+        process: plan.process,
+        refreshOnResume: plan.refreshOnResume,
         assetIdentities: {
-          for (final asset in assets)
-            asset['name'] as String:
-                (asset['identity'] ?? asset['url']) as String,
+          for (final asset in plan.assets) asset.name: asset.identity,
         },
         tasks: tasks,
       );
@@ -804,39 +787,28 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       if (_disposed) return;
       if (complete.length != entry.tasks.length) {
         // Resolve first: an expired URL or provider error never removes progress.
-        final plan = await app.provider.call('downloadPlan', {
-          'id': entry.drama.id,
-          'chapter': entry.episode.raw,
-        });
+        final plan = await app.provider.downloadPlan(
+          entry.drama,
+          entry.episode,
+        );
         if (_disposed) return;
-        final assets = {
-          for (final asset in plan['assets'] as List)
-            asset['name'] as String: asset['url'] as String,
-        };
+        final assets = {for (final asset in plan.assets) asset.name: asset.url};
         final identities = {
-          for (final asset in plan['assets'] as List)
-            asset['name'] as String:
-                (asset['identity'] ?? asset['url']) as String,
+          for (final asset in plan.assets) asset.name: asset.identity,
         };
-        if (plan['input'] != entry.input ||
-            (plan['process'] == true) != entry.process ||
-            (plan['contentKey'] as String? ?? '') != entry.contentKey ||
+        if (plan.input != entry.input ||
+            plan.process != entry.process ||
+            plan.contentKey != entry.contentKey ||
             assets.length != entry.tasks.length ||
             entry.tasks.any((t) => !assets.containsKey(t.filename))) {
           throw const ProviderException('资源结构已变化，旧文件已保留；请删除此任务后重新下载');
         }
         // Do not mix changed playlists, keys or segment ordering with old parts.
-        for (final inline in plan['inline'] as List) {
+        for (final inline in plan.inline) {
           if (_disposed) return;
-          final name = inline['name'] as String;
-          if (!RegExp(r'^[a-zA-Z0-9_.-]+$').hasMatch(name) ||
-              name == '.' ||
-              name == '..') {
-            throw const ProviderException('资源文件名无效，旧任务已保留');
-          }
-          final file = File('${entry.directory}/$name');
+          final file = File('${entry.directory}/${inline.name}');
           if (!await file.exists() ||
-              base64Encode(await file.readAsBytes()) != inline['body']) {
+              !listEquals(await file.readAsBytes(), inline.bytes)) {
             throw const ProviderException('资源清单已变化，旧文件已保留；请删除此任务后重新下载');
           }
         }
@@ -848,12 +820,14 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
             throw const ProviderException('已下载资源地址发生变化，旧文件已保留；请删除此任务后重新下载');
           }
         }
-        final headers = Map<String, String>.from(plan['headers'] as Map);
         final replacements = entry.tasks
             .map(
               (task) => complete.contains(task.taskId)
                   ? task
-                  : task.copyWith(url: assets[task.filename], headers: headers),
+                  : task.copyWith(
+                      url: assets[task.filename],
+                      headers: plan.headers,
+                    ),
             )
             .toList();
         if (!await driver.cancel(
@@ -870,7 +844,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         entry.assetIdentities
           ..clear()
           ..addAll(identities);
-        entry.refreshOnResume = plan['refreshOnResume'] == true;
+        entry.refreshOnResume = plan.refreshOnResume;
         entry.failure = null;
         entry.userPaused = false;
         await _save();
