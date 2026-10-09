@@ -10,7 +10,7 @@ import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/ui/player_page.dart';
 
 import 'player_cast_handoff_test.dart'
-    show NativeCastPlayer, LocalDownloads, RelayLease;
+    show NativeCastPlayer, LocalDownloads, RelayLease, chooseAirPlay;
 import 'support/cast_fakes.dart';
 import 'widget_test.dart' show NoNetwork;
 
@@ -189,7 +189,7 @@ void main() {
     'AirPlay keeps a gap out of its automatic queue and permits native manual Next',
     (tester) async {
       final (_, store) = await mount(tester, airPlay: true);
-      await tester.tap(find.byTooltip('AirPlay'));
+      await chooseAirPlay(tester);
       await tester.pumpAndSettle();
       expect(calls.where((call) => call.method == 'append'), isEmpty);
       final item =
@@ -246,7 +246,7 @@ void main() {
           ],
         );
         if (airPlay) {
-          await tester.tap(find.byTooltip('AirPlay'));
+          await chooseAirPlay(tester);
           await tester.pumpAndSettle();
           final append = calls.where((call) => call.method == 'append').single;
           final item = (append.arguments as Map)['item'] as Map;
@@ -278,7 +278,7 @@ void main() {
     tester,
   ) async {
     await mount(tester, indices: [4, 5], airPlay: true);
-    await tester.tap(find.byTooltip('AirPlay'));
+    await chooseAirPlay(tester);
     await tester.pumpAndSettle();
     expect(calls.where((call) => call.method == 'append'), hasLength(1));
     final item =

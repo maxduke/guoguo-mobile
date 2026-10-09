@@ -77,7 +77,7 @@ class PlayerRelatedSheet extends StatelessWidget {
   );
 }
 
-enum PlayerMenuAction { related, fit, orientation, pip, cast, download, lock }
+enum PlayerMenuAction { related, fit, orientation, pip, download, lock }
 
 class PlayerMoreSheet extends StatelessWidget {
   const PlayerMoreSheet({
@@ -85,14 +85,13 @@ class PlayerMoreSheet extends StatelessWidget {
     required this.autoAdvance,
     required this.fill,
     required this.pipEnabled,
-    required this.castEnabled,
     required this.qualities,
     required this.quality,
     required this.onAutoAdvance,
     required this.onAction,
     required this.onQuality,
   });
-  final bool autoAdvance, fill, pipEnabled, castEnabled;
+  final bool autoAdvance, fill, pipEnabled;
   final List<int> qualities;
   final int? quality;
   final ValueChanged<bool> onAutoAdvance;
@@ -151,12 +150,6 @@ class PlayerMoreSheet extends StatelessWidget {
           title: const Text('画中画'),
           enabled: pipEnabled,
           onTap: () => onAction(PlayerMenuAction.pip),
-        ),
-        ListTile(
-          leading: const Icon(Icons.cast),
-          title: const Text('投屏到电视'),
-          enabled: castEnabled,
-          onTap: () => onAction(PlayerMenuAction.cast),
         ),
         ListTile(
           leading: const Icon(Icons.download_outlined),

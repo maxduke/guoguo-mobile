@@ -42,7 +42,6 @@ void main() {
             autoAdvance: true,
             fill: false,
             pipEnabled: false,
-            castEnabled: false,
             qualities: const [720, 1080],
             quality: 1080,
             onAutoAdvance: (value) => advance = value,
@@ -68,9 +67,7 @@ void main() {
     await tester.ensureVisible(find.text('画中画'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('画中画'));
-    await tester.ensureVisible(find.text('投屏到电视'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('投屏到电视'));
+    expect(find.text('投屏到电视'), findsNothing);
     expect(actions, [PlayerMenuAction.related]);
     expect(tester.takeException(), isNull);
   });
@@ -108,7 +105,6 @@ void main() {
                         autoAdvance: true,
                         fill: false,
                         pipEnabled: true,
-                        castEnabled: true,
                         qualities: const [360, 480, 720, 1080],
                         quality: 1080,
                         onAutoAdvance: (_) {},

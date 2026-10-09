@@ -19,7 +19,7 @@ import 'package:guoguo_mobile/platform/media_preparer.dart';
 import 'widget_test.dart' show NoNetwork;
 
 // BetterPlayer also parses HLS in Dart; native playback is mocked separately.
-class _PlaylistOverrides extends HttpOverrides {
+class PlaylistOverrides extends HttpOverrides {
   @override
   HttpClient createHttpClient(SecurityContext? context) => _PlaylistClient();
 }
@@ -287,7 +287,7 @@ class _ProgressivePreparer extends MediaPreparer {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final originalOverrides = HttpOverrides.current;
-  setUpAll(() => HttpOverrides.global = _PlaylistOverrides());
+  setUpAll(() => HttpOverrides.global = PlaylistOverrides());
   tearDownAll(() => HttpOverrides.global = originalOverrides);
 
   testWidgets(

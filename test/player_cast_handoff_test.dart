@@ -13,6 +13,7 @@ import 'package:guoguo_mobile/platform/cast_session.dart';
 import 'package:guoguo_mobile/platform/media_preparer.dart';
 import 'package:guoguo_mobile/platform/provider_client.dart';
 import 'package:guoguo_mobile/ui/cast_sheet.dart';
+import 'package:guoguo_mobile/ui/cast_entry_sheet.dart';
 import 'package:guoguo_mobile/ui/episode_pager.dart';
 import 'package:guoguo_mobile/ui/player_page.dart';
 
@@ -145,6 +146,12 @@ class NativeCastPlayer {
   }
 }
 
+Future<void> chooseAirPlay(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('投屏'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('AirPlay'));
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   Future<
@@ -166,6 +173,7 @@ void main() {
     MediaPreparer Function()? preparerFactory,
     bool downloaded = true,
     double playbackSpeed = 1,
+    List<FakeCastDiscovery>? discoveryInstances,
   }) async {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     final native = NativeCastPlayer()..install();
@@ -199,7 +207,11 @@ void main() {
           initialIndex: initialIndex,
           episodeIndices: const [5, 9],
           castRelayFactory: () => RelayLease(relay),
-          castDiscoveryFactory: () => FakeCastDiscovery(receiver),
+          castDiscoveryFactory: () {
+            final discovery = FakeCastDiscovery(receiver);
+            discoveryInstances?.add(discovery);
+            return discovery;
+          },
           airPlayChannel: airPlayChannel,
           preparerFactory: preparerFactory,
         ),
@@ -214,9 +226,9 @@ void main() {
   }
 
   Future<void> connect(WidgetTester tester) async {
-    await tester.tap(find.byTooltip('更多播放设置'));
+    await tester.tap(find.byTooltip('投屏'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('投屏到电视'));
+    await tester.tap(find.text('电视设备'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('客厅电视'));
     await tester.pumpAndSettle();
@@ -366,7 +378,7 @@ void main() {
             await tester.tapAt(const Offset(700, 150));
             await tester.pump();
           case 'AirPlay':
-            await tester.tap(find.byTooltip('AirPlay'));
+            await chooseAirPlay(tester);
             await tester.pumpAndSettle();
           case 'overlap':
             final scrub = await tester.startGesture(
@@ -412,6 +424,119 @@ void main() {
     });
   }
 
+  testWidgets(
+    'passive AirPlay choice does not prepare media or pause the phone',
+    (tester) async {
+      installAirPlay();
+      final jobs = <AirPlayFixturePreparer>[];
+      final discoveries = <FakeCastDiscovery>[];
+      final (native, _, relay, _, downloads) = await mount(
+        tester,
+        downloaded: false,
+        airPlayChannel: airPlayChannel,
+        provider: AirPlayFixtureProvider(),
+        discoveryInstances: discoveries,
+        preparerFactory: () {
+          final job = AirPlayFixturePreparer(jobs.length);
+          jobs.add(job);
+          return job;
+        },
+      );
+      final pauses = native.pauses, lookups = downloads.lookups;
+      await tester.tap(find.byTooltip('投屏'));
+      await tester.pumpAndSettle();
+      expect(find.text('AirPlay'), findsOneWidget);
+      expect(find.text('电视设备'), findsOneWidget);
+      expect(jobs, hasLength(1));
+      expect(downloads.lookups, lookups);
+      expect(discoveries, isEmpty);
+      expect(relay.starts, 0);
+      expect(native.pauses, pauses);
+      expect(airPlayCalls.map((call) => call.method), ['getState']);
+      Navigator.of(tester.element(find.byType(CastEntrySheet))).pop();
+      await tester.pumpAndSettle();
+      expect(jobs.single.disposed, false);
+      expect(native.pauses, pauses);
+      expect(relay.starts, 0);
+      await unmount(tester);
+    },
+  );
+
+  for (final routed in [false, true]) {
+    testWidgets(
+      'AirPlay status returns through the existing handoff, routed=$routed',
+      (tester) async {
+        installAirPlay();
+        final (native, _, relay, store, _) = await mount(
+          tester,
+          airPlayChannel: airPlayChannel,
+          autoAdvance: false,
+        );
+        await chooseAirPlay(tester);
+        await tester.pumpAndSettle();
+        external = routed;
+        await emitAirPlay(playing: false);
+        await tester.pumpAndSettle();
+        final sources = native.sources.length, plays = native.plays;
+        await tester.tap(find.byTooltip('投屏'));
+        await tester.pumpAndSettle();
+        final entry = tester.widget<CastEntrySheet>(
+          find.byType(CastEntrySheet),
+        );
+        expect(entry.televisionEnabled, false);
+        expect(entry.airPlayEnabled, false);
+        expect(entry.routesEnabled, false);
+        expect(entry.returnEnabled, true);
+        expect(find.text('选择 AirPlay 设备'), findsNothing);
+        entry.onAction(CastEntryAction.routes);
+        entry.onAction(CastEntryAction.television);
+        await tester.pumpAndSettle();
+        expect(find.byType(CastEntrySheet), findsOneWidget);
+        expect(
+          airPlayCalls.where((call) => call.method == 'open'),
+          hasLength(1),
+        );
+        expect(
+          airPlayCalls.where((call) => call.method == 'showRoutes'),
+          isEmpty,
+        );
+        await tester.tap(find.text('结束 AirPlay，返回手机'));
+        await tester.pumpAndSettle();
+        expect(find.byType(CastEntrySheet), findsNothing);
+        expect(relay.closes, 1);
+        expect(native.plays, plays);
+        if (routed) {
+          expect(native.sources, hasLength(sources));
+          await tester.tap(find.byTooltip('投屏'));
+          await tester.pumpAndSettle();
+          expect(find.text('选择 AirPlay 设备'), findsOneWidget);
+          await tester.tap(find.text('选择 AirPlay 设备'));
+          await tester.pumpAndSettle();
+          expect(find.byType(CastEntrySheet), findsNothing);
+          expect(
+            airPlayCalls.where((call) => call.method == 'showRoutes'),
+            hasLength(1),
+          );
+          external = false;
+          await emitAirPlay(global: true);
+          await tester.pumpAndSettle();
+        }
+        expect(native.sources, hasLength(sources + 1));
+        expect(native.seeks.last, 42000);
+        expect(native.plays, plays);
+        expect(store.records.history['hongguo:fixture']!.positionMs, 42000);
+        expect(
+          tester
+              .widget<BetterPlayer>(find.byType(BetterPlayer))
+              .controller
+              .isPlaying(),
+          false,
+        );
+        await unmount(tester);
+      },
+    );
+  }
+
   testWidgets('AirPlay owns CENC files independently of phone cache trimming', (
     tester,
   ) async {
@@ -429,7 +554,7 @@ void main() {
       },
     );
     expect(jobs, hasLength(1));
-    await tester.tap(find.byTooltip('AirPlay'));
+    await chooseAirPlay(tester);
     await tester.pumpAndSettle();
     // Phone current + native current + native upcoming have separate owners.
     expect(jobs, hasLength(3));
@@ -466,7 +591,7 @@ void main() {
           await tester.pumpAndSettle();
         }
         final sourceCount = native.sources.length, plays = native.plays;
-        await tester.tap(find.byTooltip('AirPlay'));
+        await chooseAirPlay(tester);
         await tester.pumpAndSettle();
         expect(native.sources.length, sourceCount);
         expect(native.sources.last['uri'], 'file:///tmp/cast-one.mp4');
@@ -515,7 +640,7 @@ void main() {
         tester,
         airPlayChannel: airPlayChannel,
       );
-      await tester.tap(find.byTooltip('AirPlay'));
+      await chooseAirPlay(tester);
       await tester.pumpAndSettle();
       final sourceCount = native.sources.length;
       external = true;
@@ -549,7 +674,7 @@ void main() {
       airPlayChannel: airPlayChannel,
       autoAdvance: false,
     );
-    await tester.tap(find.byTooltip('AirPlay'));
+    await chooseAirPlay(tester);
     await tester.pumpAndSettle();
     await emitAirPlay(playing: false);
     await tester.pumpAndSettle();
@@ -571,7 +696,7 @@ void main() {
           tester,
           airPlayChannel: airPlayChannel,
         );
-        await tester.tap(find.byTooltip('AirPlay'));
+        await chooseAirPlay(tester);
         await tester.pumpAndSettle();
         await emitAirPlay(index: 1, playing: false);
         await tester.pumpAndSettle();
@@ -614,7 +739,7 @@ void main() {
           airPlayChannel: airPlayChannel,
           autoAdvance: false,
         );
-        await tester.tap(find.byTooltip('AirPlay'));
+        await chooseAirPlay(tester);
         await tester.pumpAndSettle();
         await emitAirPlay(playing: false, ended: ended, positionMs: 120000);
         await tester.pumpAndSettle();
@@ -664,7 +789,7 @@ void main() {
         airPlayChannel: airPlayChannel,
         autoAdvance: false,
       );
-      await tester.tap(find.byTooltip('AirPlay'));
+      await chooseAirPlay(tester);
       await tester.pumpAndSettle();
       external = true;
       await emitAirPlay();
@@ -748,7 +873,7 @@ void main() {
       airPlayChannel: airPlayChannel,
       autoAdvance: false,
     );
-    await tester.tap(find.byTooltip('AirPlay'));
+    await chooseAirPlay(tester);
     await tester.pumpAndSettle();
     failAirPlayClose = true;
     await emitAirPlay(closed: true, playing: false);
@@ -792,6 +917,9 @@ void main() {
       final choose = tester
           .widget<FilledButton>(find.byKey(const Key('airPlayChooseRoute')))
           .onPressed!;
+      final openCasting = tester
+          .widget<IconButton>(find.byKey(const Key('playerCastingButton')))
+          .onPressed!;
       choose();
       choose();
       await tester.pump();
@@ -802,6 +930,15 @@ void main() {
       expect(
         tester
             .widget<FilledButton>(find.byKey(const Key('airPlayChooseRoute')))
+            .onPressed,
+        isNull,
+      );
+      openCasting();
+      await tester.pump();
+      expect(find.byType(CastEntrySheet), findsNothing);
+      expect(
+        tester
+            .widget<IconButton>(find.byKey(const Key('playerCastingButton')))
             .onPressed,
         isNull,
       );
@@ -828,7 +965,11 @@ void main() {
   testWidgets(
     'dismissing and reopening cast controls preserves session, relay and phone pause',
     (tester) async {
-      final (native, receiver, relay, _, _) = await mount(tester);
+      final discoveries = <FakeCastDiscovery>[];
+      final (native, receiver, relay, _, _) = await mount(
+        tester,
+        discoveryInstances: discoveries,
+      );
       final pager = tester.widget<EpisodePager>(find.byType(EpisodePager));
       await connect(tester);
       expect(receiver.loadedSource!.position, const Duration(seconds: 10));
@@ -865,9 +1006,13 @@ void main() {
       native.emit('finished');
       await tester.pump(const Duration(seconds: 1));
       expect(player.isPlaying(), false);
-      await tester.tap(find.byKey(const Key('reopenCastControls')));
+      await tester.tap(find.byTooltip('投屏'));
       await tester.pumpAndSettle();
       expect(find.text('投屏到 客厅电视'), findsOneWidget);
+      expect(find.byType(CastEntrySheet), findsNothing);
+      expect(discoveries, hasLength(2));
+      expect(discoveries.first.disposed, true);
+      expect(discoveries.last.searches, 0);
       await tester.tap(find.widgetWithText(FilledButton, '暂停'));
       await tester.pumpAndSettle();
       expect(receiver.calls.last, 'status');
