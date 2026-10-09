@@ -35,7 +35,14 @@
          )
      }
  
-@@ -141,6 +150,9 @@
+@@ -136,11 +145,16 @@
+     }
+ 
+     @objc private func itemDidPlayToEndTime(_ notification: Notification) {
++        guard !disposed, isInitialized, let ended = notification.object as? AVPlayerItem,
++              player.currentItem === ended else { return }
+         if isLooping {
+             if let p = notification.object as? AVPlayerItem {
                  p.seek(to: .zero, completionHandler: nil)
              }
          } else {
@@ -45,7 +52,7 @@
              if let eventSink = eventSink {
                  eventSink(["event": "completed", "key": key as Any])
                  removeObservers()
-@@ -203,7 +215,7 @@
+@@ -203,7 +217,7 @@
          }
      }
  
@@ -54,7 +61,7 @@
          self.overriddenDuration = 0
          var finalHeaders = headers
          if finalHeaders["dummy"] == nil {} // keep dictionary type stable
-@@ -231,31 +243,33 @@
+@@ -231,31 +245,33 @@
          if #available(iOS 10.0, *), overriddenDuration > 0 {
              self.overriddenDuration = overriddenDuration
          }
@@ -105,7 +112,7 @@
                              #if !targetEnvironment(simulator)
                              let videoComposition = self.getVideoComposition(transform: self.preferredTransform, asset: asset, videoTrack: videoTrack)
                              item.videoComposition = videoComposition
-@@ -268,16 +282,28 @@
+@@ -268,16 +284,28 @@
          addObservers(item)
      }
  
@@ -135,16 +142,19 @@
              } else {
                  stalledCount += 1
                  if stalledCount > 60 {
-@@ -303,7 +329,7 @@
+@@ -302,8 +330,10 @@
+     }
  
      public override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
++        // Queued KVO from a replaced item cannot mutate the new source's state.
++        if let item = object as? AVPlayerItem, player.currentItem !== item { return }
          if keyPath == "rate" {
 -            if #available(iOS 10.0, *), let pipController = pipController, pipController.isPictureInPictureActive {
 +            if #available(iOS 10.0, *), let pipController = pipController, pipController.isPictureInPictureActive, !seeks.isSeeking {
                  if let last = lastAvPlayerTimeControlStatus, last == player.timeControlStatus {
                      return
                  }
-@@ -379,6 +405,11 @@
+@@ -379,6 +409,11 @@
      }
  
      public func updatePlayingState() {
@@ -156,7 +166,7 @@
          guard isInitialized, key != nil else { return }
          if !observersAdded, let current = player.currentItem { addObservers(current) }
          if isPlaying {
-@@ -388,7 +419,25 @@
+@@ -388,7 +423,25 @@
          }
      }
  
@@ -182,7 +192,7 @@
          if #available(iOS 16, *) {
              player.defaultRate = playerRate
          }
-@@ -440,15 +489,16 @@
+@@ -440,15 +493,16 @@
      }
  
      public func play() {
@@ -201,7 +211,7 @@
          updatePlayingState()
      }
  
-@@ -474,13 +524,40 @@
+@@ -474,13 +528,40 @@
          return BetterPlayerTimeUtils.cmTimeToMillis(time)
      }
  
@@ -249,7 +259,7 @@
      }
  
      public func setVolume(_ volume: Double) {
-@@ -596,7 +673,7 @@
+@@ -596,7 +677,7 @@
      /// than `didEnterBackground`. `backgroundPauseGeneration` drops a stale check if
      /// another background transition lands first.
      @objc private func onDidEnterBackground() {
@@ -258,7 +268,7 @@
          backgroundPauseGeneration += 1
          let generation = backgroundPauseGeneration
          DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-@@ -605,8 +682,25 @@
+@@ -605,8 +686,25 @@
              guard UIApplication.shared.applicationState == .background else { return }
              guard self.pipController?.isPictureInPictureActive != true else { return }
              self.pause()
@@ -286,7 +296,7 @@
      }
  
      /// Ends the PiP session now and makes sure the window actually closes.
-@@ -684,6 +778,8 @@
+@@ -684,6 +782,8 @@
      }
  
      public func clear() {
