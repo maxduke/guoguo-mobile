@@ -155,12 +155,7 @@ class FileStorage implements LocalStorage {
   Future<void> _pending = Future.value();
   File get _file => File('${directory.path}/$fileName');
   @override
-  Future<Map<String, dynamic>?> read() async {
-    if (!await _file.exists()) return null;
-    return Map<String, dynamic>.from(
-      jsonDecode(await _file.readAsString()) as Map,
-    );
-  }
+  Future<Map<String, dynamic>?> read() => _readJsonFileInBackground(_file.path);
 
   @override
   Future<void> write(Map<String, dynamic> value) {
@@ -210,6 +205,17 @@ class FileStorage implements LocalStorage {
 // Keep the isolate closure outside storage instances and their pending Futures.
 Future<String> encodeJsonInBackground(Object? value) =>
     Isolate.run(() => jsonEncode(value));
+
+// Transfer only the path, never storage instances or their queued operations.
+// Read and decode together so UTF-8 conversion also stays off the UI isolate.
+Future<Map<String, dynamic>?> _readJsonFileInBackground(String path) =>
+    Isolate.run(() async {
+      final file = File(path);
+      if (!await file.exists()) return null;
+      return Map<String, dynamic>.from(
+        jsonDecode(await file.readAsString()) as Map,
+      );
+    }, debugName: 'guoguo.storage-read');
 
 class MemoryStorage implements LocalStorage {
   Map<String, dynamic>? value;

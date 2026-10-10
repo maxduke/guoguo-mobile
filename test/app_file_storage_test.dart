@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -73,6 +74,39 @@ void main() {
   });
   tearDown(() => directory.delete(recursive: true));
   File file(String name) => File('${directory.path}/$name');
+
+  test(
+    'reads return the committed document while a writer is waiting',
+    () async {
+      const saved = {
+        'version': 1,
+        'items': [
+          {'title': '故事 🎬', 'positionMs': 1234, 'finished': false},
+        ],
+      };
+      await FileStorage(directory).write(saved);
+      final entered = Completer<void>(), release = Completer<void>();
+      final storage = FileStorage(
+        directory,
+        encode: (value) async {
+          entered.complete();
+          await release.future;
+          return jsonEncode(value);
+        },
+      );
+      const updated = {'version': 2, 'items': []};
+      final writing = storage.write(updated);
+      await entered.future;
+      try {
+        // Reading must neither capture the writer's Futures nor wait for it.
+        expect(await storage.read().timeout(const Duration(seconds: 5)), saved);
+      } finally {
+        release.complete();
+        await writing;
+      }
+      expect(await storage.read(), updated);
+    },
+  );
 
   test(
     'cache clearing drains earlier writes and preserves durable and live state',
