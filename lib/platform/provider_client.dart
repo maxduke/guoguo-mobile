@@ -148,12 +148,14 @@ extension ProviderOperations on ProviderClient {
     String query, {
     int page = 1,
     required String requestId,
+    String? continuation,
   }) async => CatalogSearchResult.fromJson(
     await call('search', {
       'source': source.name,
       'query': query,
       'page': page,
       'requestId': requestId,
+      'continuation': ?continuation,
     }),
     source,
   );

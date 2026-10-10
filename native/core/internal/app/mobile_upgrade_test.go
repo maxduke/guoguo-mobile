@@ -91,7 +91,7 @@ func TestMobileSearchReturnsPartialWarning(t *testing.T) {
 	// Parser behavior for partial results is covered in provider search tests;
 	// exercise its cached result through the native JSON boundary here.
 	client := d.hongguoClient()
-	client.searches["样例"] = hongguoSearchEntry{Dramas: []Drama{{ID: "hongguo:123", Title: "样例"}}, Total: 5, Limited: true, Warning: "部分结果暂不可用", ExpiresAt: time.Now().Add(time.Minute)}
+	client.searches["\x00base:样例"] = hongguoSearchEntry{Dramas: []Drama{{ID: "hongguo:123", Title: "样例"}}, Total: 5, Limited: true, Warning: "部分结果暂不可用", ExpiresAt: time.Now().Add(time.Minute)}
 	c := &MobileClient{downloader: d}
 	raw, err := c.Call(`{"method":"search","source":"hongguo","query":"样例"}`)
 	if err != nil || !strings.Contains(raw, `"limited":true`) || !strings.Contains(raw, "部分结果暂不可用") {

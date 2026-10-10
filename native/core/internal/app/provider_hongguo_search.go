@@ -60,6 +60,11 @@ func (downloader *Downloader) searchHongguoDramas(ctx context.Context, keyword s
 }
 
 func (downloader *Downloader) searchHongguoDramasProgress(ctx context.Context, keyword string, progress func(hongguoSearchEntry)) (hongguoSearchEntry, error) {
+	return downloader.searchHongguoProgress(ctx, keyword, progress, true)
+}
+
+// Base results can be shared, while each mobile continuation owns its probes.
+func (downloader *Downloader) searchHongguoProgress(ctx context.Context, keyword string, progress func(hongguoSearchEntry), completeSeasons bool) (hongguoSearchEntry, error) {
 	keyword, err := hongguoSearchKeyword(keyword)
 	if err != nil {
 		return hongguoSearchEntry{}, err
@@ -67,16 +72,20 @@ func (downloader *Downloader) searchHongguoDramasProgress(ctx context.Context, k
 	ctx, cancel := context.WithTimeout(ctx, hongguoSearchTimeout)
 	defer cancel()
 	client := downloader.hongguoClient()
+	cacheKey := keyword
+	if !completeSeasons {
+		cacheKey = "\x00base:" + keyword
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return hongguoSearchEntry{}, err
 		}
 		client.mu.Lock()
-		if cached, found := client.searches[keyword]; found && time.Now().Before(cached.ExpiresAt) {
+		if cached, found := client.searches[cacheKey]; found && time.Now().Before(cached.ExpiresAt) {
 			client.mu.Unlock()
 			return cloneHongguoSearchEntry(cached), nil
 		}
-		if pending := client.searchPending[keyword]; pending != nil {
+		if pending := client.searchPending[cacheKey]; pending != nil {
 			client.mu.Unlock()
 			entry, err := downloader.waitHongguoSearch(ctx, pending, progress)
 			if (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && ctx.Err() == nil {
@@ -89,7 +98,7 @@ func (downloader *Downloader) searchHongguoDramasProgress(ctx context.Context, k
 			return hongguoSearchEntry{}, errors.New("红果搜索请求较多，请稍后重试")
 		}
 		pending := &hongguoSearchCall{done: make(chan struct{}), changed: make(chan struct{})}
-		client.searchPending[keyword] = pending
+		client.searchPending[cacheKey] = pending
 		client.mu.Unlock()
 		fetchCtx := context.WithValue(ctx, hongguoSearchProgressKey{}, func(entry hongguoSearchEntry) {
 			client.mu.Lock()
@@ -102,7 +111,7 @@ func (downloader *Downloader) searchHongguoDramasProgress(ctx context.Context, k
 				progress(cloneHongguoSearchEntry(entry))
 			}
 		})
-		entry, err := downloader.fetchHongguoSearch(fetchCtx, keyword)
+		entry, err := downloader.fetchHongguoSearchResult(fetchCtx, keyword, completeSeasons)
 		client.mu.Lock()
 
 		if err == nil && entry.Warning == "" {
@@ -110,10 +119,10 @@ func (downloader *Downloader) searchHongguoDramasProgress(ctx context.Context, k
 				client.searches = map[string]hongguoSearchEntry{}
 			}
 			entry.ExpiresAt = time.Now().Add(5 * time.Minute)
-			client.searches[keyword] = entry
+			client.searches[cacheKey] = entry
 		}
 		pending.entry, pending.err = entry, err
-		delete(client.searchPending, keyword)
+		delete(client.searchPending, cacheKey)
 		close(pending.done)
 		client.mu.Unlock()
 		return cloneHongguoSearchEntry(entry), err
@@ -146,7 +155,7 @@ func (downloader *Downloader) waitHongguoSearch(ctx context.Context, pending *ho
 	}
 }
 
-func (downloader *Downloader) fetchHongguoSearch(ctx context.Context, keyword string) (hongguoSearchEntry, error) {
+func (downloader *Downloader) fetchHongguoSearchResult(ctx context.Context, keyword string, completeSeasons bool) (hongguoSearchEntry, error) {
 
 	names, namesErr := downloader.fetchHongguoSearchNames(ctx, keyword)
 	if err := ctx.Err(); err != nil {
@@ -167,7 +176,10 @@ func (downloader *Downloader) fetchHongguoSearch(ctx context.Context, keyword st
 		entry.Dramas = mergeHongguoSearchDramas(entry.Dramas, batch)
 	}
 	reportHongguoSearchProgress(ctx, entry)
-	seasonsLimited := downloader.completeHongguoSearchSeasons(ctx, keyword, &entry)
+	seasonsLimited := false
+	if completeSeasons {
+		seasonsLimited = downloader.completeHongguoSearchSeasons(ctx, keyword, &entry)
+	}
 	if err := ctx.Err(); err != nil {
 		return hongguoSearchEntry{}, err
 	}
