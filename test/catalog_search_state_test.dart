@@ -146,6 +146,70 @@ List<String> _ids(WidgetTester tester) => tester
     .toList();
 
 void main() {
+  testWidgets('expired continuation preserves results and restarts on retry', (
+    tester,
+  ) async {
+    final (:provider, :store) = await _mount(tester);
+    await _submit(tester);
+    provider.searches.single.result.complete({
+      ..._page([_drama('A')], more: true),
+      'limited': true,
+      'continuation': 'cursor-first',
+    });
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('加载更多结果'));
+    await tester.pump();
+    expect(provider.searches.last.args['continuation'], 'cursor-first');
+    provider.searches.last.result.complete({
+      'items': [],
+      'limited': true,
+      'restartRequired': true,
+      'warning': '续搜已过期，请重新搜索',
+    });
+    await tester.pumpAndSettle();
+    expect(_ids(tester), ['A']);
+    expect(find.text('续搜已过期，请重新搜索'), findsOneWidget);
+    await tester.tap(find.text('重试搜索'));
+    await tester.pump();
+    expect(provider.searches.last.args['page'], 1);
+    expect(provider.searches.last.args['continuation'], isNull);
+    await _finish(tester, provider.searches.last, [_drama('B')]);
+    expect(_ids(tester), ['B']);
+    expect(store.catalog.searchCache.dramas.map((d) => d.id), ['B']);
+  });
+
+  testWidgets('empty season page keeps its next cursor and prior results', (
+    tester,
+  ) async {
+    final (:provider, :store) = await _mount(tester);
+    await _submit(tester);
+    provider.searches.single.result.complete({
+      ..._page([_drama('A')], more: true),
+      'continuation': 'cursor-first',
+    });
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('加载更多结果'));
+    await tester.pump();
+    provider.searches.last.result.complete({
+      ..._page([], more: true),
+      'limited': true,
+      'continuation': 'cursor-second',
+    });
+    await tester.pumpAndSettle();
+    expect(_ids(tester), ['A']);
+    expect(find.text('加载更多结果'), findsOneWidget);
+    await tester.tap(find.text('加载更多结果'));
+    await tester.pump();
+    expect(provider.searches.last.args['continuation'], 'cursor-second');
+    expect(provider.searches.last.args['page'], 3);
+    await _finish(tester, provider.searches.last, [_drama('B')]);
+    expect(_ids(tester), ['A', 'B']);
+    expect(
+      store.catalog.searchCache.toJson().toString(),
+      isNot(contains('cursor-second')),
+    );
+  });
+
   for (final recordFailure in [true, false]) {
     testWidgets(
       '${recordFailure ? 'record' : 'cache'} saving failure preserves search results and the next-page cursor',

@@ -23,6 +23,7 @@ type MobileClient struct {
 	playbacks        map[string]mobilePlaybackChoice
 	prefetches       map[string]*mobilePrefetchRead
 	searches         map[string]*mobileSearchRead
+	seasonCursors    map[string]*mobileSeasonCursor
 	covers           coverImageCache
 	catalogMu        sync.Mutex
 	known            []Drama
@@ -61,6 +62,7 @@ type mobileRequest struct {
 	Source         string                     `json:"source"`
 	ID             string                     `json:"id"`
 	Query          string                     `json:"query"`
+	Continuation   string                     `json:"continuation"`
 	URL            string                     `json:"url"`
 	Board          string                     `json:"board"`
 	Page           int                        `json:"page"`
@@ -322,13 +324,11 @@ func (c *MobileClient) Call(raw string) (string, error) {
 		if request.Source != "hongguo" {
 			return "", errors.New("当前站源尚未接入联网搜索，可继续使用本地筛选")
 		}
-		rows, err := c.downloader.searchHongguoDramasProgress(context.WithValue(ctx, hongguoSearchSeasonExtensionKey{}, true), request.Query, func(entry hongguoSearchEntry) {
-			c.updateSearch(request.RequestID, read, map[string]any{"items": mobileDramas(entry.Dramas), "warning": entry.Warning, "limited": entry.Limited, "total": entry.Total}, false)
-		})
+		result, err := c.searchHongguoPage(ctx, request, read)
 		if err != nil {
 			return "", publicError(err)
 		}
-		value = map[string]any{"items": mobileDramas(rows.Dramas), "warning": rows.Warning, "limited": rows.Limited, "total": rows.Total}
+		value = result
 	case "chapters":
 		if request.ID == "" {
 			return "", errors.New("缺少短剧 ID")
@@ -438,6 +438,7 @@ func (c *MobileClient) Close() {
 		delete(c.searches, id)
 	}
 	c.playbacks = nil
+	c.seasonCursors = nil
 	for id, read := range c.prefetches {
 		read.cancel()
 		delete(c.prefetches, id)

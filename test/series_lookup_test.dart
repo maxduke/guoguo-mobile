@@ -44,6 +44,91 @@ AppStore searchStore(SeriesProvider provider) =>
 
 void main() {
   test(
+    'season cursors continue limited pages until a complete check',
+    () async {
+      final provider = SeriesProvider()
+        ..search = (args) async => {
+          'items': [(args['page'] == 1 ? secondSeason : thirdSeason).toJson()],
+          'hasMore': args['page'] == 1,
+          'limited': args['page'] == 1,
+          'continuation': args['page'] == 1 ? 'cursor-one' : '',
+        };
+      final store = searchStore(provider);
+      addTearDown(store.dispose);
+      await store.records.toggleSeasonReminder(firstSeason);
+      final result = await store.catalog.lookupSeries(firstSeason).result;
+      expect(provider.searches.length, 2);
+      expect(provider.searches.last['continuation'], 'cursor-one');
+      expect(result.items.map((d) => d.key), [
+        secondSeason.key,
+        thirdSeason.key,
+      ]);
+      expect(result.hasMore, isFalse);
+      expect(result.limited, isFalse);
+      await store.records.observeSeasons(firstSeason, result);
+      expect(
+        store.records.seasonReminders[firstSeason.key]!.initialized,
+        isTrue,
+      );
+      expect(store.records.seasonReminders[firstSeason.key]!.unreadCount, 0);
+      expect(store.catalog.recentSearches, isEmpty);
+      expect(
+        store.catalog.searchCache.toJson().toString(),
+        isNot(contains('cursor-one')),
+      );
+    },
+  );
+
+  test('cursor page limit keeps a season reminder baseline pending', () async {
+    final provider = SeriesProvider()
+      ..search = (args) async => {
+        'items': [secondSeason.toJson()],
+        'hasMore': true,
+        'limited': true,
+        'continuation': 'cursor-${args['page']}',
+      };
+    final store = searchStore(provider);
+    addTearDown(store.dispose);
+    await store.records.toggleSeasonReminder(firstSeason);
+    final result = await store.catalog.lookupSeries(firstSeason).result;
+    expect(provider.searches.length, 3);
+    expect(provider.searches.last['continuation'], 'cursor-2');
+    expect(result.hasMore, isTrue);
+    expect(result.limited, isTrue);
+    await store.records.observeSeasons(firstSeason, result);
+    expect(
+      store.records.seasonReminders[firstSeason.key]!.initialized,
+      isFalse,
+    );
+  });
+
+  test(
+    'persisted unfinished season results restart the native search',
+    () async {
+      final provider = SeriesProvider();
+      final store = searchStore(provider);
+      addTearDown(store.dispose);
+      store.catalog.searchCache.put(
+        'hongguo|山海|1',
+        const CatalogSearchResult(
+          [secondSeason],
+          hasMore: true,
+          continuation: 'old-core-cursor',
+        ),
+        store.now(),
+      );
+      expect(
+        store.catalog.searchCache.toJson().toString(),
+        isNot(contains('old-core-cursor')),
+      );
+      final result = await store.catalog.lookupSeries(firstSeason).result;
+      expect(provider.searches.length, 1);
+      expect(provider.searches.single['continuation'], isNull);
+      expect(result.items.single.key, secondSeason.key);
+    },
+  );
+
+  test(
     'a read made during a check survives while another newly found season is retained',
     () async {
       final pending = Completer<Map<String, dynamic>>();

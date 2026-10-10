@@ -417,6 +417,7 @@ class CatalogStore extends ChangeNotifier {
     DramaSource target,
     String query, {
     int page = 1,
+    String? continuation,
     String? requestId,
     ValueChanged<CatalogSearchResult>? onPartial,
     bool rememberQuery = true,
@@ -425,8 +426,10 @@ class CatalogStore extends ChangeNotifier {
   }) async {
     query = query.trim().replaceAll(RegExp(r'\s+'), ' ');
     if (query.isEmpty) return CatalogSearchResult(catalogs[target] ?? []);
-    final key = '${target.name}|$query|$page';
-    final cached = searchCache.read(key, now());
+    final key = '${target.name}|$query|$page|${continuation ?? ''}';
+    final cached = continuation == null || continuation.isEmpty
+        ? searchCache.read('${target.name}|$query|$page', now())
+        : null;
     if (cached != null && !refresh) {
       onPartial?.call(cached.cachedResult);
       if (cached.fresh || isOffline()) {
@@ -450,6 +453,7 @@ class CatalogStore extends ChangeNotifier {
       target,
       query,
       page,
+      continuation,
       id,
       onPartial,
       rememberQuery,
@@ -471,6 +475,7 @@ class CatalogStore extends ChangeNotifier {
     DramaSource target,
     String query,
     int page,
+    String? continuation,
     String id,
     ValueChanged<CatalogSearchResult>? onPartial,
     bool rememberQuery,
@@ -509,10 +514,14 @@ class CatalogStore extends ChangeNotifier {
         query,
         page: page,
         requestId: id,
+        continuation: continuation,
       );
       completed = true;
       if (isActive?.call() == false) throw const SeriesLookupCancelled();
-      searchCache.put('${target.name}|$query|$page', result, now());
+      if ((continuation == null || continuation.isEmpty) &&
+          !result.restartRequired) {
+        searchCache.put('${target.name}|$query|$page', result, now());
+      }
       if (rememberQuery) {
         recentSearches.remove(query);
         recentSearches.insert(0, query);
@@ -644,6 +653,7 @@ class CatalogStore extends ChangeNotifier {
         );
       }
       var result = const CatalogSearchResult(<Drama>[]);
+      String? continuation;
       for (var page = 1; page <= 3; page++) {
         if (!active) throw const SeriesLookupCancelled();
         requestId = 'series-${++_searchSerial}-${now().microsecondsSinceEpoch}';
@@ -651,6 +661,7 @@ class CatalogStore extends ChangeNotifier {
           anchor.source,
           info.baseTitle,
           page: page,
+          continuation: continuation,
           requestId: requestId,
           rememberQuery: false,
           refresh: refresh,
@@ -668,7 +679,10 @@ class CatalogStore extends ChangeNotifier {
           candidates[d.key] = d;
         }
         onPartial?.call(snapshot(result));
-        if (!result.hasMore || result.warning.isNotEmpty || result.limited) {
+        continuation = result.continuation;
+        if (!result.hasMore ||
+            result.warning.isNotEmpty ||
+            (result.limited && continuation.isEmpty)) {
           break;
         }
       }

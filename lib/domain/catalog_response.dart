@@ -41,11 +41,15 @@ class CatalogSearchResult {
     this.hasMore = false,
     this.total = 0,
     this.fromCache = false,
+    this.continuation = '',
+    this.restartRequired = false,
   });
   final List<Drama> items;
   final String warning;
   final bool limited, hasMore, fromCache;
   final int total;
+  final String continuation;
+  final bool restartRequired;
 
   factory CatalogSearchResult.fromJson(Map value, DramaSource source) =>
       CatalogSearchResult(
@@ -54,5 +58,7 @@ class CatalogSearchResult {
         limited: value['limited'] as bool? ?? false,
         hasMore: value['hasMore'] as bool? ?? false,
         total: value['total'] as int? ?? 0,
+        continuation: value['continuation'] as String? ?? '',
+        restartRequired: value['restartRequired'] as bool? ?? false,
       );
 }

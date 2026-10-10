@@ -46,6 +46,8 @@ class SearchCache {
       entry.bytes,
       fresh:
           entry.result.warning.isEmpty &&
+          // Native continuation tokens belong to the running core, not disk.
+          !(key.startsWith('hongguo|') && entry.result.hasMore) &&
           now.difference(entry.savedAt) <= ttl &&
           !now.isBefore(entry.savedAt),
     );

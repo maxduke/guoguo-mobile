@@ -17,6 +17,7 @@ class CatalogSearchController extends ChangeNotifier {
   DramaSource _source;
   TextEditingValue _lastInput = TextEditingValue.empty;
   String _query = '';
+  String? _continuation;
   List<Drama>? _results;
   List<String> _suggestions = const [];
   String? _error, _notice;
@@ -65,6 +66,7 @@ class CatalogSearchController extends ChangeNotifier {
     _query = value.text.trim();
     _results = null;
     _page = 0;
+    _continuation = null;
     _hasMore = false;
     _suggestions = const [];
     _error = _notice = null;
@@ -95,9 +97,14 @@ class CatalogSearchController extends ChangeNotifier {
 
   Future<void> loadMore() => _submit(input.text, more: true);
 
-  Future<void> retry() => _submit(input.text, more: _page > 0 && _hasMore);
+  Future<void> retry() =>
+      _submit(input.text, more: _page > 0 && _hasMore, refresh: true);
 
-  Future<void> _submit(String text, {bool more = false}) async {
+  Future<void> _submit(
+    String text, {
+    bool more = false,
+    bool refresh = false,
+  }) async {
     if (_closed || !input.value.composing.isCollapsed) return;
     final query = text.trim();
     if (query.isEmpty || (_loading && query == _query)) return;
@@ -117,6 +124,7 @@ class CatalogSearchController extends ChangeNotifier {
     final previousFromCache = _fromCache;
     if (!more) {
       _page = 0;
+      _continuation = null;
       _hasMore = false;
     }
     bool current() =>
@@ -147,7 +155,9 @@ class CatalogSearchController extends ChangeNotifier {
         source,
         query,
         page: page,
+        continuation: _continuation,
         requestId: request.id,
+        refresh: refresh,
         isActive: current,
         onPartial: (partial) {
           if (!current()) return;
@@ -161,9 +171,18 @@ class CatalogSearchController extends ChangeNotifier {
       _results = _merge(previous, result.items);
       _fromCache = result.fromCache;
       _page = page;
+      _continuation = result.continuation.isEmpty ? null : result.continuation;
       _hasMore = result.hasMore;
+      if (result.restartRequired) {
+        _page = 0;
+        _hasMore = false;
+        _error = result.warning;
+        return;
+      }
       _notice = result.warning.isNotEmpty
           ? result.warning
+          : result.continuation.isNotEmpty
+          ? '已显示当前结果，可加载更多查找其余季。'
           : result.limited
           ? '已合并名称检索与官网结果；上游未提供完整分页，可用完整剧名继续查找。'
           : source == DramaSource.huangguo
