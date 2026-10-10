@@ -150,10 +150,12 @@ func (d *Downloader) loadRankingPage(ctx context.Context, board rankingBoard, pa
 	cached, exists := cache.pages[key]
 	if exists && !refresh && time.Since(cached.FetchedAt) < rankingCacheTTL {
 		cache.mu.Unlock()
+		traceCache(ctx)
 		return cloneRankingPage(cached), nil
 	}
 	if pending := cache.pending[key]; pending != nil {
 		cache.mu.Unlock()
+		traceShared(ctx)
 		select {
 		case <-ctx.Done():
 			return rankingPage{}, ctx.Err()

@@ -12,6 +12,7 @@ class PreferencesStore extends ChangeNotifier {
   set themeMode(ThemeMode value) => _theme.value = value;
 
   bool cellularDownloads = false, cellularPrefetch = false, prefetch = true;
+  bool catalogPrefetch = true;
 
   bool autoAdvance = true;
 
@@ -71,6 +72,12 @@ class PreferencesStore extends ChangeNotifier {
     await _save();
   }
 
+  Future<void> setCatalogPrefetch(bool enabled) async {
+    catalogPrefetch = enabled;
+    notifyListeners();
+    await _save();
+  }
+
   Future<void> setPlayback({
     bool? advance,
     double? speed,
@@ -114,6 +121,7 @@ class PreferencesStore extends ChangeNotifier {
     cellularDownloads = state['cellularDownloads'] == true;
     cellularPrefetch = state['cellularPrefetch'] == true;
     prefetch = state['prefetch'] != false;
+    catalogPrefetch = state['catalogPrefetch'] != false;
     autoAdvance = state['autoAdvance'] != false;
     progressivePreparation = state['progressivePreparation'] == true;
     final speed = state['playbackSpeed'];
@@ -128,6 +136,7 @@ class PreferencesStore extends ChangeNotifier {
     'cellularDownloads': cellularDownloads,
     'cellularPrefetch': cellularPrefetch,
     'prefetch': prefetch,
+    'catalogPrefetch': catalogPrefetch,
     'autoAdvance': autoAdvance,
     'progressivePreparation': progressivePreparation,
     'playbackSpeed': playbackSpeed,

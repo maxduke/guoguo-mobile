@@ -289,6 +289,7 @@ func (client *yeguoAPIClient) do(ctx context.Context, request *http.Request, tim
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		request = request.WithContext(ctx)
 	}
+	traceNetwork(request.Context())
 	response, err := client.requestClient().Do(request)
 	if err != nil {
 		cancel()
@@ -298,6 +299,7 @@ func (client *yeguoAPIClient) do(ctx context.Context, request *http.Request, tim
 	if client.downloader.limiter != nil {
 		client.downloader.limiter.observe(request, response)
 	}
+	traceUpdate(request.Context(), func(value *mobileDiagnostic) { value.HTTPStatus = response.StatusCode })
 	response.Body = &limitedResponseBody{ReadCloser: response.Body, release: func() { cancel(); release() }}
 	return response, nil
 }

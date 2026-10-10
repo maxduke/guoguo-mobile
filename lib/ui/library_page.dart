@@ -7,6 +7,7 @@ import '../domain/catalog_query.dart';
 import '../domain/models.dart';
 import 'components.dart';
 import 'source_selector.dart';
+import 'catalog_prefetch_scheduler.dart';
 
 class LibraryPage extends StatefulWidget {
   const LibraryPage({
@@ -25,24 +26,116 @@ class LibraryPage extends StatefulWidget {
   State<LibraryPage> createState() => _LibraryPageState();
 }
 
-class _LibraryPageState extends State<LibraryPage> {
+class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
   late DramaSource _source = widget.store.catalog.source;
   String _category = '全部';
   CatalogSort _sort = CatalogSort.recommended;
   bool _routeActive = true;
+  bool _foreground = true, _layoutScheduled = false;
+  String _remoteCategory = '';
+  final _scroll = ScrollController();
+  late final _prefetch = CatalogPrefetchScheduler(onIdle: _prefetchPage);
+
+  bool get _canPrefetch =>
+      mounted &&
+      widget.autoLoad &&
+      _foreground &&
+      _routeActive &&
+      ModalRoute.of(context)?.isCurrent != false &&
+      widget.store.wifi &&
+      !widget.store.offline &&
+      widget.store.preferences.catalogPrefetch &&
+      widget.store.catalog.source.remoteCategories &&
+      _sort == CatalogSort.recommended;
+
+  void _cancelPrefetch() {
+    _prefetch.reset();
+    widget.store.catalog.cancelLibraryPrefetch();
+  }
+
+  Future<void> _refresh() {
+    _cancelPrefetch();
+    return widget.store.catalog.refresh();
+  }
+
+  void _conditionsChanged() {
+    if (!_canPrefetch) {
+      _cancelPrefetch();
+    } else {
+      _schedulePrefetch();
+    }
+  }
+
+  void _schedulePrefetch() {
+    if (_layoutScheduled) return;
+    _layoutScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _layoutScheduled = false;
+      if (!mounted) return;
+      if (!_canPrefetch) {
+        _cancelPrefetch();
+        return;
+      }
+      if (_scroll.hasClients && !_scroll.position.isScrollingNotifier.value) {
+        _prefetch.layout();
+      }
+    });
+  }
+
+  void _prefetchPage() {
+    if (!_canPrefetch || !_scroll.hasClients) return;
+    final catalog = widget.store.catalog;
+    if (!catalog.libraryLoaded ||
+        catalog.libraryLoading ||
+        catalog.libraryPrefetching) {
+      _prefetch.reset();
+      return;
+    }
+    final position = _scroll.position;
+    if (position.isScrollingNotifier.value ||
+        position.viewportDimension <= 0 ||
+        position.extentAfter > position.viewportDimension * 1.5) {
+      return;
+    }
+    unawaited(catalog.prefetchLibrary(isActive: () => _canPrefetch));
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    if (!_foreground) {
+      _cancelPrefetch();
+    } else {
+      _schedulePrefetch();
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _foreground =
+        WidgetsBinding.instance.lifecycleState == null ||
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    _remoteCategory = widget.store.catalog.selectedCategory;
     widget.store.catalog.addListener(_sourceChanged);
+    widget.store.addListener(_conditionsChanged);
+    widget.store.preferences.addListener(_conditionsChanged);
   }
 
   @override
   void didUpdateWidget(LibraryPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store == widget.store) return;
+    oldWidget.store.catalog.cancelLibraryPrefetch();
+    oldWidget.store.removeListener(_conditionsChanged);
+    oldWidget.store.preferences.removeListener(_conditionsChanged);
     oldWidget.store.catalog.removeListener(_sourceChanged);
     widget.store.catalog.addListener(_sourceChanged);
+    widget.store.addListener(_conditionsChanged);
+    widget.store.preferences.addListener(_conditionsChanged);
+    _prefetch.reset();
+    _remoteCategory = widget.store.catalog.selectedCategory;
     _source = widget.store.catalog.source;
     _category = '全部';
     _sort = CatalogSort.recommended;
@@ -53,6 +146,7 @@ class _LibraryPageState extends State<LibraryPage> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _routeActive = ModalRoute.of(context)?.isCurrent != false;
+    if (!_routeActive) _cancelPrefetch();
     _scheduleInitial();
   }
 
@@ -72,7 +166,14 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 
   void _sourceChanged() {
-    if (!mounted || _source == widget.store.catalog.source) return;
+    if (!mounted) return;
+    final catalog = widget.store.catalog;
+    if (_remoteCategory != catalog.selectedCategory) {
+      _remoteCategory = catalog.selectedCategory;
+      _cancelPrefetch();
+    }
+    if (_source == catalog.source) return;
+    _cancelPrefetch();
     setState(() {
       _source = widget.store.catalog.source;
       _category = '全部';
@@ -82,7 +183,13 @@ class _LibraryPageState extends State<LibraryPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    widget.store.catalog.cancelLibraryPrefetch();
+    widget.store.removeListener(_conditionsChanged);
+    widget.store.preferences.removeListener(_conditionsChanged);
     widget.store.catalog.removeListener(_sourceChanged);
+    _prefetch.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -110,6 +217,7 @@ class _LibraryPageState extends State<LibraryPage> {
           _category != '全部' ||
           catalog.selectedCategory.isNotEmpty ||
           _sort != CatalogSort.recommended;
+      _schedulePrefetch();
       return Scaffold(
         appBar: AppBar(
           title: Text('${source.label}剧库'),
@@ -123,21 +231,27 @@ class _LibraryPageState extends State<LibraryPage> {
         ),
         body: SafeArea(
           child: RefreshIndicator(
-            onRefresh: catalog.refresh,
+            onRefresh: _refresh,
             child: NotificationListener<ScrollNotification>(
               onNotification: (notification) {
+                if (notification.depth == 0 &&
+                    notification is ScrollUpdateNotification) {
+                  _prefetch.scrolled();
+                }
                 if (notification.depth == 0 &&
                     notification is ScrollUpdateNotification &&
                     notification.metrics.extentAfter < 700 &&
                     catalog.libraryHasMore &&
                     !catalog.libraryCanRetry &&
                     !loading &&
+                    !catalog.libraryPrefetching &&
                     !store.offline) {
                   unawaited(catalog.loadMore());
                 }
                 return false;
               },
               child: CustomScrollView(
+                controller: _scroll,
                 key: PageStorageKey(
                   'library-${source.name}-${catalog.selectedCategory}',
                 ),
@@ -174,7 +288,7 @@ class _LibraryPageState extends State<LibraryPage> {
                                 tooltip: '更新当前站源',
                                 onPressed: loading || store.offline
                                     ? null
-                                    : catalog.refresh,
+                                    : _refresh,
                                 icon: const Icon(Icons.refresh),
                               ),
                               Text(
@@ -199,8 +313,10 @@ class _LibraryPageState extends State<LibraryPage> {
                                     ChoiceChip(
                                       label: Text(sort.label),
                                       selected: sort == _sort,
-                                      onSelected: (_) =>
-                                          setState(() => _sort = sort),
+                                      onSelected: (_) {
+                                        _cancelPrefetch();
+                                        setState(() => _sort = sort);
+                                      },
                                     ),
                                   if (source == DramaSource.huangdou)
                                     FilterChip(
@@ -309,7 +425,7 @@ class _LibraryPageState extends State<LibraryPage> {
                                 !loading &&
                                 !catalog.libraryCanRetry
                             ? OutlinedButton(
-                                onPressed: catalog.refresh,
+                                onPressed: _refresh,
                                 child: const Text('更新剧库'),
                               )
                             : null,

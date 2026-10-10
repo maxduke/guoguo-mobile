@@ -14,6 +14,7 @@ import '../data/download_store.dart';
 import '../domain/user_input_exception.dart';
 import 'components.dart';
 import 'playback_diagnostics_page.dart';
+import 'source_diagnostics_page.dart';
 import 'storage_page.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -298,6 +299,15 @@ class _SettingsPageState extends State<SettingsPage> {
                       onChanged: (v) =>
                           perform(context, () => downloads.setCellular(v)),
                     ),
+                    SwitchListTile(
+                      title: const Text('剧库提前加载'),
+                      subtitle: const Text('Wi-Fi 下，停稳后提前读取当前分类的下一页'),
+                      value: store.preferences.catalogPrefetch,
+                      onChanged: (value) => perform(
+                        context,
+                        () => store.preferences.setCatalogPrefetch(value),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -376,6 +386,23 @@ class _SettingsPageState extends State<SettingsPage> {
                     context,
                     MaterialPageRoute<void>(
                       builder: (_) => PlaybackDiagnosticsPage(store: store),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.travel_explore),
+                  title: const Text('站源诊断'),
+                  subtitle: const Text('查看刷新、搜索和目录请求记录'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => SourceDiagnosticsPage(
+                        diagnostics: store.sourceDiagnostics,
+                      ),
                     ),
                   ),
                 ),

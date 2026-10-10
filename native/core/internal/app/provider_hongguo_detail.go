@@ -30,10 +30,12 @@ func (downloader *Downloader) hongguoAppDetail(ctx context.Context, seriesID str
 	client.mu.Lock()
 	if cached, found := client.details[seriesID]; found && time.Now().Before(cached.ExpiresAt) {
 		client.mu.Unlock()
+		traceCache(ctx)
 		return cached, nil
 	}
 	if pending := client.pending[seriesID]; pending != nil {
 		client.mu.Unlock()
+		traceShared(ctx)
 		select {
 		case <-ctx.Done():
 			return hongguoDetailEntry{}, ctx.Err()
