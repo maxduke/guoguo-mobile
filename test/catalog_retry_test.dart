@@ -105,7 +105,10 @@ void main() {
         expect(store.catalog.library.map((d) => d.title), ['old', 'second']);
         expect(store.catalog.libraryHasMore, isTrue);
         expect(store.catalog.libraryCanRetry, isTrue);
-        expect(store.catalog.libraryError, '剧库更新失败，已保留现有内容');
+        expect(
+          store.catalog.libraryError,
+          '剧库更新失败，已保留现有内容\n站源返回内容无法处理，请稍后重试或切换站源',
+        );
         final failedRequest = provider.requests.last;
         request = store.catalog.retryLibrary();
         await store.catalog.retryLibrary();

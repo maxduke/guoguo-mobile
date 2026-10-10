@@ -17,7 +17,9 @@ class SourceDiagnostic {
     this.result = 'success',
     this.failure = '',
     this.stage = 'unknown',
-  });
+    String? requestResult,
+    this.validation = 'not_checked',
+  }) : requestResult = requestResult ?? result;
   static const methods = {
     'catalog',
     'categories',
@@ -30,6 +32,8 @@ class SourceDiagnostic {
     'chapters',
   };
   static const results = {'success', 'partial', 'failed', 'cancelled'};
+  static const requestResults = {...results, 'not_requested'};
+  static const validations = {'not_checked', 'passed', 'failed'};
   static const failures = {
     '',
     'cancelled',
@@ -57,7 +61,7 @@ class SourceDiagnostic {
     'connection',
   };
   final DramaSource source;
-  final String method, result, failure, stage;
+  final String method, result, failure, stage, requestResult, validation;
   final DateTime at;
   final int elapsedMs, page, cacheHits, sharedWaits, httpStatus;
   final int? networkAttempts;
@@ -74,6 +78,8 @@ class SourceDiagnostic {
 
     if (!methods.contains(value['method']) ||
         !results.contains(value['result']) ||
+        !requestResults.contains(value['requestResult'] ?? value['result']) ||
+        !validations.contains(value['validation'] ?? 'not_checked') ||
         !failures.contains(value['failure']) ||
         !stages.contains(value['stage'])) {
       throw const FormatException('诊断数据无效');
@@ -95,8 +101,29 @@ class SourceDiagnostic {
       result: value['result'] as String,
       failure: value['failure'] as String,
       stage: value['stage'] as String,
+      requestResult: value['requestResult'] as String?,
+      validation: value['validation'] as String? ?? 'not_checked',
     );
   }
+
+  SourceDiagnostic withValidation({required bool valid}) => SourceDiagnostic(
+    source: source,
+    method: method,
+    at: at,
+    elapsedMs: elapsedMs,
+    page: page,
+    refresh: refresh,
+    background: background,
+    networkAttempts: networkAttempts,
+    cacheHits: cacheHits,
+    sharedWaits: sharedWaits,
+    httpStatus: httpStatus,
+    requestResult: requestResult,
+    validation: valid ? 'passed' : 'failed',
+    result: valid ? result : 'failed',
+    failure: valid ? failure : 'other',
+    stage: valid ? stage : 'response',
+  );
 
   Map<String, dynamic> toJson() => {
     'source': source.name,
@@ -113,6 +140,8 @@ class SourceDiagnostic {
     'result': result,
     'failure': failure,
     'stage': stage,
+    'requestResult': requestResult,
+    'validation': validation,
   };
 
   String get methodLabel => switch (method) {
@@ -126,7 +155,16 @@ class SourceDiagnostic {
     'detail' => '详情',
     _ => '分集',
   };
-  String get resultLabel => switch (result) {
+  String get resultLabel => _resultLabel(result);
+  String get requestResultLabel => _resultLabel(requestResult);
+  String get validationLabel => switch (validation) {
+    'passed' => '内容校验通过',
+    'failed' => '内容校验失败',
+    _ => '未进行内容校验',
+  };
+
+  static String _resultLabel(String result) => switch (result) {
+    'not_requested' => '未调用核心',
     'success' => '成功',
     'partial' => '部分结果 / 缓存回退',
     'cancelled' => '已取消',

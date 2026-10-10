@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guoguo_mobile/data/source_diagnostics.dart';
@@ -37,6 +38,19 @@ Map<String, dynamic> _sample({
   result: result,
   stage: 'complete',
 ).toJson();
+
+class _PendingProvider implements ProviderClient {
+  final requests = <Completer<Map<String, dynamic>>>[];
+  @override
+  Future<Map<String, dynamic>> call(
+    String method, [
+    Map<String, dynamic> arguments = const {},
+  ]) {
+    final result = Completer<Map<String, dynamic>>();
+    requests.add(result);
+    return result.future;
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -114,6 +128,7 @@ void main() {
       expect(diagnostics.samples.last.page, 7);
       expect(diagnostics.samples.first.networkAttempts, 0);
       expect(diagnostics.samples.first.cacheHits, 1);
+      expect(diagnostics.samples.first.requestResult, 'not_requested');
       diagnostics.clear();
       expect(diagnostics.samples, isEmpty);
     },
@@ -124,6 +139,8 @@ void main() {
       {..._sample(), 'method': 'secret'},
       {..._sample(), 'networkAttempts': -1},
       {..._sample(), 'source': 'secret'},
+      {..._sample(), 'validation': 'secret'},
+      {..._sample(), 'requestResult': 'secret'},
     ]) {
       expect(() => SourceDiagnostic.fromJson(invalid), throwsFormatException);
     }
@@ -208,6 +225,192 @@ void main() {
       expect(requests[1]['traceId'], requests[2]['traceId']);
       expect(diagnostics.samples.single.failure, 'dns');
       expect(diagnostics.samples.single.networkAttempts, 2);
+    },
+  );
+
+  test(
+    'old diagnostics remain readable with unchecked response validation',
+    () {
+      final old = _sample()
+        ..remove('requestResult')
+        ..remove('validation');
+      final sample = SourceDiagnostic.fromJson(old);
+      expect(sample.requestResult, 'success');
+      expect(sample.validation, 'not_checked');
+    },
+  );
+
+  for (final method in [
+    'catalog',
+    'categories',
+    'search',
+    'suggestions',
+    'detail',
+    'chapters',
+    'boards',
+    'ranking',
+    'recommendations',
+  ]) {
+    test(
+      '$method validation failure keeps successful request counters in one diagnostic',
+      () async {
+        final source = method == 'recommendations' || method == 'suggestions'
+            ? DramaSource.hongguo
+            : DramaSource.huangguo;
+        final provider = _Provider()
+          ..response = {
+            '_diagnostic': {
+              ..._sample(method: method),
+              'source': source.name,
+              'cacheHits': 1,
+              'sharedWaits': 3,
+              'httpStatus': 200,
+            },
+            'items': 'secret malformed payload',
+            'chapters': [],
+          };
+        final observed = ObservedProviderClient(provider, diagnostics);
+        const drama = Drama(
+          id: 'huangguo:secret',
+          source: DramaSource.huangguo,
+          title: 'secret',
+        );
+        final Future<Object?> request = switch (method) {
+          'catalog' => observed.catalogPage(DramaSource.huangguo),
+          'categories' => observed.categories(DramaSource.huangguo),
+          'search' => observed.searchPage(
+            DramaSource.huangguo,
+            'secret',
+            requestId: 'owner',
+          ),
+          'suggestions' => observed.suggestions('secret'),
+          'detail' => observed.dramaDetail(drama),
+          'chapters' => observed.chapters(drama),
+          'boards' => observed.discoveryBoards(DramaSource.huangguo),
+          'ranking' => observed.discoveryColumn(
+            DramaSource.huangguo,
+            'huangguo-ai',
+          ),
+          _ => observed.recommendations(RecommendationGenre.shortPlay),
+        };
+        await expectLater(request, throwsA(anything));
+        expect(diagnostics.samples, hasLength(1));
+        final sample = diagnostics.samples.single;
+        expect(sample.result, 'failed');
+        expect(sample.requestResult, 'success');
+        expect(sample.validation, 'failed');
+        expect(sample.stage, 'response');
+        expect(sample.source, source);
+        expect(sample.networkAttempts, 2);
+        expect(sample.cacheHits, 1);
+        expect(sample.sharedWaits, 3);
+        expect(sample.httpStatus, 200);
+        expect(jsonEncode(sample.toJson()), isNot(contains('secret')));
+      },
+    );
+  }
+
+  test(
+    'successful partial response preserves request state and marks validation passed',
+    () async {
+      final provider = _Provider()
+        ..response = {
+          '_diagnostic': _sample(result: 'partial'),
+          'items': [],
+          'warning': '部分栏目暂未返回',
+        };
+      final result = await ObservedProviderClient(
+        provider,
+        diagnostics,
+      ).catalogPage(DramaSource.huangguo);
+      expect(result.warning, '部分栏目暂未返回');
+      final sample = diagnostics.samples.single;
+      expect(sample.result, 'partial');
+      expect(sample.requestResult, 'partial');
+      expect(sample.validation, 'passed');
+      expect(sample.networkAttempts, 2);
+    },
+  );
+
+  test(
+    'typed transport failure retains original exception and never reports validation failure',
+    () async {
+      final error = ProviderException(
+        'secret',
+        diagnostic: {
+          ..._sample(result: 'failed'),
+          'failure': 'dns',
+          'stage': 'dns',
+        },
+      );
+      final provider = _Provider()..error = error;
+      await expectLater(
+        ObservedProviderClient(
+          provider,
+          diagnostics,
+        ).catalogPage(DramaSource.huangguo),
+        throwsA(same(error)),
+      );
+      final sample = diagnostics.samples.single;
+      expect(sample.result, 'failed');
+      expect(sample.requestResult, 'failed');
+      expect(sample.validation, 'not_checked');
+      expect(sample.failure, 'dns');
+    },
+  );
+
+  test(
+    'legacy detail IDs use typed context without adding native arguments',
+    () async {
+      const drama = Drama(
+        id: '12345',
+        source: DramaSource.huangdou,
+        title: '旧记录',
+      );
+      final provider = _Provider()..response = {'item': drama.toJson()};
+      await ObservedProviderClient(provider, diagnostics).dramaDetail(drama);
+      expect(provider.arguments, {'id': '12345'});
+      expect(diagnostics.samples.single.source, DramaSource.huangdou);
+      expect(diagnostics.samples.single.networkAttempts, isNull);
+      expect(diagnostics.samples.single.validation, 'passed');
+    },
+  );
+
+  test(
+    'out of order typed completions do not mix request statistics or validation',
+    () async {
+      final provider = _PendingProvider();
+      final observed = ObservedProviderClient(provider, diagnostics);
+      final first = observed.catalogPage(DramaSource.huangguo);
+      final firstFailure = expectLater(first, throwsFormatException);
+      final second = observed.catalogPage(DramaSource.hongguo);
+      provider.requests[1].complete({
+        'items': [],
+        '_diagnostic': {
+          ..._sample(),
+          'source': 'hongguo',
+          'networkAttempts': 7,
+        },
+      });
+      await second;
+      provider.requests[0].complete({
+        'items': [
+          const Drama(
+            id: 'other',
+            source: DramaSource.hongguo,
+            title: 'other',
+          ).toJson(),
+        ],
+        '_diagnostic': _sample(),
+      });
+      await firstFailure;
+      expect(diagnostics.samples, hasLength(2));
+      expect(diagnostics.samples.first.source, DramaSource.huangguo);
+      expect(diagnostics.samples.first.validation, 'failed');
+      expect(diagnostics.samples.first.networkAttempts, 2);
+      expect(diagnostics.samples.last.source, DramaSource.hongguo);
+      expect(diagnostics.samples.last.validation, 'passed');
+      expect(diagnostics.samples.last.networkAttempts, 7);
     },
   );
 }

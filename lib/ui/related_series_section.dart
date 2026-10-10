@@ -7,6 +7,7 @@ import '../data/series_lookup.dart';
 import '../domain/models.dart';
 import '../domain/catalog_query.dart';
 import '../domain/series_title.dart';
+import '../platform/provider_client.dart';
 import 'components.dart';
 
 class RelatedSeriesSection extends StatefulWidget {
@@ -114,9 +115,12 @@ class RelatedSeriesSectionState extends State<RelatedSeriesSection>
       );
     } on SeriesLookupCancelled {
       // A cancelled owner must not report a search failure.
-    } catch (_) {
+    } catch (error) {
       if (mounted && generation == _generation) {
-        setState(() => _notice = '同系列暂时未补全，请重试；已有作品仍可查看');
+        setState(
+          () =>
+              _notice = providerFailureMessage(error, '同系列暂时未补全，请重试；已有作品仍可查看'),
+        );
       }
     } finally {
       if (mounted && generation == _generation) {

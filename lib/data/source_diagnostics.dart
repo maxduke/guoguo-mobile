@@ -27,6 +27,7 @@ class SourceDiagnostics extends ChangeNotifier {
       cacheHits: 1,
       networkAttempts: 0,
       stage: 'cache',
+      requestResult: 'not_requested',
     ),
   );
 

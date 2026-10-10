@@ -197,11 +197,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
               : _rows.isEmpty
               ? '栏目暂时无法加载，请重试'
               : '栏目更新失败，已保留现有内容';
-          if (!store.offline &&
-              failure is ProviderException &&
-              failure.failureHint != null) {
-            _error = '$_error\n${failure.failureHint}';
-          }
+          if (!store.offline) _error = providerFailureMessage(failure, _error!);
         });
       }
     } finally {

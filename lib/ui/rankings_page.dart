@@ -105,10 +105,7 @@ class _RankingsPageState extends State<RankingsPage> {
       if (mounted && request == generation) {
         setState(() {
           failedBoards = true;
-          error = '栏目列表暂时无法加载，请重试';
-          if (failure is ProviderException && failure.failureHint != null) {
-            error = '$error\n${failure.failureHint}';
-          }
+          error = providerFailureMessage(failure, '栏目列表暂时无法加载，请重试');
         });
       }
     } finally {
@@ -198,10 +195,8 @@ class _RankingsPageState extends State<RankingsPage> {
               : more
               ? '更多栏目内容暂时无法加载，已保留现有内容'
               : '栏目刷新失败，已保留现有内容';
-          if (!requestStore.offline &&
-              failure is ProviderException &&
-              failure.failureHint != null) {
-            error = '$error\n${failure.failureHint}';
+          if (!requestStore.offline) {
+            error = providerFailureMessage(failure, error!);
           }
         });
       }

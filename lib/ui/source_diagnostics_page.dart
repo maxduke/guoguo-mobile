@@ -71,6 +71,10 @@ class SourceDiagnosticsPage extends StatelessWidget {
                       '${sample.elapsedMs} ms · 联网尝试 ${sample.networkAttempts ?? '未知'}'
                       ' · 缓存命中 ${sample.cacheHits} · 等待共享请求 ${sample.sharedWaits}',
                     ),
+                    if (sample.validation != 'not_checked')
+                      Text(
+                        '核心请求${sample.requestResultLabel} · ${sample.validationLabel}',
+                      ),
                     if (sample.httpStatus > 0)
                       Text('HTTP ${sample.httpStatus}'),
                     if (sample.failureLabel.isNotEmpty)
