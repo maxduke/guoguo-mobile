@@ -184,7 +184,12 @@ class AppStore extends ChangeNotifier implements StorePersistence {
             // Snapshot only after the preceding record transaction finishes.
             if (records || !_hasRecordState) await save();
           }),
-        if (cache) saveCache(target.writeCache(catalog.cacheSnapshot())),
+        if (cache)
+          saveCache(
+            target is AppFileStorage
+                ? target.writeCacheSnapshot(catalog.cacheSnapshot)
+                : target.writeCache(catalog.cacheSnapshot()),
+          ),
       ]);
     } else {
       await updateRecords((save) => save());

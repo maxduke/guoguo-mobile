@@ -35,6 +35,38 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
   String _remoteCategory = '';
   final _scroll = ScrollController();
   late final _prefetch = CatalogPrefetchScheduler(onIdle: _prefetchPage);
+  List<Drama>? _categoryInput;
+  Set<String> _categories = const {'全部'};
+  (List<Drama>, String, bool, CatalogSort)? _queryInput;
+  List<Drama> _rows = const [];
+
+  List<Drama> _visibleRows(List<Drama> items, DramaSource source) {
+    if (!identical(_categoryInput, items)) {
+      _categoryInput = items;
+      _categories = {
+        '全部',
+        ...items.map((row) => row.category).where((v) => v.isNotEmpty),
+      };
+    }
+    final input = (
+      items,
+      source.remoteCategories ? '全部' : _category,
+      source == DramaSource.huangdou && widget.store.catalog.hideVip,
+      _sort,
+    );
+    // CatalogStore replaces lists when membership or immutable Drama metadata
+    // changes. Loading, error and network notifications keep the same input.
+    if (_queryInput != input) {
+      _queryInput = input;
+      _rows = queryCatalog(
+        items,
+        category: input.$2,
+        hideVip: input.$3,
+        sort: input.$4,
+      );
+    }
+    return _rows;
+  }
 
   bool get _canPrefetch =>
       mounted &&
@@ -199,18 +231,8 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
     builder: (context, _) {
       final store = widget.store, catalog = store.catalog;
       final source = catalog.source;
-      final rows = queryCatalog(
-        catalog.library,
-        category: source.remoteCategories ? '全部' : _category,
-        hideVip: source == DramaSource.huangdou && catalog.hideVip,
-        sort: _sort,
-      );
-      final categories = {
-        '全部',
-        ...catalog.library
-            .map((row) => row.category)
-            .where((v) => v.isNotEmpty),
-      };
+      final rows = _visibleRows(catalog.library, source);
+      final categories = _categories;
       final loading = catalog.libraryLoading;
       final horizontal = MediaQuery.sizeOf(context).width >= 900 ? 40.0 : 22.0;
       final filtered =

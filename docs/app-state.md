@@ -27,6 +27,8 @@ ProviderClient 的 raw 请求契约保持原样；可选 DecodingProviderClient 
 
 搜索进度须匹配来源/查询，请求代次与拥有者继续归会话控制器；切换输入/来源或退出取消旧轮次。自然排序的标题片段仅在一次排序内复用，查询词仅规范化一次；没有跨页面可失效的索引或查询状态。
 
+LibraryPage 在本页 State 内复用分类集合和筛选/排序结果，输入为列表身份、分类、VIP 与排序条件。CatalogStore 的成员和不可变 Drama 资料变更均替换列表，加载、错误和网络通知不更换内容，因此不能触发无关的整表排序。追加、资料刷新、来源及依赖替换仍失效，页面关闭后释放，不持久化派生结果。
+
 红果分季续搜令牌绑定原查询和下一页，核心快照只读，各请求修改独立副本；不按搜索词共享可变游标。未完成红果搜索的磁盘缓存只能提供资料，重新联网取得令牌。同系列检查保留三页/二十秒预算及完整结果才建立提醒基准的契约。具体边界见 [分季续搜](hongguo-season-continuation.md)。
 
 剧库预取只用于有明确页码的十六个分类源；当前来源、分类、slice、页码和请求所有者一致才安装。聚合游标目录继续按需加载。页面负责 Wi-Fi/前台/路由和停稳预算，CatalogStore 负责取消、安装与退避，核心负责低优先级请求、八秒总时限及按请求身份取消。具体约束见 [站源诊断与预取](source-diagnostics-prefetch.md)。
@@ -36,6 +38,8 @@ ProviderClient 的 raw 请求契约保持原样；可选 DecodingProviderClient 
 记录事务与记录文件写入共用串行操作队列，入队后取快照；候选备份落盘成功后才安装。失败保留原状态，已接受的保存可以在关闭后完成，但不再通知已关闭页面。相同资料、已读集合和进度跳过冗余保存，已发生保存错误时仍允许重试。
 
 记录与可重建缓存拥有独立文件和写队列；缓存、网络请求不占用记录事务。StorePersistence 保留最小写入接口。备份 v2、交换格式和全新安装范围见产品规格。
+
+AppFileStorage 只合并尚未开始的目录缓存写入，AppStore 在写入到达文件队列时才取得最新快照并脱离可变输入。已经开始的写入不被替换；等待中的多个调用共同等待覆盖它们的最新快照落盘，失败共同报告，后续仍可重试。直接传 Map 的写入继续在调用时脱离输入。缓存清理和容量测量关闭此前的合并批次，后续保存排在操作之后；普通 FileStorage、记录事务及下载清单保持逐次写入。没有定时 debounce 或后台未等待的保存，关闭后已接受的保存仍可完成。
 
 异步续播、下载播放、弹窗、文件操作固定当前对象与代次。标签/来源切换、依赖替换、页面退出或覆盖使旧意图失效，返回也不复活旧跳转。DownloadsPage 自己处理路由覆盖取消，Home 只传所选标签状态，自己的筛选弹窗返回仍能应用筛选。分享准备后重新取得当前窗口锚点并检查当前路由。
 
@@ -59,6 +63,7 @@ PlayerPage 协调界面和原生事件，手势、控件、弹层各有独立归
 ## 回归入口
 
 - `record_transactions_test`、`partitioned_store_test`、`scoped_store_test`：提交、分区与通知。
+- `cache_write_queue_test`、`library_projection_test`：缓存合并、等待/清理/测量屏障、失败重试和导入回滚，以及目录派生结果复用与失效。
 - `provider_contract_test`、`catalog_retry_test`、`catalog_upgrade_test`：解析、身份、游标与查询语义。
 - `catalog_result_errors_test`、`source_failure_feedback_test`、`source_diagnostics_test`：缓存保存失败与加载结果分离、固定提示、请求与校验结果及统计关联。
 - `catalog_search_state_test`、`download_page_state_test`、`adaptive_layout_test`：拥有者、退出、覆盖和窗口保留。

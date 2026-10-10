@@ -55,6 +55,31 @@ GUOGUO_PERF_OUTPUT=build/performance/current.json \
 
 JSON 的 RSS 是整个 Flutter 测试进程的当时驻留内存，包含框架、合成数据及先前样本，不能解释为单个缓存堆大小、手机内存或内存改善。
 
+## 0.19.2：减少目录和缓存的重复工作
+
+2026-10-10，基于合并后的 0.19.1（`539cb4b`），沿用上述主机、SDK、合成数据、一次预热和五次采样。新增 `cacheWriteBurst5`：同一轮同步提交五个 `AppStore.persist(records: false)`，等待全部完成，测量整个批次的时间。此次只运行数据操作测量，不追加手机帧或图像指标。完整样本见 [本轮优化前](performance/catalog-work-before.json) / [本轮优化后](performance/catalog-work-after.json)。
+
+```bash
+GUOGUO_PERF_OUTPUT=build/performance/cache-burst.json \
+  flutter test --no-pub --concurrency=1 --reporter=expanded \
+  test/performance_baseline_test.dart \
+  --plain-name 'synthetic catalog and partitioned disk baseline'
+```
+
+| 目录 / 记录 | 五次同期缓存保存：优化前 ms | 优化后 ms |
+| --- | ---: | ---: |
+| 1,000 / 100 | 573.4 | 101.4 |
+| 10,000 / 100 | 3907.2 | 728.7 |
+| 10,000 / 1,000 | 3872.7 | 755.4 |
+
+生产 `AppFileStorage` 只合并尚未开始的目录缓存写入，入队时保留最新快照获取函数，到达写入位置后才生成并脱离输入，再后台编码、flush 和原子替换。同期五次保存只构造和编码一份快照；若首份已经开始，后续请求共享一份等待中的最新快照。网络响应间隔大于写入耗时时仍分别保存，不承诺所有请求都得到表中的收益。单份大缓存仍需原有序列化和写入成本，不能将批次收益解释为所有单次写入变快。
+
+每个等待者只有在覆盖其请求的快照提交后才成功，失败共同报告且可重试。公开 Map 写入仍在调用时脱离输入。容量统计和清理作为队列屏障，关闭此前的合并批次；较晚保存不会被移到屏障之前。收藏、历史、设置及普通 FileStorage 的下载清单继续逐次写入，缓存不占用记录队列，也没有定时 debounce 或未等待的关闭前保存。
+
+剧库页面按列表身份、分类、VIP 和排序条件复用当前派生结果；分类集合也只在输入目录改变时重新收集。实际页面回归通过非可见资料的读取计数确认，网络状态、加载状态和失败通知不会重做整表排序；追加分页、资料更新、分类/排序/VIP 变化、来源切换和替换 AppStore 均正确失效。首次排序仍使用原算法，其时间没有被省略或搬到其它线程。本轮没有新的真机帧耗时结果。
+
+`cache_write_queue_test` 另外覆盖 IO 期间的请求合并、等待到各自提交、输入快照隔离、清理/测量顺序、捕获和原子写入失败、导入回滚、独立记录保存、关闭后完成及普通文件的逐次顺序；`library_projection_test` 保护复用和失效语义。
+
 ## 当前取舍
 
 | 决策 | 结论与依据 |

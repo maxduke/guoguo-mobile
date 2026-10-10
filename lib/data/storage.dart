@@ -40,12 +40,19 @@ Map<String, dynamic> _cachePart(Map<String, dynamic> value) => {
 };
 
 class AppFileStorage implements PartitionedStorage {
-  AppFileStorage(this.directory)
-    : _records = FileStorage(directory, fileName: 'records.json'),
-      _cache = FileStorage(directory, fileName: 'catalog-cache.json');
+  AppFileStorage(
+    this.directory, {
+    Future<String> Function(Object?) encodeCache = encodeJsonInBackground,
+  }) : _records = FileStorage(directory, fileName: 'records.json'),
+       _cache = FileStorage(
+         directory,
+         fileName: 'catalog-cache.json',
+         encode: encodeCache,
+       );
 
   final Directory directory;
   final FileStorage _records, _cache;
+  _CacheWrite? _waitingCache;
   @override
   String? cacheReadError;
 
@@ -77,15 +84,47 @@ class AppFileStorage implements PartitionedStorage {
       _records.write(_recordsPart(value));
 
   @override
-  Future<void> writeCache(Map<String, dynamic> value) => _cache.write({
-    'format': 'guoguo.catalog-cache',
-    'version': 1,
-    'cache': _cachePart(value),
-  });
+  Future<void> writeCache(Map<String, dynamic> value) {
+    // Public map writes still detach at invocation, even when queued together.
+    final detached = _detachJson(_cachePart(value)) as Map<String, dynamic>;
+    return _queueCache(() => detached);
+  }
 
-  Future<int?> catalogCacheBytes() => _cache.bytes();
+  // Capture reconstructible state only when its write reaches the file queue.
+  // Every caller waits for a committed snapshot covering its request; no timer
+  // or unawaited debounce can leave an acknowledged save only in memory.
+  Future<void> writeCacheSnapshot(Map<String, dynamic> Function() snapshot) =>
+      _queueCache(
+        () => _detachJson(_cachePart(snapshot())) as Map<String, dynamic>,
+      );
+
+  Future<void> _queueCache(Map<String, dynamic> Function() capture) {
+    final waiting = _waitingCache;
+    if (waiting != null) {
+      waiting.capture = capture;
+      return waiting.done;
+    }
+    final write = _CacheWrite(capture);
+    _waitingCache = write;
+    write.done = _cache._writeCaptured(() {
+      if (identical(_waitingCache, write)) _waitingCache = null;
+      return {
+        'format': 'guoguo.catalog-cache',
+        'version': 1,
+        'cache': write.capture(),
+      };
+    });
+    return write.done;
+  }
+
+  Future<int?> catalogCacheBytes() {
+    _waitingCache = null;
+    return _cache.bytes();
+  }
 
   Future<void> clearCatalogCache() async {
+    // Later requests must start after this barrier, never join an earlier save.
+    _waitingCache = null;
     await _cache.clear();
     cacheReadError = null;
   }
@@ -98,10 +137,21 @@ class AppFileStorage implements PartitionedStorage {
   }
 }
 
+class _CacheWrite {
+  _CacheWrite(this.capture);
+  Map<String, dynamic> Function() capture;
+  late final Future<void> done;
+}
+
 class FileStorage implements LocalStorage {
-  FileStorage(this.directory, {this.fileName = 'state.json'});
+  FileStorage(
+    this.directory, {
+    this.fileName = 'state.json',
+    Future<String> Function(Object?) encode = encodeJsonInBackground,
+  }) : _encode = encode;
   final Directory directory;
   final String fileName;
+  final Future<String> Function(Object?) _encode;
   Future<void> _pending = Future.value();
   File get _file => File('${directory.path}/$fileName');
   @override
@@ -115,8 +165,12 @@ class FileStorage implements LocalStorage {
   @override
   Future<void> write(Map<String, dynamic> value) {
     final detached = _detachJson(value) as Map<String, dynamic>;
+    return _writeCaptured(() => detached);
+  }
+
+  Future<void> _writeCaptured(Map<String, dynamic> Function() capture) {
     return _serialized(() async {
-      final snapshot = await encodeJsonInBackground(detached);
+      final snapshot = await _encode(capture());
       await directory.create(recursive: true);
       final temporary = File('${_file.path}.tmp');
       await temporary.writeAsString(snapshot, flush: true);
