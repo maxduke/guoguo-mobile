@@ -62,6 +62,8 @@ PlayerPage 协调界面和原生事件，手势、控件、弹层各有独立归
 
 空间统计在清单载入后执行，并按实际可测范围报告未知值；进度事件不扫描磁盘。清理遵守记录/缓存边界和活跃媒体资源归属，不扫父目录、不删除用户记录。容量和设备性能限制见 [基线](performance-baseline.md)。
 
+下载整理验证输出存在且非空后才标记 ready；此后的清单保存或临时文件清理失败不再写入媒体失败字段，已验证视频保留可播放状态。清单失败继续由独立告警报告，保留原文件和逐次保存队列。带文件校验的下拉刷新、前台恢复会重试未成功保存的清单，进度事件的 reload(verifyFiles: false) 不循环重试。刷新意图在已有 reload 执行期间入队，也会在本轮结束时重试保存；磁盘仍不可写时保留告警，缺失/空文件和实际整理错误仍是可重试媒体失败。
+
 ## 回归入口
 
 - `record_transactions_test`、`partitioned_store_test`、`scoped_store_test`：提交、分区与通知。
@@ -70,6 +72,7 @@ PlayerPage 协调界面和原生事件，手势、控件、弹层各有独立归
 - `catalog_result_errors_test`、`source_failure_feedback_test`、`source_diagnostics_test`：缓存保存失败与加载结果分离、固定提示、请求与校验结果及统计关联。
 - `catalog_search_state_test`、`download_page_state_test`、`adaptive_layout_test`：拥有者、退出、覆盖和窗口保留。
 - `download_recovery_test`：签名刷新、无效计划、完成文件与原任务保护。
+- `download_finalization_test`：完成视频与清单保存错误分离、短暂/持续写入失败、手动刷新与进度并发接管及缺失/空输出保护。
 - `playback_session_test`、`playback_progress_test`、`playback_coordination_test`、`player_cast_handoff_test`：媒体、生命周期、进度和交接。
 
 设备验证另见 [清单](ios-device-checklist.md)，自动化不代替实际设备结果。

@@ -347,7 +347,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       });
       _setManifestError(null);
     } catch (_) {
-      _setManifestError('下载记录保存失败，请检查设备空间后重试');
+      _setManifestError('下载记录保存失败，请检查设备空间后下拉刷新重试');
       rethrow;
     }
   }
@@ -388,11 +388,13 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     }
     _loading = true;
     final previousFailures = {for (final e in entries) e.id: e.failure};
+    var checkedFiles = false;
     try {
       do {
         _reloadAgain = false;
         final checkFiles = _verifyFiles;
         _verifyFiles = false;
+        checkedFiles = checkedFiles || checkFiles;
         final records = {for (final r in await driver.records()) r.taskId: r};
         if (_disposed) return;
         for (final entry in entries.toList()) {
@@ -489,7 +491,10 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
           if (ready != null) unawaited(_finalize(ready));
         }
       } while (_reloadAgain && !_disposed);
-      if (entries.any((e) => previousFailures[e.id] != e.failure)) {
+      // Explicit refresh/lifecycle recovery retries a failed manifest save;
+      // progress-only reloads must not repeatedly write to a failing disk.
+      if ((checkedFiles && _manifestError != null) ||
+          entries.any((e) => previousFailures[e.id] != e.failure)) {
         await _save();
       }
       error = null;
@@ -531,7 +536,8 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
     } catch (_) {
-      if (_foreground) {
+      // A verified output stays usable if manifest saving or cleanup fails.
+      if (_foreground && !entry.ready) {
         entry.failure = '视频整理失败，请重试；如空间不足请先清理设备';
         entry.status = TaskStatus.failed;
       }
