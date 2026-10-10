@@ -1,0 +1,381 @@
+{
+  "readEnvironment": {
+    "os": "Linux 6.8.0-142-generic #142-Ubuntu SMP PREEMPT_DYNAMIC Wed Sep  2 14:24:27 UTC 2026",
+    "dart": "3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+    "debug": true,
+    "logicalProcessors": 2,
+    "measuredAt": "2026-10-10T09:38:39.663458Z",
+    "samples": 5,
+    "warmups": 1,
+    "timerPeriodMs": 2,
+    "scope": "Synthetic debug host, warm OS cache; file/UTF-8/JSON read only. Event-loop timer intervals are not device frames. Excludes business object restoration, UI and network."
+  },
+  "storageReads": [
+    {
+      "catalogCount": 100,
+      "historyAndFavoritesCount": 100,
+      "fileName": "records.json",
+      "fileBytes": 263779,
+      "currentIsolateControl": [
+        {
+          "wallUs": 15159,
+          "maxEventLoopGapUs": 11834,
+          "timerTicks": 1
+        },
+        {
+          "wallUs": 6510,
+          "maxEventLoopGapUs": 3867,
+          "timerTicks": 1
+        },
+        {
+          "wallUs": 13277,
+          "maxEventLoopGapUs": 10327,
+          "timerTicks": 1
+        },
+        {
+          "wallUs": 5558,
+          "maxEventLoopGapUs": 5558,
+          "timerTicks": 0
+        },
+        {
+          "wallUs": 5482,
+          "maxEventLoopGapUs": 5482,
+          "timerTicks": 0
+        }
+      ],
+      "backgroundFileStorage": [
+        {
+          "wallUs": 9735,
+          "maxEventLoopGapUs": 4122,
+          "timerTicks": 3
+        },
+        {
+          "wallUs": 9803,
+          "maxEventLoopGapUs": 4826,
+          "timerTicks": 4
+        },
+        {
+          "wallUs": 6595,
+          "maxEventLoopGapUs": 3206,
+          "timerTicks": 2
+        },
+        {
+          "wallUs": 6468,
+          "maxEventLoopGapUs": 2446,
+          "timerTicks": 2
+        },
+        {
+          "wallUs": 6847,
+          "maxEventLoopGapUs": 2505,
+          "timerTicks": 3
+        }
+      ]
+    },
+    {
+      "catalogCount": 100,
+      "historyAndFavoritesCount": 100,
+      "fileName": "catalog-cache.json",
+      "fileBytes": 417172,
+      "currentIsolateControl": [
+        {
+          "wallUs": 14243,
+          "maxEventLoopGapUs": 11385,
+          "timerTicks": 1
+        },
+        {
+          "wallUs": 12239,
+          "maxEventLoopGapUs": 12239,
+          "timerTicks": 0
+        },
+        {
+          "wallUs": 13979,
+          "maxEventLoopGapUs": 11117,
+          "timerTicks": 1
+        },
+        {
+          "wallUs": 22698,
+          "maxEventLoopGapUs": 17132,
+          "timerTicks": 2
+        },
+        {
+          "wallUs": 15634,
+          "maxEventLoopGapUs": 12235,
+          "timerTicks": 1
+        }
+      ],
+      "backgroundFileStorage": [
+        {
+          "wallUs": 15741,
+          "maxEventLoopGapUs": 4425,
+          "timerTicks": 7
+        },
+        {
+          "wallUs": 14201,
+          "maxEventLoopGapUs": 2574,
+          "timerTicks": 6
+        },
+        {
+          "wallUs": 12345,
+          "maxEventLoopGapUs": 2357,
+          "timerTicks": 5
+        },
+        {
+          "wallUs": 68064,
+          "maxEventLoopGapUs": 10077,
+          "timerTicks": 24
+        },
+        {
+          "wallUs": 20578,
+          "maxEventLoopGapUs": 3139,
+          "timerTicks": 9
+        }
+      ]
+    },
+    {
+      "catalogCount": 1000,
+      "historyAndFavoritesCount": 100,
+      "fileName": "records.json",
+      "fileBytes": 263779,
+      "currentIsolateControl": [
+        {
+          "wallUs": 24228,
+          "maxEventLoopGapUs": 21175,
+          "timerTicks": 1
+        },
+        {
+          "wallUs": 22765,
+          "maxEventLoopGapUs": 13986,
+          "timerTicks": 2
+        },
+        {
+          "wallUs": 18770,
+          "maxEventLoopGapUs": 12375,
+          "timerTicks": 2
+        },
+        {
+          "wallUs": 6484,
+          "maxEventLoopGapUs": 3619,
+          "timerTicks": 1
+        },
+        {
+          "wallUs": 6166,
+          "maxEventLoopGapUs": 6166,
+          "timerTicks": 0
+        }
+      ],
+      "backgroundFileStorage": [
+        {
+          "wallUs": 8529,
+          "maxEventLoopGapUs": 4946,
+          "timerTicks": 3
+        },
+        {
+          "wallUs": 6236,
+          "maxEventLoopGapUs": 3039,
+          "timerTicks": 2
+        },
+        {
+          "wallUs": 22000,
+          "maxEventLoopGapUs": 8214,
+          "timerTicks": 7
+        },
+        {
+          "wallUs": 9162,
+          "maxEventLoopGapUs": 2758,
+          "timerTicks": 4
+        },
+        {
+          "wallUs": 9851,
+          "maxEventLoopGapUs": 2331,
+          "timerTicks": 4
+        }
+      ]
+    },
+    {
+      "catalogCount": 1000,
+      "historyAndFavoritesCount": 100,
+      "fileName": "catalog-cache.json",
+      "fileBytes": 2629194,
+      "currentIsolateControl": [
+        {
+          "wallUs": 50095,
+          "maxEventLoopGapUs": 44213,
+          "timerTicks": 1
+        },
+        {
+          "wallUs": 46385,
+          "maxEventLoopGapUs": 39342,
+          "timerTicks": 1
+        },
+        {
+          "wallUs": 51599,
+          "maxEventLoopGapUs": 46807,
+          "timerTicks": 1
+        },
+        {
+          "wallUs": 45169,
+          "maxEventLoopGapUs": 40359,
+          "timerTicks": 1
+        },
+        {
+          "wallUs": 47803,
+          "maxEventLoopGapUs": 42916,
+          "timerTicks": 1
+        }
+      ],
+      "backgroundFileStorage": [
+        {
+          "wallUs": 79106,
+          "maxEventLoopGapUs": 12961,
+          "timerTicks": 29
+        },
+        {
+          "wallUs": 42628,
+          "maxEventLoopGapUs": 3660,
+          "timerTicks": 20
+        },
+        {
+          "wallUs": 71568,
+          "maxEventLoopGapUs": 5100,
+          "timerTicks": 34
+        },
+        {
+          "wallUs": 46953,
+          "maxEventLoopGapUs": 7675,
+          "timerTicks": 21
+        },
+        {
+          "wallUs": 72132,
+          "maxEventLoopGapUs": 5199,
+          "timerTicks": 34
+        }
+      ]
+    },
+    {
+      "catalogCount": 10000,
+      "historyAndFavoritesCount": 100,
+      "fileName": "records.json",
+      "fileBytes": 263779,
+      "currentIsolateControl": [
+        {
+          "wallUs": 4889,
+          "maxEventLoopGapUs": 4889,
+          "timerTicks": 0
+        },
+        {
+          "wallUs": 4870,
+          "maxEventLoopGapUs": 4870,
+          "timerTicks": 0
+        },
+        {
+          "wallUs": 5082,
+          "maxEventLoopGapUs": 5082,
+          "timerTicks": 0
+        },
+        {
+          "wallUs": 5046,
+          "maxEventLoopGapUs": 5046,
+          "timerTicks": 0
+        },
+        {
+          "wallUs": 6491,
+          "maxEventLoopGapUs": 3624,
+          "timerTicks": 1
+        }
+      ],
+      "backgroundFileStorage": [
+        {
+          "wallUs": 6161,
+          "maxEventLoopGapUs": 2739,
+          "timerTicks": 2
+        },
+        {
+          "wallUs": 7955,
+          "maxEventLoopGapUs": 4579,
+          "timerTicks": 3
+        },
+        {
+          "wallUs": 5423,
+          "maxEventLoopGapUs": 3147,
+          "timerTicks": 2
+        },
+        {
+          "wallUs": 5531,
+          "maxEventLoopGapUs": 2622,
+          "timerTicks": 2
+        },
+        {
+          "wallUs": 5378,
+          "maxEventLoopGapUs": 3192,
+          "timerTicks": 2
+        }
+      ]
+    },
+    {
+      "catalogCount": 10000,
+      "historyAndFavoritesCount": 100,
+      "fileName": "catalog-cache.json",
+      "fileBytes": 24803396,
+      "currentIsolateControl": [
+        {
+          "wallUs": 364397,
+          "maxEventLoopGapUs": 329676,
+          "timerTicks": 7
+        },
+        {
+          "wallUs": 469087,
+          "maxEventLoopGapUs": 433231,
+          "timerTicks": 5
+        },
+        {
+          "wallUs": 564894,
+          "maxEventLoopGapUs": 449278,
+          "timerTicks": 15
+        },
+        {
+          "wallUs": 516335,
+          "maxEventLoopGapUs": 455792,
+          "timerTicks": 6
+        },
+        {
+          "wallUs": 448623,
+          "maxEventLoopGapUs": 393710,
+          "timerTicks": 9
+        }
+      ],
+      "backgroundFileStorage": [
+        {
+          "wallUs": 666409,
+          "maxEventLoopGapUs": 43033,
+          "timerTicks": 272
+        },
+        {
+          "wallUs": 511764,
+          "maxEventLoopGapUs": 31294,
+          "timerTicks": 230
+        },
+        {
+          "wallUs": 561077,
+          "maxEventLoopGapUs": 39392,
+          "timerTicks": 224
+        },
+        {
+          "wallUs": 433007,
+          "maxEventLoopGapUs": 25940,
+          "timerTicks": 186
+        },
+        {
+          "wallUs": 664367,
+          "maxEventLoopGapUs": 31248,
+          "timerTicks": 278
+        }
+      ]
+    }
+  ],
+  "provenance": {
+    "baseCommit": "dd0fb020f6892b10ab60261fdd8dc5d142f07048",
+    "runtimeChange": "FileStorage delegates file/UTF-8/JSON reading to a temporary isolate using only the file path",
+    "flutter": "3.47.4",
+    "command": "GUOGUO_PERF_OUTPUT=/tmp/guoguo-background-storage-read.json flutter test --no-pub --concurrency=1 test/performance_baseline_test.dart --plain-name 'synthetic file read responsiveness baseline' --reporter expanded"
+  }
+}

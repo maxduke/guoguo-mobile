@@ -80,6 +80,29 @@ GUOGUO_PERF_OUTPUT=build/performance/cache-burst.json \
 
 `cache_write_queue_test` 另外覆盖 IO 期间的请求合并、等待到各自提交、输入快照隔离、清理/测量顺序、捕获和原子写入失败、导入回滚、独立记录保存、关闭后完成及普通文件的逐次顺序；`library_projection_test` 保护复用和失效语义。
 
+## 0.19.3：后台读取本地 JSON
+
+2026-10-10，基于 0.19.2（`dd0fb02`）及 FileStorage 后台读取改动，沿用同一主机、SDK 和合成资料。一次预热、五次采样，交替调用旧的界面线程读取逻辑与实际后台 FileStorage，读取相同文件。每次操作用 2 ms 周期定时器记录当前 isolate 的最长回调间隔，计入完成前尚未触发定时器的尾段；结果是主机事件循环响应性样本，不能推断手机帧耗时。原始环境及全部样本见 [读取测量](performance/storage-read.json)。
+
+```bash
+GUOGUO_PERF_OUTPUT=build/performance/storage-read.json \
+  flutter test --no-pub --concurrency=1 --reporter=expanded \
+  test/performance_baseline_test.dart \
+  --plain-name 'synthetic file read responsiveness baseline'
+```
+
+以下为中位数，单位 ms，只测文件/UTF-8/JSON 读取，排除业务对象恢复、界面构建和网络。
+
+| 目录数量 | 缓存 bytes | 旧读取总耗时 | 后台读取总耗时 | 旧最长回调间隔 | 后台最长回调间隔 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 100 | 417,172 | 14.2 | 15.7 | 12.2 | 3.1 |
+| 1,000 | 2,629,194 | 47.8 | 71.6 | 42.9 | 5.2 |
+| 10,000 | 24,803,396 | 469.1 | 561.1 | 433.2 | 31.3 |
+
+后台读取减少大文件解码占用当前 isolate 的时间，总耗时在这组样本中增加，未承诺更快完成启动。固定 100 条收藏/历史的记录文件约 258 KiB，全部记录样本也保留在原始报告中；小文件承担一次 isolate 启动的额外成本。后台运行也可能受调度和 GC 影响，不能承诺零暂停。
+
+改动仅在 FileStorage 使用已有 dart:isolate：把路径交给临时 isolate，在其中读取并解码，以 Isolate.run 返回文档，不捕获存储实例、队列或回调。记录、缓存和下载清单的调用与格式保持原样；读取继续只读取已提交文件，未完成的写入仍按原队列提交。记录损坏报错并保留文件，缓存损坏降级，缺文件返回 null。业务对象验证和安装仍在原 isolate；后续依照真机结果决定是否继续处理该部分成本。此做法符合 [Flutter 后台解析指导](https://docs.flutter.dev/cookbook/networking/background-parsing)及 [Isolate.run 的传值约束](https://api.dart.dev/dart-isolate/Isolate/run.html)。
+
 ## 当前取舍
 
 | 决策 | 结论与依据 |

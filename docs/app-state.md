@@ -39,6 +39,8 @@ LibraryPage 在本页 State 内复用分类集合和筛选/排序结果，输入
 
 记录与可重建缓存拥有独立文件和写队列；缓存、网络请求不占用记录事务。StorePersistence 保留最小写入接口。备份 v2、交换格式和全新安装范围见产品规格。
 
+FileStorage 读取只把文件路径传给一次性的 Isolate.run，文件读取、UTF-8 转换和 JSON 解析都在后台完成；不传存储对象、编码回调或队列 Future。读取返回已提交文档，不等待未完成写入；缺文件返回 null，读取/格式错误仍向调用方传播，记录与缓存保留各自恢复策略。业务对象校验和状态安装仍由原调用方完成。
+
 AppFileStorage 只合并尚未开始的目录缓存写入，AppStore 在写入到达文件队列时才取得最新快照并脱离可变输入。已经开始的写入不被替换；等待中的多个调用共同等待覆盖它们的最新快照落盘，失败共同报告，后续仍可重试。直接传 Map 的写入继续在调用时脱离输入。缓存清理和容量测量关闭此前的合并批次，后续保存排在操作之后；普通 FileStorage、记录事务及下载清单保持逐次写入。没有定时 debounce 或后台未等待的保存，关闭后已接受的保存仍可完成。
 
 异步续播、下载播放、弹窗、文件操作固定当前对象与代次。标签/来源切换、依赖替换、页面退出或覆盖使旧意图失效，返回也不复活旧跳转。DownloadsPage 自己处理路由覆盖取消，Home 只传所选标签状态，自己的筛选弹窗返回仍能应用筛选。分享准备后重新取得当前窗口锚点并检查当前路由。
@@ -60,6 +62,8 @@ PlayerPage 协调界面和原生事件，手势、控件、弹层各有独立归
 
 空间统计在清单载入后执行，并按实际可测范围报告未知值；进度事件不扫描磁盘。清理遵守记录/缓存边界和活跃媒体资源归属，不扫父目录、不删除用户记录。容量和设备性能限制见 [基线](performance-baseline.md)。
 
+下载整理验证输出存在且非空后才标记 ready；此后的清单保存或临时文件清理失败不再写入媒体失败字段，已验证视频保留可播放状态。清单失败继续由独立告警报告，保留原文件和逐次保存队列。带文件校验的下拉刷新、前台恢复会重试未成功保存的清单，进度事件的 reload(verifyFiles: false) 不循环重试。刷新意图在已有 reload 执行期间入队，也会在本轮结束时重试保存；磁盘仍不可写时保留告警，缺失/空文件和实际整理错误仍是可重试媒体失败。
+
 ## 回归入口
 
 - `record_transactions_test`、`partitioned_store_test`、`scoped_store_test`：提交、分区与通知。
@@ -68,6 +72,7 @@ PlayerPage 协调界面和原生事件，手势、控件、弹层各有独立归
 - `catalog_result_errors_test`、`source_failure_feedback_test`、`source_diagnostics_test`：缓存保存失败与加载结果分离、固定提示、请求与校验结果及统计关联。
 - `catalog_search_state_test`、`download_page_state_test`、`adaptive_layout_test`：拥有者、退出、覆盖和窗口保留。
 - `download_recovery_test`：签名刷新、无效计划、完成文件与原任务保护。
+- `download_finalization_test`：完成视频与清单保存错误分离、短暂/持续写入失败、手动刷新与进度并发接管及缺失/空输出保护。
 - `playback_session_test`、`playback_progress_test`、`playback_coordination_test`、`player_cast_handoff_test`：媒体、生命周期、进度和交接。
 
 设备验证另见 [清单](ios-device-checklist.md)，自动化不代替实际设备结果。

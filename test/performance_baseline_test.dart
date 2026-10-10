@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -125,6 +127,40 @@ Future<Map<String, dynamic>> _async(Future<void> Function() operation) async {
   return _summary(values, 1);
 }
 
+Future<Map<String, int>> _readWithHeartbeat(
+  Future<void> Function() operation,
+) async {
+  final clock = Stopwatch()..start();
+  var previous = 0, longestGap = 0, ticks = 0;
+  final timer = Timer.periodic(const Duration(milliseconds: 2), (_) {
+    final now = clock.elapsedMicroseconds;
+    longestGap = max(longestGap, now - previous);
+    previous = now;
+    ticks++;
+  });
+  try {
+    await operation();
+    clock.stop();
+    // Include the tail even if decoding returns before a delayed timer fires.
+    longestGap = max(longestGap, clock.elapsedMicroseconds - previous);
+    return {
+      'wallUs': clock.elapsedMicroseconds,
+      'maxEventLoopGapUs': longestGap,
+      'timerTicks': ticks,
+    };
+  } finally {
+    timer.cancel();
+  }
+}
+
+// Reproduce the pre-0.19.3 reader as an interleaved control using identical bytes.
+Future<Map<String, dynamic>?> _readOnCurrentIsolate(File file) async {
+  if (!await file.exists()) return null;
+  return Map<String, dynamic>.from(
+    jsonDecode(await file.readAsString()) as Map,
+  );
+}
+
 Future<void> _write(String path) async {
   final file = File(path);
   await file.parent.create(recursive: true);
@@ -134,6 +170,85 @@ Future<void> _write(String path) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final output = Platform.environment['GUOGUO_PERF_OUTPUT'];
+  test(
+    'synthetic file read responsiveness baseline',
+    () async {
+      _report['readEnvironment'] = {
+        'os': Platform.operatingSystemVersion,
+        'dart': Platform.version,
+        'debug': kDebugMode,
+        'logicalProcessors': Platform.numberOfProcessors,
+        'measuredAt': DateTime.now().toUtc().toIso8601String(),
+        'samples': _samples,
+        'warmups': 1,
+        'timerPeriodMs': 2,
+        'scope':
+            'Synthetic debug host, warm OS cache; file/UTF-8/JSON read only. '
+            'Event-loop timer intervals are not device frames. '
+            'Excludes business object restoration, UI and network.',
+      };
+      final reads = <Map<String, dynamic>>[];
+      for (final count in [100, 1000, 10000]) {
+        final root = await Directory.systemTemp.createTemp('guoguo-read-perf-');
+        try {
+          await AppFileStorage(root).write(_fixture(count, 100));
+          for (final fileName in ['records.json', 'catalog-cache.json']) {
+            final file = File('${root.path}/$fileName');
+            final storage = FileStorage(root, fileName: fileName);
+            final samples = <String, List<Map<String, int>>>{
+              'currentIsolateControl': [],
+              'backgroundFileStorage': [],
+            };
+            final readers = <String, Future<Map<String, dynamic>?> Function()>{
+              'currentIsolateControl': () => _readOnCurrentIsolate(file),
+              'backgroundFileStorage': storage.read,
+            };
+            for (var sample = -1; sample < _samples; sample++) {
+              final order = sample.isEven
+                  ? readers.keys
+                  : readers.keys.toList().reversed;
+              for (final name in order) {
+                Map<String, dynamic>? value;
+                final measured = await _readWithHeartbeat(() async {
+                  value = await readers[name]!();
+                });
+                // Validate returned contents outside the measured interval.
+                if (fileName == 'records.json') {
+                  expect(
+                    (value!['records'] as Map)['favorites'],
+                    hasLength(100),
+                  );
+                } else {
+                  expect(value!['format'], 'guoguo.catalog-cache');
+                  final cache = value!['cache'] as Map;
+                  expect(
+                    (cache['catalogs'] as Map)['hongguo'],
+                    hasLength(count),
+                  );
+                }
+                if (sample >= 0) samples[name]!.add(measured);
+              }
+            }
+            reads.add({
+              'catalogCount': count,
+              'historyAndFavoritesCount': 100,
+              'fileName': fileName,
+              'fileBytes': await file.length(),
+              ...samples,
+            });
+            _report['storageReads'] = reads;
+            await _write(output!);
+          }
+        } finally {
+          await root.delete(recursive: true);
+        }
+      }
+    },
+    skip: output == null
+        ? 'Set GUOGUO_PERF_OUTPUT for host measurements'
+        : false,
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
   test(
     'synthetic catalog and partitioned disk baseline',
     () async {
