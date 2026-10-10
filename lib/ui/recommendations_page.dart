@@ -111,7 +111,7 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
         session = result.sessionId;
         hasMore = result.hasMore;
       });
-    } catch (_) {
+    } catch (failure) {
       if (mounted && request == generation) {
         setState(() {
           failedMore = more;
@@ -122,6 +122,9 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
               : more
               ? '更多推荐暂时无法加载，已保留现有内容'
               : '推荐刷新失败，已保留现有内容';
+          if (!requestStore.offline) {
+            error = providerFailureMessage(failure, error!);
+          }
         });
       }
     } finally {

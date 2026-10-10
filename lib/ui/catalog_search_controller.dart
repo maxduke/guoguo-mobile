@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 
 import '../data/catalog_store.dart';
 import '../domain/models.dart';
+import '../platform/provider_client.dart';
 
 /// Owns the transient search session; caching and persistence stay in the store.
 class CatalogSearchController extends ChangeNotifier {
@@ -188,13 +189,13 @@ class CatalogSearchController extends ChangeNotifier {
           : source == DramaSource.huangguo
           ? '在线检索范围：黄果 AI'
           : null;
-    } catch (_) {
+    } catch (error) {
       if (current()) {
         if (more) {
           _results = previous;
           _fromCache = previousFromCache;
         }
-        _error = '搜索暂时失败，请检查网络后重试';
+        _error = providerFailureMessage(error, '搜索暂时失败，请检查网络后重试');
       }
     } finally {
       if (_request == request) _request = null;

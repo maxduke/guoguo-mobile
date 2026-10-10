@@ -278,8 +278,10 @@ class CatalogStore extends ChangeNotifier {
       sourceCategories[target] = result;
       categoryErrors.remove(target);
       await _saveCache();
-    } catch (_) {
-      if (!_closed) categoryErrors[target] = '分类暂时无法加载，请重试';
+    } catch (error) {
+      if (!_closed) {
+        categoryErrors[target] = providerFailureMessage(error, '分类暂时无法加载，请重试');
+      }
     } finally {
       _loadingCategories.remove(target);
       notifyListeners();
@@ -332,14 +334,15 @@ class CatalogStore extends ChangeNotifier {
       slice.error = result.warning.isEmpty ? null : result.warning;
       _mergeCatalog(target, rows);
       await _saveCache();
-    } catch (_) {
+    } catch (error) {
       if (!_closed) {
         slice.retryMore = more;
-        slice.error = more
+        final message = more
             ? '更多短剧加载失败，请重试'
             : slice.items.isEmpty
             ? '剧库暂时无法加载，请稍后重试'
             : '剧库更新失败，已保留现有内容';
+        slice.error = providerFailureMessage(error, message);
       }
     } finally {
       slice.loading = false;
@@ -501,14 +504,15 @@ class CatalogStore extends ChangeNotifier {
       hasMore[target] = response.hasMore;
       if (response.warning.isNotEmpty) sourceErrors[target] = response.warning;
       await _saveCache();
-    } catch (_) {
+    } catch (error) {
       if (!_closed) {
         _retryCatalogMore[target] = more;
-        sourceErrors[target] = more
+        final message = more
             ? '更多短剧加载失败，请重试'
             : (catalogs[target] ?? []).isEmpty
             ? '剧库暂时无法加载，请稍后重试'
             : '剧库更新失败，已保留现有内容';
+        sourceErrors[target] = providerFailureMessage(error, message);
       }
     } finally {
       loadingSources.remove(target);
@@ -921,12 +925,12 @@ class CatalogStore extends ChangeNotifier {
       await records.updateDrama(updated);
       _detailChecked[drama.key] = now();
       detailErrors.remove(drama.key);
-      await _persistence.persist(records: false);
+      await _saveCache();
       notifyListeners();
       return updated;
     } catch (error) {
       _detailChecked[drama.key] = now();
-      detailErrors[drama.key] = '资料暂未更新，已保留现有内容';
+      detailErrors[drama.key] = providerFailureMessage(error, '资料暂未更新，已保留现有内容');
       notifyListeners();
       return currentDrama(drama);
     }
@@ -990,17 +994,19 @@ class CatalogStore extends ChangeNotifier {
   ) async {
     try {
       final rows = await provider.chapters(drama);
-      if (rows.isEmpty) throw const ProviderException('暂未找到可播放分集');
       final unique = {for (final row in rows) row.id: row}.values.toList();
       episodeCache[drama.key] = unique;
       episodeUpdatedAt[drama.key] = now();
       episodeErrors.remove(drama.key);
       await records.episodesUpdated(drama, cached ?? unique);
-      await _persistence.persist(records: false);
+      await _saveCache();
       notifyListeners();
       return unique;
-    } catch (_) {
-      episodeErrors[drama.key] = '分集更新失败，保留上次缓存';
+    } catch (error) {
+      episodeErrors[drama.key] = providerFailureMessage(
+        error,
+        cached != null && cached.isNotEmpty ? '暂未更新成功，正在显示缓存分集' : '请检查网络后重试',
+      );
       notifyListeners();
       rethrow;
     }

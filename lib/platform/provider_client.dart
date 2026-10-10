@@ -13,6 +13,17 @@ abstract interface class ProviderClient {
   ]);
 }
 
+// Optional observation at the same decoding boundary used by typed operations.
+// Ordinary clients and native request arguments keep their existing contract.
+abstract interface class DecodingProviderClient implements ProviderClient {
+  Future<T> callDecoded<T>(
+    String method,
+    Map<String, dynamic> arguments,
+    T Function(Map<String, dynamic>) decode, {
+    DramaSource? source,
+  });
+}
+
 class NativeProviderClient implements ProviderClient {
   // Covers and app operations use the same native core and readiness gate.
   static final shared = NativeProviderClient();
@@ -163,15 +174,51 @@ class ProviderException implements Exception {
   String toString() => message;
 }
 
+String? providerFailureHint(Object error) {
+  if (error is FormatException || error is TypeError) {
+    return '站源返回内容无法处理，请稍后重试或切换站源';
+  }
+  if (error is! ProviderException) return null;
+  // Prefer the core's fixed failure code. Older cores retain their safe hint.
+  return switch (error.diagnostic?['failure']) {
+    'dns' => '站点域名解析异常，可尝试切换网络后重试',
+    'timeout' => '站点连接超时，请稍后重试',
+    'verification' => '站点要求浏览器验证，暂时无法加载',
+    'backoff' => '站点暂时限制请求，请稍后重试',
+    'connection' => '站点连接中断，可尝试切换网络后重试',
+    'http' => '站点返回错误状态，请稍后重试或切换站源',
+    _ => error.failureHint,
+  };
+}
+
+String providerFailureMessage(Object error, String fallback) {
+  final hint = providerFailureHint(error);
+  return hint == null ? fallback : '$fallback\n$hint';
+}
+
 extension ProviderOperations on ProviderClient {
-  Future<List<SourceCategory>> categories(DramaSource source) async {
-    final result = await call('categories', {'source': source.name});
-    return List.unmodifiable(
+  Future<T> _read<T>(
+    String method,
+    Map<String, dynamic> arguments,
+    T Function(Map<String, dynamic>) decode, {
+    DramaSource? source,
+  }) async {
+    final client = this;
+    if (client is DecodingProviderClient) {
+      return client.callDecoded(method, arguments, decode, source: source);
+    }
+    return decode(await call(method, arguments));
+  }
+
+  Future<List<SourceCategory>> categories(DramaSource source) => _read(
+    'categories',
+    {'source': source.name},
+    (result) => List.unmodifiable(
       (result['items'] as List).map(
         (raw) => SourceCategory.fromJson(raw as Map),
       ),
-    );
-  }
+    ),
+  );
 
   Future<CatalogPage> catalogPage(
     DramaSource source, {
@@ -179,16 +226,13 @@ extension ProviderOperations on ProviderClient {
     int? page,
     String? requestId,
     bool background = false,
-  }) async => CatalogPage.fromJson(
-    await call('catalog', {
-      'source': source.name,
-      'category': ?category,
-      'page': ?page,
-      'requestId': ?requestId,
-      if (background) 'background': true,
-    }),
-    source,
-  );
+  }) => _read('catalog', {
+    'source': source.name,
+    'category': ?category,
+    'page': ?page,
+    'requestId': ?requestId,
+    if (background) 'background': true,
+  }, (result) => CatalogPage.fromJson(result, source));
 
   Future<void> cancelCatalog(
     DramaSource source,
@@ -210,16 +254,13 @@ extension ProviderOperations on ProviderClient {
     int page = 1,
     required String requestId,
     String? continuation,
-  }) async => CatalogSearchResult.fromJson(
-    await call('search', {
-      'source': source.name,
-      'query': query,
-      'page': page,
-      'requestId': requestId,
-      'continuation': ?continuation,
-    }),
-    source,
-  );
+  }) => _read('search', {
+    'source': source.name,
+    'query': query,
+    'page': page,
+    'requestId': requestId,
+    'continuation': ?continuation,
+  }, (result) => CatalogSearchResult.fromJson(result, source));
 
   Future<CatalogSearchResult?> searchProgress(
     DramaSource source,
@@ -251,26 +292,24 @@ extension ProviderOperations on ProviderClient {
     });
   }
 
-  Future<List<String>> suggestions(String query) async {
-    final result = await call('suggestions', {
-      'source': DramaSource.hongguo.name,
-      'query': query,
-    });
-    return List.unmodifiable(
+  Future<List<String>> suggestions(String query) => _read(
+    'suggestions',
+    {'source': DramaSource.hongguo.name, 'query': query},
+    (result) => List.unmodifiable(
       (result['items'] as List? ?? []).map(
         (raw) => (raw as Map)['name'] as String,
       ),
-    );
-  }
+    ),
+  );
 
-  Future<Drama> dramaDetail(Drama drama) async {
-    final result = await call('detail', {'id': drama.id});
-    final patch = Drama.fromJson(
-      Map<String, dynamic>.from(result['item'] as Map),
-    );
-    if (patch.key != drama.key) throw const FormatException('剧集资料不匹配');
-    return patch;
-  }
+  Future<Drama> dramaDetail(Drama drama) =>
+      _read('detail', {'id': drama.id}, (result) {
+        final patch = Drama.fromJson(
+          Map<String, dynamic>.from(result['item'] as Map),
+        );
+        if (patch.key != drama.key) throw const FormatException('剧集资料不匹配');
+        return patch;
+      }, source: drama.source);
 
   Future<DownloadPlan> downloadPlan(Drama drama, Episode episode) async {
     final plan = DownloadPlan.fromJson(
@@ -280,25 +319,31 @@ extension ProviderOperations on ProviderClient {
     return plan;
   }
 
-  Future<List<DiscoveryBoard>> discoveryBoards(DramaSource source) async {
-    final result = await call('boards', {'source': source.name});
-    return List.unmodifiable(
+  Future<List<DiscoveryBoard>> discoveryBoards(DramaSource source) => _read(
+    'boards',
+    {'source': source.name},
+    (result) => List.unmodifiable(
       (result['items'] as List).map(
         (raw) => DiscoveryBoard.fromJson(raw as Map, source),
       ),
-    );
-  }
+    ),
+  );
 
   Future<DiscoveryColumnResult> discoveryColumn(
     DramaSource source,
     String board, {
     int page = 1,
     bool refresh = false,
-  }) async => DiscoveryColumnResult.fromJson(
-    await call('ranking', {'board': board, 'page': page, 'refresh': refresh}),
-    source,
-    board: board,
-    page: page,
+  }) => _read(
+    'ranking',
+    {'board': board, 'page': page, 'refresh': refresh},
+    (result) => DiscoveryColumnResult.fromJson(
+      result,
+      source,
+      board: board,
+      page: page,
+    ),
+    source: source,
   );
 
   Future<RecommendationBatch> recommendations(
@@ -306,25 +351,29 @@ extension ProviderOperations on ProviderClient {
     int offset = 0,
     String sessionId = '',
     List<String> seen = const [],
-  }) async => RecommendationBatch.fromJson(
-    await call('recommendations', {
-      'recommendation': {
-        'genre': genre.id,
-        'offset': offset,
-        'sessionId': sessionId,
-        'seen': seen,
-      },
-    }),
-  );
+  }) => _read('recommendations', {
+    'recommendation': {
+      'genre': genre.id,
+      'offset': offset,
+      'sessionId': sessionId,
+      'seen': seen,
+    },
+  }, RecommendationBatch.fromJson);
 
-  Future<List<Episode>> chapters(Drama drama) async {
-    final result = await call('chapters', {'id': drama.id});
-    final rows = result['chapters'] as List? ?? [];
-    return List.unmodifiable([
-      for (var i = 0; i < rows.length; i++)
-        Episode.fromJson(Map<String, dynamic>.from(rows[i] as Map), i),
-    ]);
-  }
+  Future<List<Episode>> chapters(Drama drama) =>
+      _read('chapters', {'id': drama.id}, (result) {
+        final rows = result['chapters'] as List? ?? [];
+        if (rows.isEmpty) {
+          throw const ProviderException(
+            '暂未找到可播放分集',
+            failureHint: '站点暂未提供可播放分集，可稍后重试或切换站源',
+          );
+        }
+        return List.unmodifiable([
+          for (var i = 0; i < rows.length; i++)
+            Episode.fromJson(Map<String, dynamic>.from(rows[i] as Map), i),
+        ]);
+      }, source: drama.source);
 
   Future<ResolvedMedia> resolve(
     Drama drama,

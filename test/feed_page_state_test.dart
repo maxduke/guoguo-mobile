@@ -227,6 +227,30 @@ void _expectFirstPage(_Fixture fixture) {
 }
 
 void main() {
+  for (final feed in _Feed.values) {
+    testWidgets(
+      '${feed.name} shows fixed verification guidance and retains cached rows',
+      (tester) async {
+        final fixture = await _mount(
+          tester,
+          feed,
+          seed: (store) => _seedColumn(feed, store),
+        );
+        fixture.latest.result.completeError(
+          const ProviderException(
+            'secret https://private.test/?secret=1',
+            diagnostic: {'failure': 'verification'},
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(_ids(tester), ['cached-2', 'cached-1']);
+        expect(find.textContaining('站点要求浏览器验证'), findsOneWidget);
+        expect(find.textContaining('secret'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets('cold Huangguo ranking retry calls the core after each failure', (
     tester,
   ) async {

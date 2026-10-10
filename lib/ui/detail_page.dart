@@ -224,6 +224,7 @@ class _DetailPageState extends State<DetailPage> {
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: Listenable.merge([
+        widget.store,
         widget.store.catalog,
         widget.store.records,
         widget.store.records.progress,
@@ -454,6 +455,16 @@ class _DetailPageState extends State<DetailPage> {
             widget.store.catalog.detailErrors[drama.key]!,
             style: const TextStyle(fontSize: 12),
           ),
+        if (widget.store.persistenceError != null)
+          Text(
+            widget.store.persistenceError!,
+            style: const TextStyle(fontSize: 12),
+          ),
+        if (widget.store.cachePersistenceError != null)
+          Text(
+            widget.store.cachePersistenceError!,
+            style: const TextStyle(fontSize: 12),
+          ),
         const SizedBox(height: 20),
       ],
     );
@@ -491,7 +502,9 @@ class _DetailPageState extends State<DetailPage> {
           builder: (context, _) => EmptyState(
             icon: Icons.cloud_off_outlined,
             title: '分集暂时没加载出来',
-            message: widget.store.offline ? '当前离线，联网后可重新加载分集' : '请检查网络后重试',
+            message: widget.store.offline
+                ? '当前离线，联网后可重新加载分集'
+                : widget.store.catalog.episodeErrors[drama.key] ?? '请检查网络后重试',
             action: FilledButton(
               onPressed: () => _loadEpisodes(refresh: true),
               child: const Text('重新加载'),
@@ -516,7 +529,10 @@ class _DetailPageState extends State<DetailPage> {
         if (!_loading &&
             (_episodeFailed ||
                 widget.store.catalog.episodeErrors[drama.key] != null))
-          const Text('暂未更新成功，正在显示缓存分集', style: TextStyle(fontSize: 12)),
+          Text(
+            widget.store.catalog.episodeErrors[drama.key] ?? '暂未更新成功，正在显示缓存分集',
+            style: const TextStyle(fontSize: 12),
+          ),
         Wrap(
           spacing: 12,
           crossAxisAlignment: WrapCrossAlignment.center,

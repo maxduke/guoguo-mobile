@@ -275,7 +275,7 @@ Future<void> perform(
     if (context.mounted) {
       final message = switch (error) {
         UserInputException() => error.message,
-        ProviderException() => error.userMessage,
+        ProviderException() => providerFailureMessage(error, error.userMessage),
         _ => failureMessage,
       };
       ScaffoldMessenger.of(

@@ -3,7 +3,7 @@ import '../domain/models.dart';
 import '../domain/source_diagnostic.dart';
 import 'provider_client.dart';
 
-class ObservedProviderClient implements ProviderClient {
+class ObservedProviderClient implements DecodingProviderClient {
   ObservedProviderClient(this.delegate, this.diagnostics);
   final ProviderClient delegate;
   final SourceDiagnostics diagnostics;
@@ -27,22 +27,50 @@ class ObservedProviderClient implements ProviderClient {
   Future<Map<String, dynamic>> call(
     String method, [
     Map<String, dynamic> arguments = const {},
-  ]) async {
+  ]) => _observe(method, arguments, (result) => result);
+
+  @override
+  Future<T> callDecoded<T>(
+    String method,
+    Map<String, dynamic> arguments,
+    T Function(Map<String, dynamic>) decode, {
+    DramaSource? source,
+  }) => _observe(method, arguments, decode, source: source, validate: true);
+
+  Future<T> _observe<T>(
+    String method,
+    Map<String, dynamic> arguments,
+    T Function(Map<String, dynamic>) decode, {
+    DramaSource? source,
+    bool validate = false,
+  }) async {
     if (!SourceDiagnostic.methods.contains(method)) {
-      return delegate.call(method, arguments);
+      return decode(await delegate.call(method, arguments));
     }
     final started = diagnostics.now(), watch = Stopwatch()..start();
     Map<String, dynamic>? result;
-    Object? failure;
+    Object? requestFailure;
+    bool? valid;
     try {
-      result = await delegate.call(method, arguments);
-      return result;
-    } catch (error) {
-      failure = error;
-      rethrow;
+      try {
+        result = await delegate.call(method, arguments);
+      } catch (error) {
+        requestFailure = error;
+        rethrow;
+      }
+      // The exact parser used by callers runs once, inside the observation.
+      // A parser failure preserves the successful core request's counters.
+      try {
+        final decoded = decode(result);
+        if (validate) valid = true;
+        return decoded;
+      } catch (_) {
+        if (validate) valid = false;
+        rethrow;
+      }
     } finally {
-      final native = failure is ProviderException
-          ? failure.diagnostic
+      final native = requestFailure is ProviderException
+          ? requestFailure.diagnostic
           : result?['_diagnostic'];
       SourceDiagnostic? sample;
       if (native is Map) {
@@ -52,27 +80,28 @@ class ObservedProviderClient implements ProviderClient {
           // Diagnostics must never turn an available response into a failure.
         }
       }
-      final source = sourceFor(method, arguments);
+      source ??= sourceFor(method, arguments);
       if (sample?.method != method ||
           (source != null && sample?.source != source)) {
         sample = null;
       }
+      if (sample == null && source != null) {
+        sample = SourceDiagnostic(
+          source: source,
+          method: method,
+          at: started,
+          elapsedMs: watch.elapsedMilliseconds,
+          page: arguments['page'] is int ? arguments['page'] as int : 1,
+          refresh: arguments['refresh'] == true,
+          background: arguments['background'] == true,
+          result: requestFailure == null ? 'success' : 'failed',
+          failure: requestFailure == null ? '' : 'other',
+          stage: requestFailure is FormatException ? 'response' : 'unknown',
+        );
+      }
       if (sample != null) {
-        diagnostics.add(sample);
-      } else if (source != null) {
         diagnostics.add(
-          SourceDiagnostic(
-            source: source,
-            method: method,
-            at: started,
-            elapsedMs: watch.elapsedMilliseconds,
-            page: arguments['page'] is int ? arguments['page'] as int : 1,
-            refresh: arguments['refresh'] == true,
-            background: arguments['background'] == true,
-            result: failure == null ? 'success' : 'failed',
-            failure: failure == null ? '' : 'other',
-            stage: failure is FormatException ? 'response' : 'unknown',
-          ),
+          valid == null ? sample : sample.withValidation(valid: valid),
         );
       }
     }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -41,6 +42,16 @@ class _Provider implements ProviderClient {
       requests.last.complete({'chapters': rows.map((e) => e.raw).toList()});
 }
 
+class _CacheFailure extends MemoryStorage implements PartitionedStorage {
+  @override
+  String? get cacheReadError => null;
+  @override
+  Future<void> writeRecords(Map<String, dynamic> value) => super.write(value);
+  @override
+  Future<void> writeCache(Map<String, dynamic> value) async =>
+      throw const FileSystemException('private disk path');
+}
+
 class _Downloads extends DownloadStore {
   _Downloads(super.store);
   final added = <(String, int)>[];
@@ -67,13 +78,17 @@ void main() {
   Future<(AppStore, _Downloads, _Provider, _Routes)> mount(
     WidgetTester tester, {
     bool cached = true,
+    LocalStorage? storage,
   }) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final provider = _Provider();
-    final store = AppStore(storage: MemoryStorage(), provider: provider);
+    final store = AppStore(
+      storage: storage ?? MemoryStorage(),
+      provider: provider,
+    );
     if (cached) {
       store.catalog.episodeCache[_drama.key] = _rows();
       store.catalog.episodeUpdatedAt[_drama.key] = store.now();
@@ -98,6 +113,56 @@ void main() {
   }
 
   Finder getPrimary() => find.byKey(const ValueKey('detail-primary-play'));
+
+  testWidgets(
+    'successful chapters remain playable while cache save has its own notice',
+    (tester) async {
+      final (store, _, provider, _) = await mount(
+        tester,
+        cached: false,
+        storage: _CacheFailure(),
+      );
+      provider.complete(_rows());
+      await tester.pumpAndSettle();
+      expect(tester.widget<FilledButton>(getPrimary()).onPressed, isNotNull);
+      expect(tester.widget<IconButton>(_icon('选择下载分集')).onPressed, isNotNull);
+      expect(find.text('共 3 集'), findsOneWidget);
+      expect(find.text(store.cachePersistenceError!), findsOneWidget);
+      expect(find.text('分集暂时没加载出来'), findsNothing);
+      expect(find.text('暂未更新成功，正在显示缓存分集'), findsNothing);
+      expect(find.textContaining('private'), findsNothing);
+      expect(store.catalog.detailErrors, isEmpty);
+      expect(store.catalog.episodeErrors, isEmpty);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  for (final cached in [false, true]) {
+    testWidgets('episode failure displays safe DNS guidance cached=$cached', (
+      tester,
+    ) async {
+      final (_, _, provider, _) = await mount(tester, cached: cached);
+      if (cached) {
+        await tester.tap(_icon('刷新分集'));
+        await tester.pump();
+      }
+      provider.requests.last.completeError(
+        const ProviderException(
+          'https://secret.test/?private=secret',
+          diagnostic: {'failure': 'dns'},
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('站点域名解析异常'), findsOneWidget);
+      expect(find.textContaining('secret'), findsNothing);
+      expect(
+        tester.widget<FilledButton>(getPrimary()).onPressed,
+        cached ? isNotNull : isNull,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
 
   testWidgets(
     'initial failure has fixed guidance and one retry restores all actions',

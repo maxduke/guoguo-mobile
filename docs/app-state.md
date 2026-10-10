@@ -19,7 +19,9 @@
 
 ## 站源与查询边界
 
-现有 ProviderOperations 将目录、分类、推荐/榜单、搜索、详情、分集、播放及下载计划解析为明确类型。完整校验元数据和来源身份后再安装内容、推进游标或保存缓存；错误和缓存保存失败分开，不能因保存失败重复请求已安装的页。
+现有 ProviderOperations 将目录、分类、推荐/榜单、搜索、详情、分集、播放及下载计划解析为明确类型。完整校验元数据和来源身份后再安装内容、推进游标或保存缓存；错误和缓存保存失败分开，不能因保存失败重复请求已安装的页。详情和分集缓存保存失败同样保留有效内容，AppStore 单独报告保存异常，详情页直接展示该提示。
+
+ProviderClient 的 raw 请求契约保持原样；可选 DecodingProviderClient 让 ObservedProviderClient 覆盖现有类型解析边界，不重复请求或解析。API 诊断分别保留核心请求结果和内容校验结果，固定原因由共用提示函数呈现；不将异常原文用于反馈。
 
 解析后的标签、清晰度、章节列表与顶层 raw/headers 保持只读副本，避免延迟类型转换污染状态。Episode.raw 保留完整站源字段与凭据，真实集号与原始队列位置不混用。下载计划的安全名称、唯一资源、输入、URL、编码、headers 和 flags 在创建目录或取消旧任务前验证；恢复继续比较内容键、清单/密钥字节及完成资源身份。
 
@@ -58,6 +60,7 @@ PlayerPage 协调界面和原生事件，手势、控件、弹层各有独立归
 
 - `record_transactions_test`、`partitioned_store_test`、`scoped_store_test`：提交、分区与通知。
 - `provider_contract_test`、`catalog_retry_test`、`catalog_upgrade_test`：解析、身份、游标与查询语义。
+- `catalog_result_errors_test`、`source_failure_feedback_test`、`source_diagnostics_test`：缓存保存失败与加载结果分离、固定提示、请求与校验结果及统计关联。
 - `catalog_search_state_test`、`download_page_state_test`、`adaptive_layout_test`：拥有者、退出、覆盖和窗口保留。
 - `download_recovery_test`：签名刷新、无效计划、完成文件与原任务保护。
 - `playback_session_test`、`playback_progress_test`、`playback_coordination_test`、`player_cast_handoff_test`：媒体、生命周期、进度和交接。
