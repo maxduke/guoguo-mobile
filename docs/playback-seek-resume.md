@@ -18,7 +18,7 @@ Apple 建议通过完成回调顺序处理连续定位：[QA1820](https://develo
 
 边收边读，不等整个对象下载后才播放。已缓存的范围请求和 HEAD 复用 HTTP 内容语义；未缓存的范围、直播、密钥、整部 MP4、未知大小、超大对象、非正常编码、Vary、no-store 及不安全响应继续转发。加密媒体保持已有解密路径。某个读者取消不会中断其他读者；最后一个读者离开才取消未完成下载。
 
-普通非 PiP 锁屏暂停后只断开 AVPlayerLayer 的播放器引用，保留 AVPlayerItem 和会话。进入前台或用户播放时重新连接当前可见显示层，不重新解析地址、安装媒体或定位。已有实验 EVENT 媒体中断后的完整准备回退保持原策略。Apple 对前后台显示层和播放器分别管理的说明：[Media Playback Guide](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/MediaPlaybackGuide/Contents/Resources/en.lproj/RefiningTheUserExperience/RefiningTheUserExperience.html)。
+普通非 PiP 锁屏暂停后只断开 AVPlayerLayer 的播放器引用，保留 AVPlayerItem 和会话。进入前台或用户播放时重新连接当前可见显示层，不重新解析地址、安装媒体或定位。系统锁屏定位直接走同一原生协调器，不再发送让插件 Dart 重复定位的事件；回到前台时通过公开位置查询同步进度，并检查分集和定位身份。已有实验 EVENT 媒体中断后的完整准备回退保持原策略。Apple 对前后台显示层和播放器分别管理的说明：[Media Playback Guide](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/MediaPlaybackGuide/Contents/Resources/en.lproj/RefiningTheUserExperience/RefiningTheUserExperience.html)。
 
 ## 验证范围
 

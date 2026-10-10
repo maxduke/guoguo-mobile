@@ -409,11 +409,18 @@ void main() {
         await tester.pump(const Duration(seconds: 1));
         first.completeError(PlatformException(code: 'seek_cancelled'));
         await tester.pump();
+        // A system lock-screen seek can move a paused native item while the
+        // dependency's Dart progress timer is stopped.
+        platform.positionMs = 7000;
         tester.binding.handleAppLifecycleStateChanged(
           AppLifecycleState.resumed,
         );
         await tester.pumpAndSettle();
         expect(platform.sources.length, 1);
+        expect(
+          player.videoPlayerController!.value.position,
+          const Duration(seconds: 7),
+        );
         await tester.tap(find.byTooltip('播放'));
         await tester.pumpAndSettle();
         expect(platform.sources.length, 1);

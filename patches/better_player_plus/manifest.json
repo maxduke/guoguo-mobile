@@ -7,7 +7,7 @@
     },
     "ios/better_player_plus/Sources/better_player_plus/SwiftBetterPlayerPlugin.swift": {
       "original": "9c81f90afe2e28efaf651a9d78b5415c89e7f21ee1d31e4f0087067439525af6",
-      "patched": "4782d75d1b38343f508238e634b376d4bd51fdea07fed96b6da94c87059dce49"
+      "patched": "e476e8ce0e80252ec9bfe2452eaf807fcb2a40cf4a4e336d3093bfe83c8e44aa"
     }
   },
   "extraFiles": [

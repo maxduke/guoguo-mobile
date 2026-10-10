@@ -909,6 +909,47 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed && _airplay != null) {
       unawaited(_airplay!.refreshRoute().catchError((Object _) {}));
     }
+    if (state == AppLifecycleState.resumed) unawaited(_syncNativePosition());
+  }
+
+  Future<void> _syncNativePosition() async {
+    if (defaultTargetPlatform != TargetPlatform.iOS) return;
+    final item = _active;
+    final video = _player.videoPlayerController;
+    if (item == null ||
+        video == null ||
+        _loading ||
+        _seeking ||
+        _localBlocked ||
+        item.preparer.streaming) {
+      return;
+    }
+    final generation = _generation, serial = _seekSerial;
+    try {
+      final position = await video.position;
+      if (!mounted ||
+          position == null ||
+          position < Duration.zero ||
+          generation != _generation ||
+          serial != _seekSerial ||
+          !_foreground ||
+          _loading ||
+          _seeking ||
+          _localBlocked) {
+        return;
+      }
+      video.value = video.value.copyWith(position: position);
+      final duration = video.value.duration ?? Duration.zero;
+      if (_episodeCompleted &&
+          position < duration - const Duration(milliseconds: 300)) {
+        setState(() => _progress.completed = false);
+      }
+      _health.reset();
+      _save();
+    } catch (_) {
+      // A foreground transition must not reload a playable item because a
+      // single position query failed. Regular progress/recovery remains active.
+    }
   }
 
   Future<bool> _ensureCompatible({bool? play, Duration? position}) async {

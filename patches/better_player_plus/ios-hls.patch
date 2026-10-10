@@ -400,7 +400,7 @@
      }
  
      private func setupRemoteCommands(_ player: BetterPlayer) {
-@@ -97,24 +145,24 @@
+@@ -97,29 +145,31 @@
              commandCenter.changePlaybackPositionCommand.isEnabled = true
          }
  
@@ -429,7 +429,15 @@
                  guard let self = self, let player = self.notificationPlayer, let playbackEvent = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
                  let time = CMTimeMakeWithSeconds(playbackEvent.positionTime, preferredTimescale: 1)
                  let millis = BetterPlayerTimeUtils.cmTimeToMillis(time)
-@@ -127,6 +175,7 @@
++                // Sending a seek event makes the dependency seek a second time
++                // and restore a stale play snapshot. The native queue owns this
++                // operation; Flutter queries current position on foreground.
+                 player.seekTo(Int(millis))
+-                player.eventSink?(["event": "seek", "position": NSNumber(value: millis)])
+                 return .success
+             }
+         }
+@@ -127,6 +177,7 @@
      }
  
      private func setupRemoteCommandNotification(_ player: BetterPlayer, title: String?, author: String?, imageUrl: String?) {
@@ -437,7 +445,7 @@
          let positionSeconds = Double(player.position()) / 1000.0
          let durationSeconds = Double(player.duration()) / 1000.0
          var nowPlayingInfo: [String: Any] = [
-@@ -143,20 +192,29 @@
+@@ -143,20 +194,29 @@
                  nowPlayingInfo[MPMediaItemPropertyArtwork] = artwork
                  MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
              } else {
@@ -474,7 +482,7 @@
                  }
              }
          } else {
-@@ -170,8 +228,12 @@
+@@ -170,8 +230,12 @@
      }
  
      private func setupUpdateListener(_ player: BetterPlayer, title: String?, author: String?, imageUrl: String?) {
@@ -489,7 +497,7 @@
              self.setupRemoteCommandNotification(player, title: title, author: author, imageUrl: imageUrl)
          }
          let key = keyForPlayer(player)
-@@ -179,27 +241,29 @@
+@@ -179,27 +243,29 @@
      }
  
      private func disposeNotificationData(_ player: BetterPlayer) {
@@ -529,7 +537,7 @@
          for (_, player) in players {
              player.dispose()
              disposeNotificationData(player)
-@@ -213,6 +277,11 @@
+@@ -213,6 +279,11 @@
  }
  
  extension BetterPlayerPlugin {
@@ -541,7 +549,7 @@
      public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
          if call.method == "init" {
              disposeAllPlayers()
-@@ -222,6 +291,28 @@
+@@ -222,6 +293,28 @@
          if call.method == "create" {
              let player = BetterPlayer(frame: .zero)
              onPlayerSetup(player, result: result)
@@ -570,7 +578,7 @@
              return
          }
  
-@@ -244,6 +335,7 @@
+@@ -244,6 +337,7 @@
              let cacheKey = dataSource["cacheKey"] as? String
              let maxCacheSize = dataSource["maxCacheSize"] as? NSNumber
              let videoExtension = dataSource["videoExtension"] as? String
@@ -578,7 +586,7 @@
              let overriddenDuration = (dataSource["overriddenDuration"] as? NSNumber)?.intValue ?? 0
  
              let useCache = (dataSource["useCache"] as? NSNumber)?.boolValue ?? false
-@@ -258,7 +350,7 @@
+@@ -258,7 +352,7 @@
                  }
                  player.setDataSourceAsset(assetPath, key: key, certificateUrl: certificateUrl, licenseUrl: licenseUrl, cacheKey: cacheKey, cacheManager: cacheManager, overriddenDuration: overriddenDuration)
              } else if let uriArg = uriArg, let url = URL(string: uriArg) {
@@ -587,7 +595,7 @@
              } else {
                  result(FlutterMethodNotImplemented)
                  return
-@@ -273,7 +365,7 @@
+@@ -273,7 +367,7 @@
              setRemoteCommandsNotificationNotActive()
              players.removeValue(forKey: textureId)
              dataSourceDict.removeValue(forKey: textureId)
@@ -596,7 +604,7 @@
              result(nil)
          case "setLooping":
              if let looping = (argsMap["looping"] as? NSNumber)?.boolValue { player.isLooping = looping }
-@@ -282,6 +374,15 @@
+@@ -282,6 +376,15 @@
              if let vol = (argsMap["volume"] as? NSNumber)?.doubleValue { player.setVolume(vol) }
              result(nil)
          case "play":
@@ -612,7 +620,7 @@
              setupRemoteNotification(player)
              player.play(); result(nil)
          case "position":
-@@ -289,8 +390,13 @@
+@@ -289,8 +392,13 @@
          case "absolutePosition":
              result(NSNumber(value: player.absolutePosition()))
          case "seekTo":
@@ -628,7 +636,7 @@
          case "pause":
              player.pause(); result(nil)
          case "setSpeed":
-@@ -377,6 +483,9 @@
+@@ -377,6 +485,9 @@
      }
  
      public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
