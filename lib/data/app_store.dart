@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import '../domain/models.dart';
 import '../domain/playback_diagnostic.dart';
 import '../platform/provider_client.dart';
+import '../platform/observed_provider_client.dart';
+import 'source_diagnostics.dart';
 import 'catalog_store.dart';
 import 'preferences_store.dart';
 import 'record_store.dart';
@@ -14,9 +16,11 @@ export '../domain/catalog_response.dart'
 class AppStore extends ChangeNotifier implements StorePersistence {
   AppStore({
     required this.storage,
-    required this.provider,
+    required ProviderClient provider,
     DateTime Function()? now,
   }) : now = now ?? DateTime.now {
+    sourceDiagnostics = SourceDiagnostics(now: this.now);
+    this.provider = ObservedProviderClient(provider, sourceDiagnostics);
     preferences = PreferencesStore(save: () => persist(cache: false));
     records = RecordStore(
       persistence: this,
@@ -30,7 +34,8 @@ class AppStore extends ChangeNotifier implements StorePersistence {
     );
     catalog = CatalogStore(
       persistence: this,
-      provider: provider,
+      provider: this.provider,
+      diagnostics: sourceDiagnostics,
       records: records,
       now: this.now,
       isOffline: () => offline,
@@ -38,12 +43,14 @@ class AppStore extends ChangeNotifier implements StorePersistence {
     );
   }
   final LocalStorage storage;
-  final ProviderClient provider;
+  late final ProviderClient provider;
+  late final SourceDiagnostics sourceDiagnostics;
   final DateTime Function() now;
   late final PreferencesStore preferences;
   late final RecordStore records;
   late final CatalogStore catalog;
   bool offline = false;
+  bool wifi = false;
   @override
   String? persistenceError;
   String? cachePersistenceError;
@@ -213,8 +220,15 @@ class AppStore extends ChangeNotifier implements StorePersistence {
   void setOffline(bool value) {
     if (offline != value) {
       offline = value;
+      if (value) wifi = false;
       notifyListeners();
     }
+  }
+
+  void setWifi(bool value) {
+    if (wifi == value) return;
+    wifi = value;
+    notifyListeners();
   }
 
   @override
@@ -223,6 +237,7 @@ class AppStore extends ChangeNotifier implements StorePersistence {
     records.dispose();
     catalog.dispose();
     preferences.dispose();
+    sourceDiagnostics.dispose();
     super.dispose();
   }
 }

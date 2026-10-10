@@ -188,12 +188,20 @@ func (client *huangjuAPIClient) request(ctx context.Context, method, route strin
 		}
 		return nil
 	}
+	traceNetwork(request.Context())
 	response, err := transport.Do(request)
 	if err != nil {
+		if ctx.Err() != nil {
+			return huangjuAPIResponse{}, ctx.Err()
+		}
 		return huangjuAPIResponse{}, fmt.Errorf("剧果连接失败：%w", publicError(err))
 	}
 	defer response.Body.Close()
+	traceUpdate(request.Context(), func(value *mobileDiagnostic) { value.HTTPStatus = response.StatusCode })
 	data, readErr := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if readErr != nil && ctx.Err() != nil {
+		return huangjuAPIResponse{}, ctx.Err()
+	}
 	blocked := catalogResponseBlockReason(response, data) != ""
 	authFailed := response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden
 	if retryAuth && token != "" && authFailed && readErr == nil && int64(len(data)) <= limit && !blocked && json.Valid(data) {

@@ -73,13 +73,15 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late Directory root;
   late AppStore app;
+  late PlanProvider planProvider;
   late InitializationDriver driver;
   late InitializationStorage storage;
   late DownloadStore downloads;
 
   setUp(() async {
     root = await Directory.systemTemp.createTemp('download-initialization-');
-    app = AppStore(storage: MemoryStorage(), provider: PlanProvider());
+    planProvider = PlanProvider();
+    app = AppStore(storage: MemoryStorage(), provider: planProvider);
     driver = InitializationDriver();
     storage = InitializationStorage();
     final folder = await Directory('${root.path}/123').create();
@@ -373,7 +375,7 @@ void main() {
       ];
       final folder = await Directory('${root.path}/456').create();
       await File('${folder.path}/local.m3u8').writeAsString('fixture playlist');
-      (app.provider as PlanProvider).signed = true;
+      planProvider.signed = true;
       final pending = DownloadEntry(
         id: '456',
         drama: drama,

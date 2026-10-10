@@ -39,8 +39,9 @@ class CachedDiscoveryBoards {
 
 /// Ordered, disposable prefixes. Transport cursors and sessions stay in pages.
 class DiscoveryCache {
-  DiscoveryCache({required this.now});
+  DiscoveryCache({required this.now, this.onRead});
   final DateTime Function() now;
+  final void Function(DramaSource source, String method)? onRead;
   static const retention = Duration(days: 7);
   static const maxRows = 60, maxColumns = 24, maxColumnBytes = 64 * 1024;
   static const maxBoards = 100, maxBoardBytes = 16 * 1024;
@@ -61,17 +62,18 @@ class DiscoveryCache {
     return !clock.isBefore(date) && clock.difference(date) <= retention;
   }
 
-  CachedDiscoveryColumn? _read(String key) {
+  CachedDiscoveryColumn? _read(String key, DramaSource source, String method) {
     final column = _columns.remove(key);
     if (column == null || !_validDate(column.savedAt)) return null;
     _columns[key] = column;
+    onRead?.call(source, method);
     return column;
   }
 
   CachedDiscoveryColumn? recommendations(RecommendationGenre genre) =>
-      _read(_recommendationKey(genre));
+      _read(_recommendationKey(genre), DramaSource.hongguo, 'recommendations');
   CachedDiscoveryColumn? ranking(DramaSource source, String board) =>
-      _read(_rankingKey(source, board));
+      _read(_rankingKey(source, board), source, 'ranking');
 
   DateTime? lastContentRetrieval(DramaSource source) {
     DateTime? latest;
@@ -95,6 +97,7 @@ class DiscoveryCache {
       _boards.remove(source);
       return null;
     }
+    if (entry != null) onRead?.call(source, 'boards');
     return entry;
   }
 

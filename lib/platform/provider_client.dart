@@ -19,6 +19,9 @@ class NativeProviderClient implements ProviderClient {
   static const _channel = MethodChannel('guoguo/core');
   Future<void>? _initialization;
   bool _initialized = false, _initializing = false;
+  bool _sourceDiagnostics = false;
+  bool _catalogPrefetch = false;
+  int _traceSerial = 0;
 
   Future<void> get ready =>
       _initialization ??
@@ -42,6 +45,8 @@ class NativeProviderClient implements ProviderClient {
         if (info['protocol'] != 3) {
           throw const ProviderException('站源组件版本不匹配，请安装最新完整版本');
         }
+        _sourceDiagnostics = info['sourceDiagnostics'] == 1;
+        _catalogPrefetch = info['catalogPrefetch'] == 1;
       } catch (_) {
         throw const ProviderException('站源组件版本不匹配，请安装最新完整版本');
       }
@@ -68,20 +73,53 @@ class NativeProviderClient implements ProviderClient {
     String method, [
     Map<String, dynamic> arguments = const {},
   ]) async {
+    if (method == 'catalog' &&
+        arguments['background'] == true &&
+        !_catalogPrefetch) {
+      throw const ProviderException('当前站源组件不支持提前加载，请安装最新完整版本');
+    }
+    final traceId =
+        _sourceDiagnostics &&
+            const {
+              'catalog',
+              'categories',
+              'ranking',
+              'boards',
+              'recommendations',
+              'search',
+              'suggestions',
+              'detail',
+              'chapters',
+            }.contains(method)
+        ? 'native-${DateTime.now().microsecondsSinceEpoch}-${++_traceSerial}'
+        : null;
     try {
       final raw = await _channel.invokeMethod<String>(
         'call',
-        jsonEncode({'method': method, ...arguments}),
+        jsonEncode({'method': method, ...arguments, 'traceId': ?traceId}),
       );
       if (raw == null) throw const FormatException('站源未返回数据');
       return Map<String, dynamic>.from(jsonDecode(raw) as Map);
     } on MissingPluginException {
       throw const ProviderException('站源组件未安装，请安装包含站源核心的完整版本');
     } on PlatformException catch (error) {
+      Map? diagnostic;
+      if (traceId != null) {
+        try {
+          diagnostic =
+              (await _call('requestDiagnostic', {
+                    'traceId': traceId,
+                  }))['diagnostic']
+                  as Map?;
+        } catch (_) {
+          // A missing diagnostic cannot replace the original failure.
+        }
+      }
       throw ProviderException(
         error.message ?? '站源暂时不可用，请稍后重试',
         userMessage: '站源暂时不可用，请稍后重试',
         failureHint: _failureHint(error.message),
+        diagnostic: diagnostic,
       );
     }
   }
@@ -109,11 +147,16 @@ class NativeProviderClient implements ProviderClient {
 }
 
 class ProviderException implements Exception {
-  const ProviderException(this.message, {String? userMessage, this.failureHint})
-    : _userMessage = userMessage;
+  const ProviderException(
+    this.message, {
+    String? userMessage,
+    this.failureHint,
+    this.diagnostic,
+  }) : _userMessage = userMessage;
   final String message;
   // Fixed display text, never the native error's URL, credentials or IP address.
   final String? failureHint;
+  final Map? diagnostic;
   final String? _userMessage;
   String get userMessage => _userMessage ?? message;
   @override
@@ -134,14 +177,32 @@ extension ProviderOperations on ProviderClient {
     DramaSource source, {
     String? category,
     int? page,
+    String? requestId,
+    bool background = false,
   }) async => CatalogPage.fromJson(
     await call('catalog', {
       'source': source.name,
       'category': ?category,
       'page': ?page,
+      'requestId': ?requestId,
+      if (background) 'background': true,
     }),
     source,
   );
+
+  Future<void> cancelCatalog(
+    DramaSource source,
+    String requestId, {
+    required int page,
+    required String category,
+  }) async {
+    await call('cancelCatalog', {
+      'source': source.name,
+      'requestId': requestId,
+      'page': page,
+      'category': category,
+    });
+  }
 
   Future<CatalogSearchResult> searchPage(
     DramaSource source,

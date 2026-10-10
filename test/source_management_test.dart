@@ -281,7 +281,8 @@ void main() {
   testWidgets(
     'favorites, recents and current hidden source are reachable without duplicate choices',
     (tester) async {
-      final store = _store(), choices = <DramaSource?>[];
+      final provider = _Provider();
+      final store = _store(provider: provider), choices = <DramaSource?>[];
       await _fixture(tester, [store]);
       await store.preferences.toggleFavoriteSource(DramaSource.wuguo);
       await store.catalog.selectSource(DramaSource.wuguo);
@@ -303,14 +304,15 @@ void main() {
       await tester.pumpAndSettle();
       expect(choices, [DramaSource.wuguo]);
       expect(store.catalog.source, DramaSource.wuguo);
-      expect((store.provider as _Provider).calls, isEmpty);
+      expect(provider.calls, isEmpty);
     },
   );
 
   testWidgets(
     'hidden sources remain searchable and can be restored explicitly',
     (tester) async {
-      final store = _store(), choices = <DramaSource?>[];
+      final provider = _Provider();
+      final store = _store(provider: provider), choices = <DramaSource?>[];
       await _fixture(tester, [store]);
       await store.preferences.setSourceHidden(DramaSource.wuguo, true);
       await tester.pumpWidget(_app(store, choices));
@@ -329,7 +331,7 @@ void main() {
       await tester.tap(find.widgetWithText(ChoiceChip, '伍果'));
       await tester.pumpAndSettle();
       expect(choices, [DramaSource.wuguo]);
-      expect((store.provider as _Provider).calls, isEmpty);
+      expect(provider.calls, isEmpty);
     },
   );
 
@@ -406,7 +408,10 @@ void main() {
     testWidgets(
       'replacing dependencies ignores old sheet ${manage ? 'mutations' : 'selections'}',
       (tester) async {
-        final old = _store(), next = _store(), choices = <DramaSource?>[];
+        final oldProvider = _Provider(), nextProvider = _Provider();
+        final old = _store(provider: oldProvider),
+            next = _store(provider: nextProvider),
+            choices = <DramaSource?>[];
         await _fixture(tester, [old, next]);
         await tester.pumpWidget(_app(old, choices));
         await _open(tester, manage: manage);
@@ -437,8 +442,8 @@ void main() {
         } else {
           expect(choices, [DramaSource.wuguo]);
         }
-        expect((old.provider as _Provider).calls, isEmpty);
-        expect((next.provider as _Provider).calls, isEmpty);
+        expect(oldProvider.calls, isEmpty);
+        expect(nextProvider.calls, isEmpty);
       },
     );
   }
@@ -490,7 +495,8 @@ void main() {
   testWidgets(
     'configured groups fit large text and entering management resets its scroll',
     (tester) async {
-      final store = _store();
+      final provider = _Provider();
+      final store = _store(provider: provider);
       await _fixture(tester, [store], size: const Size(320, 740));
       await store.preferences.toggleFavoriteSource(DramaSource.wuguo);
       await store.preferences.setSourceHidden(DramaSource.niuguo, true);
@@ -507,7 +513,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('站源管理').hitTestable(), findsOneWidget);
       expect(find.byTooltip('返回站源选择').hitTestable(), findsOneWidget);
-      expect((store.provider as _Provider).calls, isEmpty);
+      expect(provider.calls, isEmpty);
       expect(tester.takeException(), isNull);
     },
   );

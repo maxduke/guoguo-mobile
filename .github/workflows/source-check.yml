@@ -1,0 +1,45 @@
+name: Source availability
+on:
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: source-check-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source-check:
+    name: Advisory source text checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: native/core/go.sum
+      - name: Check declared sources with fresh caches
+        working-directory: native/core
+        run: go run ./cmd/sourcecheck -output source-check.json
+      - name: Summarize advisory results
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from collections import Counter
+          from pathlib import Path
+          report = json.loads(Path('native/core/source-check.json').read_text())
+          lines = ['## Source text checks', '', 'Network results are advisory; inspect failures and skipped steps in the JSON artifact.', '',
+                   '| Source | Passed | Partial | Failed | Skipped |', '| --- | --- | --- | --- | --- |']
+          for source in report['sources']:
+              counts = Counter(step['status'] for step in source['steps'])
+              lines.append(f"| {source['source']} | {counts['passed']} | {counts['partial']} | {counts['failed']} | {counts['skipped']} |")
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as output:
+              output.write('\n'.join(lines) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Source-check-report
+          path: native/core/source-check.json
+          if-no-files-found: error
+          retention-days: 7

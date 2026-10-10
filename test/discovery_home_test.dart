@@ -411,14 +411,14 @@ void main() {
     'changing store ignores its pending recommendation and loads the new owner',
     (tester) async {
       final (:store, :provider) = await _fixture(tester);
-      final next = AppStore(storage: MemoryStorage(), provider: _Provider());
+      final nextProvider = _Provider();
+      final next = AppStore(storage: MemoryStorage(), provider: nextProvider);
       addTearDown(next.dispose);
       await tester.pumpWidget(_discovery(store));
       await tester.pumpWidget(_discovery(next));
       provider.requests.single.result.complete(
         _recommendations([_drama('old')]),
       );
-      final nextProvider = next.provider as _Provider;
       nextProvider.requests.single.result.complete(
         _recommendations([_drama('new')]),
       );

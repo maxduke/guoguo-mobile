@@ -24,6 +24,11 @@ type MobileClient struct {
 	prefetches       map[string]*mobilePrefetchRead
 	searches         map[string]*mobileSearchRead
 	seasonCursors    map[string]*mobileSeasonCursor
+	diagnostics      map[string]mobileDiagnostic
+	diagnosticOrder  []string
+	closed           bool
+	catalogReads     map[string]*mobileCatalogRead
+	canceledCatalogs map[string]mobileCatalogCancellation
 	covers           coverImageCache
 	catalogMu        sync.Mutex
 	known            []Drama
@@ -56,6 +61,9 @@ type mobileRequest struct {
 	Path           string                     `json:"path"`
 	OutputPath     string                     `json:"outputPath"`
 	RequestID      string                     `json:"requestId"`
+	TraceID        string                     `json:"traceId"`
+	Background     bool                       `json:"background"`
+	TimeoutMS      int                        `json:"timeoutMs"`
 	Category       string                     `json:"category"`
 	Recommendation hongguoRecommendationQuery `json:"recommendation"`
 	Method         string                     `json:"method"`
@@ -87,7 +95,7 @@ func mobileDramas(rows []Drama) []map[string]any {
 	return result
 }
 
-func (c *MobileClient) Call(raw string) (string, error) {
+func (c *MobileClient) Call(raw string) (result string, callErr error) {
 	var request mobileRequest
 	if len(raw) > 1024*1024 {
 		return "", errors.New("请求过大")
@@ -95,12 +103,35 @@ func (c *MobileClient) Call(raw string) (string, error) {
 	if err := json.Unmarshal([]byte(raw), &request); err != nil {
 		return "", errors.New("请求格式错误")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
+	if request.TimeoutMS < 0 || request.TimeoutMS > 75000 {
+		return "", errors.New("请求时限无效")
+	}
+	timeout := 75 * time.Second
+	if request.TimeoutMS > 0 {
+		timeout = time.Duration(max(100, request.TimeoutMS)) * time.Millisecond
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	var value any
+	var trace *mobileTrace
+	if diagnosticMethod(request.Method) {
+		trace = &mobileTrace{value: mobileDiagnostic{Source: diagnosticSource(request), Method: request.Method, At: time.Now().UTC(), Page: max(1, request.Page), Refresh: request.Refresh, Background: request.Background}}
+		ctx = context.WithValue(ctx, mobileTraceKey{}, trace)
+		defer func() { c.saveDiagnostic(request.TraceID, trace.snapshot(callErr, value, true)) }()
+	}
 	switch request.Method {
 	case "coreInfo":
-		value = map[string]any{"protocol": mobileProtocol, "sourceDigest": mobileSourceDigest, "version": mobileBuildVersion}
+		value = map[string]any{"protocol": mobileProtocol, "sourceDigest": mobileSourceDigest, "version": mobileBuildVersion, "sourceDiagnostics": 1, "catalogPrefetch": 1}
+	case "sourceCapabilities":
+		value = map[string]any{"items": c.sourceCapabilities()}
+	case "requestDiagnostic":
+		c.mu.Lock()
+		diagnostic, exists := c.diagnostics[request.TraceID]
+		c.mu.Unlock()
+		value = map[string]any{"diagnostic": nil}
+		if exists {
+			value = map[string]any{"diagnostic": diagnostic}
+		}
 	case "libraryImport":
 		result, err := c.importLibrary(ctx, request)
 		if err != nil {
@@ -161,6 +192,12 @@ func (c *MobileClient) Call(raw string) (string, error) {
 		}
 		value = map[string]any{"items": append([]nativeCategory{{ID: "", Name: "全部"}}, categories...)}
 	case "catalog":
+		readCtx, finishRead, beginErr := c.beginCatalogRead(ctx, request)
+		if beginErr != nil {
+			return "", beginErr
+		}
+		ctx = readCtx
+		defer finishRead()
 		if adapter, ok := c.downloader.mobileSource(request.Source); ok {
 			result, err := c.sourcePage(ctx, request, adapter)
 			if err != nil {
@@ -290,6 +327,9 @@ func (c *MobileClient) Call(raw string) (string, error) {
 		value = c.searchProgress(request, false)
 	case "cancelSearch":
 		value = c.searchProgress(request, true)
+	case "cancelCatalog":
+		c.cancelCatalogRead(request)
+		value = map[string]any{"ok": true}
 	case "search":
 		searchCtx, read, beginErr := c.beginSearch(ctx, request)
 		if beginErr != nil {
@@ -426,6 +466,16 @@ func (c *MobileClient) Call(raw string) (string, error) {
 	default:
 		return "", errors.New("未知操作")
 	}
+	if trace != nil {
+		if data, ok := value.(map[string]any); ok {
+			copy := make(map[string]any, len(data)+1)
+			for key, field := range data {
+				copy[key] = field
+			}
+			copy["_diagnostic"] = trace.snapshot(nil, value, false)
+			value = copy
+		}
+	}
 	encoded, err := json.Marshal(value)
 	return string(encoded), err
 }
@@ -433,12 +483,20 @@ func (c *MobileClient) Call(raw string) (string, error) {
 func (c *MobileClient) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.closed = true
+	for id, read := range c.catalogReads {
+		read.cancel()
+		delete(c.catalogReads, id)
+	}
+	c.canceledCatalogs = nil
 	for id, read := range c.searches {
 		read.cancel()
 		delete(c.searches, id)
 	}
 	c.playbacks = nil
 	c.seasonCursors = nil
+	c.diagnostics = nil
+	c.diagnosticOrder = nil
 	for id, read := range c.prefetches {
 		read.cancel()
 		delete(c.prefetches, id)

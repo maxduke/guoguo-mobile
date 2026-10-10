@@ -83,10 +83,12 @@ func (downloader *Downloader) searchHongguoProgress(ctx context.Context, keyword
 		client.mu.Lock()
 		if cached, found := client.searches[cacheKey]; found && time.Now().Before(cached.ExpiresAt) {
 			client.mu.Unlock()
+			traceCache(ctx)
 			return cloneHongguoSearchEntry(cached), nil
 		}
 		if pending := client.searchPending[cacheKey]; pending != nil {
 			client.mu.Unlock()
+			traceShared(ctx)
 			entry, err := downloader.waitHongguoSearch(ctx, pending, progress)
 			if (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && ctx.Err() == nil {
 				continue

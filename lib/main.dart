@@ -154,6 +154,16 @@ Future<AppStartup> _loadStartup() async {
     offlineChanges: connectivity.onConnectivityChanged.map(
       (values) => values.contains(ConnectivityResult.none),
     ),
+    checkWifi: () async {
+      final values = await connectivity.checkConnectivity();
+      return values.contains(ConnectivityResult.wifi) &&
+          !values.contains(ConnectivityResult.mobile);
+    },
+    wifiChanges: connectivity.onConnectivityChanged.map(
+      (values) =>
+          values.contains(ConnectivityResult.wifi) &&
+          !values.contains(ConnectivityResult.mobile),
+    ),
   );
 }
 

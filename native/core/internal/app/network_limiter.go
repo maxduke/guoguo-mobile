@@ -263,6 +263,7 @@ func (d *Downloader) doPreparedCatalogRequest(request *http.Request, timeout tim
 	if prepare != nil {
 		prepare(request)
 	}
+	traceNetwork(request.Context())
 	response, err := d.client.Do(request)
 	if err != nil {
 		cancel()
@@ -270,6 +271,7 @@ func (d *Downloader) doPreparedCatalogRequest(request *http.Request, timeout tim
 		return nil, err
 	}
 	d.limiter.observe(request, response)
+	traceUpdate(request.Context(), func(value *mobileDiagnostic) { value.HTTPStatus = response.StatusCode })
 	response.Body = &limitedResponseBody{ReadCloser: response.Body, release: func() { cancel(); release() }}
 	return response, nil
 }

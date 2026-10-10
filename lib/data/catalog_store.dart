@@ -12,6 +12,17 @@ import 'search_cache.dart';
 import 'discovery_cache.dart';
 import 'series_lookup.dart';
 import 'store_persistence.dart';
+import 'source_diagnostics.dart';
+
+class _LibraryPrefetch {
+  _LibraryPrefetch(this.source, this.category, this.page, this.id);
+  final DramaSource source;
+  final String category, id;
+  final int page;
+  final cancelled = Completer<void>();
+}
+
+class _LibraryPrefetchCancelled implements Exception {}
 
 class _CatalogSlice {
   List<Drama> items = [];
@@ -40,14 +51,110 @@ class CatalogStore extends ChangeNotifier {
     required this.now,
     required this.isOffline,
     required this.onSourceSelected,
+    this.diagnostics,
   }) : _persistence = persistence;
   final StorePersistence _persistence;
   final ProviderClient provider;
+  final SourceDiagnostics? diagnostics;
   final RecordStore records;
   final DateTime Function() now;
   final bool Function() isOffline;
   final void Function(DramaSource) onSourceSelected;
   bool _closed = false;
+  _LibraryPrefetch? _libraryPrefetch;
+  int _prefetchSerial = 0;
+  DateTime _prefetchRetryAt = DateTime(2000);
+  bool get libraryPrefetching => _libraryPrefetch != null;
+
+  void cancelLibraryPrefetch() {
+    final read = _libraryPrefetch;
+    if (read == null) return;
+    _libraryPrefetch = null;
+    read.cancelled.complete();
+    unawaited(
+      provider
+          .cancelCatalog(
+            read.source,
+            read.id,
+            page: read.page,
+            category: read.category,
+          )
+          .catchError((Object _) {}),
+    );
+  }
+
+  Future<bool> prefetchLibrary({required bool Function() isActive}) async {
+    if (_closed ||
+        !source.remoteCategories ||
+        isOffline() ||
+        !isActive() ||
+        _libraryPrefetch != null ||
+        !libraryHasMore ||
+        libraryLoading ||
+        libraryCanRetry ||
+        now().isBefore(_prefetchRetryAt)) {
+      return false;
+    }
+    final target = source;
+    final category = selectedCategory;
+    final key = _sliceKey(target, category);
+    final slice = _slices[key]!;
+    final previousPage = slice.page;
+    final read = _LibraryPrefetch(
+      target,
+      category,
+      previousPage + 1,
+      'catalog-${now().microsecondsSinceEpoch}-${++_prefetchSerial}',
+    );
+    _libraryPrefetch = read;
+    bool current() =>
+        !_closed &&
+        identical(_libraryPrefetch, read) &&
+        !isOffline() &&
+        isActive() &&
+        source == target &&
+        selectedCategory == category &&
+        identical(_slices[key], slice) &&
+        slice.page == previousPage &&
+        !libraryLoading &&
+        !libraryCanRetry;
+    try {
+      final result = await Future.any([
+        provider.catalogPage(
+          target,
+          category: category,
+          page: read.page,
+          requestId: read.id,
+          background: true,
+        ),
+        read.cancelled.future.then<CatalogPage>(
+          (_) => throw _LibraryPrefetchCancelled(),
+        ),
+      ]);
+      if (!current()) return false;
+      if (result.warning.isNotEmpty) {
+        _prefetchRetryAt = now().add(const Duration(seconds: 30));
+        return false;
+      }
+      slice.items = {
+        for (final row in [...slice.items, ...result.items]) row.key: row,
+      }.values.toList();
+      slice.page = read.page;
+      slice.more = result.hasMore;
+      _mergeCatalog(target, result.items);
+      await _saveCache();
+      if (_closed) return false;
+      notifyListeners();
+      return true;
+    } on _LibraryPrefetchCancelled {
+      return false;
+    } catch (_) {
+      if (current()) _prefetchRetryAt = now().add(const Duration(seconds: 30));
+      return false;
+    } finally {
+      if (identical(_libraryPrefetch, read)) _libraryPrefetch = null;
+    }
+  }
 
   static const episodeFreshness = Duration(hours: 6);
 
@@ -76,7 +183,10 @@ class CatalogStore extends ChangeNotifier {
   final Set<SeriesLookup> _seriesLookups = {};
 
   final searchCache = SearchCache();
-  late final discoveryCache = DiscoveryCache(now: now);
+  late final discoveryCache = DiscoveryCache(
+    now: now,
+    onRead: (source, method) => diagnostics?.cached(source, method),
+  );
 
   final Map<String, Future<CatalogSearchResult>> _searchRequests = {};
 
@@ -177,6 +287,8 @@ class CatalogStore extends ChangeNotifier {
   }
 
   Future<void> selectCategory(String category) async {
+    cancelLibraryPrefetch();
+    _prefetchRetryAt = DateTime(2000);
     final target = source;
     selectedCategories[target] = category;
     notifyListeners();
@@ -326,6 +438,8 @@ class CatalogStore extends ChangeNotifier {
 
   Future<void> selectSource(DramaSource next) async {
     if (_closed) return;
+    cancelLibraryPrefetch();
+    _prefetchRetryAt = DateTime(2000);
     source = next;
     onSourceSelected(next);
     notifyListeners();
@@ -333,6 +447,7 @@ class CatalogStore extends ChangeNotifier {
   }
 
   Future<void> refresh([DramaSource? selected]) async {
+    cancelLibraryPrefetch();
     final target = selected ?? source;
     if (target.remoteCategories) {
       await Future.wait([
@@ -345,6 +460,7 @@ class CatalogStore extends ChangeNotifier {
   }
 
   Future<void> loadMore() async {
+    cancelLibraryPrefetch();
     final target = source;
     if (target.remoteCategories) {
       await _loadCategory(target, selectedCategory, more: true);
@@ -433,6 +549,7 @@ class CatalogStore extends ChangeNotifier {
     if (cached != null && !refresh) {
       onPartial?.call(cached.cachedResult);
       if (cached.fresh || isOffline()) {
+        diagnostics?.cached(target, 'search', page: page);
         if (rememberQuery) await rememberSearch(query);
         return cached.cachedResult;
       }
@@ -848,6 +965,7 @@ class CatalogStore extends ChangeNotifier {
                 updated != null &&
                 now().difference(updated) >= Duration.zero &&
                 now().difference(updated) < episodeFreshness))) {
+      diagnostics?.cached(drama.source, 'chapters');
       return cached;
     }
     if (isOffline()) throw const ProviderException('离线时没有可用的分集缓存');
@@ -1035,6 +1153,7 @@ class CatalogStore extends ChangeNotifier {
   @override
   void dispose() {
     _closed = true;
+    cancelLibraryPrefetch();
     cancelSeriesLookups();
     super.dispose();
   }

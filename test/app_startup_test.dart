@@ -110,12 +110,16 @@ void main() {
   AppStartup startup({
     required Future<void> Function() core,
     Future<bool> Function()? network,
+    Future<bool> Function()? wifi,
+    Stream<bool>? wifiChanges,
   }) => AppStartup(
     store: store,
     downloads: downloads,
     initializeCore: core,
     checkOffline: network ?? () async => false,
     offlineChanges: changes.stream,
+    checkWifi: wifi,
+    wifiChanges: wifiChanges,
   );
 
   testWidgets(
@@ -408,6 +412,59 @@ void main() {
     expect((store.storage as MemoryStorage).value, isNull);
     app.dispose();
   });
+
+  test(
+    'newer Wi-Fi event wins over a stale snapshot and stream failure disables prefetch',
+    () async {
+      createFixture();
+      final snapshot = Completer<bool>();
+      final wifi = StreamController<bool>.broadcast();
+      final app = startup(
+        core: () async {},
+        wifi: () => snapshot.future,
+        wifiChanges: wifi.stream,
+      );
+      final load = app.retryNetwork();
+      await Future<void>.delayed(Duration.zero);
+      wifi.add(false);
+      await Future<void>.delayed(Duration.zero);
+      snapshot.complete(true);
+      await load;
+      expect(store.wifi, false);
+      wifi.add(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(store.wifi, true);
+      wifi.addError(StateError('secret'));
+      await Future<void>.delayed(Duration.zero);
+      expect(store.wifi, false);
+      app.dispose();
+      await wifi.close();
+    },
+  );
+
+  test(
+    'offline transition invalidates pending Wi-Fi query and disposal ignores completion',
+    () async {
+      createFixture();
+      var snapshot = Completer<bool>();
+      final app = startup(core: () async {}, wifi: () => snapshot.future);
+      final load = app.retryNetwork();
+      await Future<void>.delayed(Duration.zero);
+      changes.add(true);
+      await Future<void>.delayed(Duration.zero);
+      snapshot.complete(true);
+      await load;
+      expect(store.offline, true);
+      expect(store.wifi, false);
+      snapshot = Completer<bool>();
+      final pending = app.retryNetwork();
+      await Future<void>.delayed(Duration.zero);
+      app.dispose();
+      snapshot.complete(true);
+      await pending;
+      expect(store.wifi, false);
+    },
+  );
 
   test(
     'disposal in the same turn as start cannot install listeners or initialize the core',
