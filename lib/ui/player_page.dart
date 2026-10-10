@@ -30,6 +30,7 @@ import '../platform/playback_progress.dart';
 import '../platform/playback_failure.dart';
 import '../platform/playback_recovery.dart';
 import '../platform/playback_lifecycle.dart';
+import '../platform/playback_seek.dart';
 import '../platform/media_preparer.dart';
 import '../platform/casting.dart';
 import '../platform/cast_session.dart';
@@ -149,6 +150,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   bool get _pipActive => _lifecycle.pipActive;
   bool _modal = false, _gestureScrubbing = false, _transportScrubbing = false;
   bool get _scrubbing => _gestureScrubbing || _transportScrubbing;
+  int _seekSerial = 0;
+  bool _seeking = false;
   double _speed = 1;
   PlaybackFailure? _error;
   String _loadingPhase = '正在查找本地视频…';
@@ -205,7 +208,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       ),
       save: _save,
       pause: _player.pause,
-      play: _player.play,
+      play: () {
+        _health.reset();
+        return _player.play();
+      },
       cancelProgressive: () async => _active?.preparer.cancel(),
       restoreComplete: (play, position) =>
           _ensureCompatible(play: play, position: position),
@@ -429,6 +435,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _preloadTimer?.cancel();
     _settleTimer?.cancel();
     _session.invalidate();
+    _invalidateSeek();
     _paused = _active == null ? Future.value() : _player.pause();
     unawaited(_paused.catchError((Object _) {}));
     setState(() {
@@ -458,6 +465,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }) async {
     _lifecycle.beginActivation(play);
     final generation = _session.invalidate();
+    _invalidateSeek();
     final index = _index;
     _updateActionsState();
     final record = widget.store.records.history[widget.drama.key];
@@ -523,9 +531,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _attachTimeline(item, generation);
       _health.reset();
       await _applyVideoFit();
-      // The private EVENT playlist declares its start. Seeking during native
-      // initialization can race play because the plugin returns before AVPlayer
-      // finishes seeking. Resume/scrub on complete media still uses seekTo.
+      // The private EVENT playlist declares its own start. Complete media uses
+      // a seek that waits for native completion without restoring stale intent.
       if (item.preparer.streaming) start = null;
       final value = _player.videoPlayerController?.value;
       final duration = value?.duration ?? Duration.zero;
@@ -535,7 +542,14 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           value!.position >= duration - const Duration(milliseconds: 300)) {
         start = Duration.zero;
       }
-      if (start != null) await _player.seekTo(start);
+      if (start != null) {
+        await PlaybackSeek.to(
+          _player,
+          item.path,
+          start,
+          current: () => mounted && generation == _generation,
+        );
+      }
       if (!mounted || generation != _generation) return;
       await _player.setSpeed(_speed);
       if (!mounted || generation != _generation) return;
@@ -641,6 +655,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           !_recovering &&
           _error == null &&
           !_scrubbing &&
+          !_seeking &&
           !_modal &&
           _active != null &&
           !ended &&
@@ -893,6 +908,47 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _armHide();
     if (state == AppLifecycleState.resumed && _airplay != null) {
       unawaited(_airplay!.refreshRoute().catchError((Object _) {}));
+    }
+    if (state == AppLifecycleState.resumed) unawaited(_syncNativePosition());
+  }
+
+  Future<void> _syncNativePosition() async {
+    if (defaultTargetPlatform != TargetPlatform.iOS) return;
+    final item = _active;
+    final video = _player.videoPlayerController;
+    if (item == null ||
+        video == null ||
+        _loading ||
+        _seeking ||
+        _localBlocked ||
+        item.preparer.streaming) {
+      return;
+    }
+    final generation = _generation, serial = _seekSerial;
+    try {
+      final position = await video.position;
+      if (!mounted ||
+          position == null ||
+          position < Duration.zero ||
+          generation != _generation ||
+          serial != _seekSerial ||
+          !_foreground ||
+          _loading ||
+          _seeking ||
+          _localBlocked) {
+        return;
+      }
+      video.value = video.value.copyWith(position: position);
+      final duration = video.value.duration ?? Duration.zero;
+      if (_episodeCompleted &&
+          position < duration - const Duration(milliseconds: 300)) {
+        setState(() => _progress.completed = false);
+      }
+      _health.reset();
+      _save();
+    } catch (_) {
+      // A foreground transition must not reload a playable item because a
+      // single position query failed. Regular progress/recovery remains active.
     }
   }
 
@@ -1329,6 +1385,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   Future<void> _togglePlay() async {
     if (!_foreground || _locked || _active == null || _localBlocked) return;
+    _health.reset();
     final controller = _player;
     if (controller.isPlaying() == true) {
       _playIntent = false;
@@ -1342,8 +1399,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               value!.position >=
                   duration - const Duration(milliseconds: 300))) {
         final index = _index, generation = _generation;
-        await controller.seekTo(Duration.zero);
-        if (!mounted || index != _index || generation != _generation) return;
+        if (!await _seek(Duration.zero)) return;
+        if (!mounted ||
+            index != _index ||
+            generation != _generation ||
+            !_playIntent ||
+            !_foreground ||
+            _localBlocked) {
+          return;
+        }
         _progress.completed = false;
         _progress.save(Duration.zero, duration);
       }
@@ -1683,20 +1747,89 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _seek(Duration position) async {
-    if (_localBlocked || _loading || _active == null) return;
+  void _invalidateSeek() {
+    _seekSerial++;
+    _seeking = false;
+    _health.reset();
+  }
+
+  Future<bool> _seek(Duration position) async {
+    if (_localBlocked || _loading || _active == null) return false;
     final duration = _player.videoPlayerController?.value.duration;
-    if (duration == null || duration <= Duration.zero) return;
+    if (duration == null || duration <= Duration.zero) return false;
     // Seeking beyond an EVENT range can cause BetterPlayer to emit 'finished'.
     final target = Duration(
       microseconds: position.inMicroseconds.clamp(0, duration.inMicroseconds),
     );
     final index = _index, generation = _generation;
-    await _player.seekTo(target);
-    if (!mounted || index != _index || generation != _generation) return;
-    if (_episodeCompleted && target < duration) {
-      setState(() => _progress.completed = false);
-      _progress.save(target, duration);
+    final serial = ++_seekSerial;
+    final item = _active!;
+    final clock = Stopwatch()..start();
+    final at = DateTime.now();
+    var result = PlaybackResult.cancelled;
+    bool current() =>
+        mounted &&
+        index == _index &&
+        generation == _generation &&
+        serial == _seekSerial &&
+        !_localBlocked;
+    _seeking = true;
+    _health.reset();
+    try {
+      final actual = await PlaybackSeek.to(
+        _player,
+        item.path,
+        target,
+        current: current,
+      );
+      if (!current()) return false;
+      result = PlaybackResult.completed;
+      if (_episodeCompleted && actual < duration) {
+        setState(() => _progress.completed = false);
+      }
+      _progress.save(actual, duration);
+      return true;
+    } catch (error) {
+      if (!current()) return false;
+      if (error is PlatformException && error.code == 'seek_cancelled') {
+        return false;
+      }
+      result = PlaybackResult.failed;
+      if (!mounted) return false;
+      _showControls();
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('定位未完成，请重试或继续播放')));
+      return false;
+    } finally {
+      if (mounted && serial == _seekSerial) {
+        _seeking = false;
+        _health.reset();
+      }
+      if (mounted && index == _index && generation == _generation) {
+        unawaited(
+          widget.store
+              .recordPlayback(
+                PlaybackDiagnostic(
+                  source: widget.drama.source,
+                  episode: widget.episodes[index].number,
+                  at: at,
+                  result: result,
+                  local: item.timing.local,
+                  preloaded: false,
+                  resolveMs: 0,
+                  prepareMs: 0,
+                  setupMs: 0,
+                  waitMs: 0,
+                  elapsedMs: clock.elapsedMilliseconds,
+                  operation: 'seek',
+                  targetMs: target.inMilliseconds,
+                  preparation: item.timing.preparation,
+                ),
+              )
+              .catchError((Object _) {}),
+        );
+      }
     }
   }
 

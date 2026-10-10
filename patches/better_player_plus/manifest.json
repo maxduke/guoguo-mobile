@@ -3,14 +3,15 @@
   "files": {
     "ios/better_player_plus/Sources/better_player_plus/BetterPlayer.swift": {
       "original": "eaa4d73b13395bcb7924ef2820fc8bb316a48e55ca8e3f8e87b90d9ac0e97cf7",
-      "patched": "a73a9ec238af9b60f5d051cd4a95745829cb253511dd46718f70836a5b726c95"
+      "patched": "971f961190cfa471a4c0c7523bd4d71c9fb5ee24e75ab76fdeddf5ce1b58c5de"
     },
     "ios/better_player_plus/Sources/better_player_plus/SwiftBetterPlayerPlugin.swift": {
       "original": "9c81f90afe2e28efaf651a9d78b5415c89e7f21ee1d31e4f0087067439525af6",
-      "patched": "5a366b01f38c8044dba70f39da9e2a7e2ae871e935f82cb4d7b4ff7fd07436c2"
+      "patched": "e476e8ce0e80252ec9bfe2452eaf807fcb2a40cf4a4e336d3093bfe83c8e44aa"
     }
   },
   "extraFiles": [
-    "GuoguoMediaPolicy.swift"
+    "GuoguoMediaPolicy.swift",
+    "GuoguoSeekCoordinator.swift"
   ]
 }

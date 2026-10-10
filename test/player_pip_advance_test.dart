@@ -86,9 +86,11 @@ class _NativePlayer {
   static const connectivityStatus = MethodChannel(
     'dev.fluttercommunity.plus/connectivity_status',
   );
+  static const airplay = MethodChannel('guoguo/airplay');
   int hlsDurationMs = 30000, positionMs = 0;
   bool followSeeks = false;
   Future<void> Function(int)? beforeInitialized;
+  Future<int> Function(int)? seekCompletion;
   final seeks = <int>[];
   final sources = <String>[];
   final formats = <Object?>[];
@@ -128,12 +130,20 @@ class _NativePlayer {
         seeks.add(target);
         if (followSeeks) positionMs = target;
       }
+      if (call.method == 'guoguoSeek') {
+        final target = args!['location'] as int;
+        seeks.add(target);
+        final actual = await seekCompletion?.call(target) ?? target;
+        if (followSeeks) positionMs = actual;
+        return actual;
+      }
       if (call.method == 'position') return positionMs;
       return null;
     });
     messenger.setMockMethodCallHandler(eventChannel, (_) async => null);
     messenger.setMockMethodCallHandler(connectivity, (_) async => ['wifi']);
     messenger.setMockMethodCallHandler(connectivityStatus, (_) async => null);
+    messenger.setMockMethodCallHandler(airplay, (_) async => {'routed': false});
   }
 
   void emit(String event, [Map<String, Object?> extra = const {}]) {
@@ -156,6 +166,7 @@ class _NativePlayer {
     messenger.setMockMethodCallHandler(eventChannel, null);
     messenger.setMockMethodCallHandler(connectivity, null);
     messenger.setMockMethodCallHandler(connectivityStatus, null);
+    messenger.setMockMethodCallHandler(airplay, null);
   }
 }
 
@@ -289,6 +300,145 @@ void main() {
   final originalOverrides = HttpOverrides.current;
   setUpAll(() => HttpOverrides.global = PlaylistOverrides());
   tearDownAll(() => HttpOverrides.global = originalOverrides);
+
+  for (final action in [
+    'pause',
+    'latest',
+    'episode',
+    'background',
+    'timeout',
+  ]) {
+    testWidgets('iOS pending seek respects $action and keeps native completion', (
+      tester,
+    ) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      final first = Completer<int>(), last = Completer<int>();
+      final platform = _NativePlayer();
+      platform.seekCompletion = (target) =>
+          target == 4000 ? first.future : last.future;
+      platform.install();
+      addTearDown(platform.uninstall);
+      final routes = _Routes();
+      final store = AppStore(storage: MemoryStorage(), provider: routes)
+        ..preferences.prefetch = false;
+      final downloads = _OnlineDownloads(store);
+      addTearDown(() {
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(accessibleNavigation: true),
+            child: child!,
+          ),
+          home: PlayerPage(
+            store: store,
+            downloads: downloads,
+            drama: const Drama(
+              id: 'seek',
+              source: DramaSource.huangguo,
+              title: '定位回归',
+            ),
+            episodes: [
+              Episode.fromJson({'id': '1'}, 0),
+              Episode.fromJson({'id': '2'}, 1),
+            ],
+            initialIndex: 0,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final player = tester
+          .widget<BetterPlayer>(find.byType(BetterPlayer))
+          .controller;
+      void scrub(double target) {
+        final slider = tester.widget<Slider>(find.byType(Slider));
+        slider.onChangeStart!(slider.value);
+        slider.onChanged!(target);
+        slider.onChangeEnd!(target);
+      }
+
+      scrub(4000);
+      await tester.pump();
+      expect(platform.seeks, [4000]);
+      expect(player.videoPlayerController!.value.position, Duration.zero);
+      final playCalls = platform.plays.length;
+      // A pending native seek is not a playback stall and cannot reload a source.
+      for (var i = 0; i < 13; i++) {
+        await tester.pump(const Duration(seconds: 2));
+      }
+      expect(routes.resolves, 1);
+      if (action == 'pause') {
+        await tester.tap(find.byTooltip('暂停'));
+        await tester.pump();
+        first.complete(4200);
+        await tester.pumpAndSettle();
+        expect(player.isPlaying(), isFalse);
+        expect(
+          player.videoPlayerController!.value.position,
+          const Duration(milliseconds: 4200),
+        );
+      } else if (action == 'latest') {
+        scrub(6000);
+        await tester.pump();
+        first.completeError(PlatformException(code: 'seek_cancelled'));
+        await tester.pump();
+        last.complete(6200);
+        await tester.pumpAndSettle();
+        expect(
+          player.videoPlayerController!.value.position,
+          const Duration(milliseconds: 6200),
+        );
+        expect(store.playbackDiagnostics.first.targetMs, 6000);
+        expect(store.playbackDiagnostics.first.result.name, 'completed');
+      } else if (action == 'episode') {
+        tester.widget<PlayerTransport>(find.byType(PlayerTransport)).onNext!();
+        await tester.pumpAndSettle();
+        final installed = platform.sources.length;
+        final newPlays = platform.plays.length;
+        first.complete(4200);
+        await tester.pumpAndSettle();
+        expect(installed, 2);
+        expect(platform.sources.length, installed);
+        expect(platform.plays.length, newPlays);
+        expect(player.videoPlayerController!.value.position, Duration.zero);
+      } else if (action == 'background') {
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        platform.emit('pause');
+        await tester.pump(const Duration(seconds: 1));
+        first.completeError(PlatformException(code: 'seek_cancelled'));
+        await tester.pump();
+        // A system lock-screen seek can move a paused native item while the
+        // dependency's Dart progress timer is stopped.
+        platform.positionMs = 7000;
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pumpAndSettle();
+        expect(platform.sources.length, 1);
+        expect(
+          player.videoPlayerController!.value.position,
+          const Duration(seconds: 7),
+        );
+        await tester.tap(find.byTooltip('播放'));
+        await tester.pumpAndSettle();
+        expect(platform.sources.length, 1);
+        expect(player.isPlaying(), isTrue);
+      } else {
+        first.completeError(PlatformException(code: 'seek_timeout'));
+        await tester.pumpAndSettle();
+        expect(find.text('定位未完成，请重试或继续播放'), findsOneWidget);
+        expect(routes.resolves, 1);
+      }
+      if (action != 'episode' && action != 'background') {
+        expect(platform.plays.length, playCalls);
+      }
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+  }
 
   testWidgets(
     'progressive startup declares HLS and plays without an initial seek',

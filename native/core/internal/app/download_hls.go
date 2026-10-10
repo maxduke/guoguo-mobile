@@ -24,6 +24,7 @@ type hlsAsset struct {
 	remote    string
 	body      []byte
 	playlist  bool
+	immutable bool
 }
 
 type hlsProxy struct {
@@ -35,6 +36,7 @@ type hlsProxy struct {
 	prefetchRun   bool
 	prefetchStats mediaPrefetchStats
 	reusedBytes   atomic.Int64
+	segmentCache  *mediaSegmentCache
 	credentials   *providerMediaCredentials
 	client        *http.Client
 	server        *http.Server
@@ -67,7 +69,7 @@ func (d *Downloader) newHLSProxy(ctx context.Context, media providerMedia, key [
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	proxy := &hlsProxy{
-		ctx: ctx, cancel: cancel, prefetched: make(map[string]prefetchedMedia),
+		ctx: ctx, cancel: cancel, prefetched: make(map[string]prefetchedMedia), segmentCache: newMediaSegmentCache(),
 		client:     mediaHTTPClient(&http.Client{Transport: d.client.Transport}, media),
 		base:       "http://" + listener.Addr().String() + "/" + nonce + "/",
 		referer:    media.Referer,
@@ -122,7 +124,11 @@ func (proxy *hlsProxy) Close() {
 	proxy.mu.Lock()
 	proxy.closed = true
 	proxy.prefetched = nil
+	cache := proxy.segmentCache
 	proxy.mu.Unlock()
+	if cache != nil {
+		cache.close()
+	}
 	if proxy.client != nil {
 		proxy.client.CloseIdleConnections()
 	}
@@ -155,7 +161,8 @@ func (proxy *hlsProxy) recordError(err error) {
 func (proxy *hlsProxy) addAsset(asset hlsAsset) string {
 	proxy.mu.Lock()
 	defer proxy.mu.Unlock()
-	if existing := proxy.assetIDs[asset.remote]; existing != "" {
+	identity := fmt.Sprintf("%s|%t|%t|%s", asset.remote, asset.playlist, asset.immutable, asset.extension)
+	if existing := proxy.assetIDs[identity]; existing != "" {
 		return existing
 	}
 	if len(proxy.assets) >= 16384 {
@@ -187,7 +194,7 @@ func (proxy *hlsProxy) addAsset(asset hlsAsset) string {
 	}
 	parsed, _ := url.Parse(local)
 	proxy.assets[parsed.Path] = asset
-	proxy.assetIDs[asset.remote] = local
+	proxy.assetIDs[identity] = local
 	return local
 }
 
@@ -196,7 +203,8 @@ func (proxy *hlsProxy) rewritePlaylist(raw, baseURL string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	rewrite := func(reference string, playlist, key, initialization bool) (string, error) {
+	immutable := immutableHLSPlaylist(raw)
+	rewrite := func(reference string, playlist, key, initialization, segment bool) (string, error) {
 		parsed, err := url.Parse(reference)
 		if err != nil {
 			return "", err
@@ -206,6 +214,7 @@ func (proxy *hlsProxy) rewritePlaylist(raw, baseURL string) (string, error) {
 			return "", errors.New("HLS 包含非 HTTP/HTTPS 资源地址")
 		}
 		asset := hlsAsset{remote: remote, playlist: playlist || strings.HasSuffix(strings.ToLower(parsed.Path), ".m3u8")}
+		asset.immutable = immutable && !asset.playlist && !key && (initialization || segment)
 		if key {
 			asset.extension = ".key"
 		} else if initialization {
@@ -235,7 +244,7 @@ func (proxy *hlsProxy) rewritePlaylist(raw, baseURL string) (string, error) {
 			var rewriteErr error
 			lines[index] = hlsURIAttribute.ReplaceAllStringFunc(line, func(attribute string) string {
 				reference := hlsURIAttribute.FindStringSubmatch(attribute)[1]
-				local, err := rewrite(reference, strings.HasPrefix(trimmed, "#EXT-X-MEDIA:") || strings.HasPrefix(trimmed, "#EXT-X-I-FRAME-STREAM-INF:"), strings.HasPrefix(trimmed, "#EXT-X-KEY:") || strings.HasPrefix(trimmed, "#EXT-X-SESSION-KEY:"), strings.HasPrefix(trimmed, "#EXT-X-MAP:"))
+				local, err := rewrite(reference, strings.HasPrefix(trimmed, "#EXT-X-MEDIA:") || strings.HasPrefix(trimmed, "#EXT-X-I-FRAME-STREAM-INF:"), strings.HasPrefix(trimmed, "#EXT-X-KEY:") || strings.HasPrefix(trimmed, "#EXT-X-SESSION-KEY:"), strings.HasPrefix(trimmed, "#EXT-X-MAP:"), false)
 				if err != nil {
 					rewriteErr = err
 					return attribute
@@ -246,7 +255,7 @@ func (proxy *hlsProxy) rewritePlaylist(raw, baseURL string) (string, error) {
 				return "", rewriteErr
 			}
 		} else if trimmed != "" {
-			lines[index], err = rewrite(trimmed, nextPlaylist, false, false)
+			lines[index], err = rewrite(trimmed, nextPlaylist, false, false, true)
 			if err != nil {
 				return "", err
 			}
@@ -302,7 +311,17 @@ func (proxy *hlsProxy) ServeHTTP(writer http.ResponseWriter, request *http.Reque
 		}
 	}
 	if len(body) == 0 {
-		if proxy.acquire != nil {
+		handled, cachedResponse, cacheContext, finishCacheResponse := proxy.serveSegmentCache(writer, request, asset)
+		if handled {
+			return
+		}
+		if finishCacheResponse != nil {
+			defer finishCacheResponse()
+		}
+		if cachedResponse != nil {
+			defer cachedResponse.Body.Close()
+		}
+		if proxy.acquire != nil && cachedResponse == nil {
 			release, err := proxy.acquire(request.Context())
 			if err != nil {
 				http.Error(writer, "媒体连接正在等待资源，请稍后重试", http.StatusServiceUnavailable)
@@ -314,7 +333,11 @@ func (proxy *hlsProxy) ServeHTTP(writer http.ResponseWriter, request *http.Reque
 		if asset.playlist {
 			method = http.MethodGet
 		}
-		upstream, err := http.NewRequestWithContext(request.Context(), method, asset.remote, nil)
+		upstreamContext := request.Context()
+		if cacheContext != nil {
+			upstreamContext = cacheContext
+		}
+		upstream, err := http.NewRequestWithContext(upstreamContext, method, asset.remote, nil)
 		if err != nil {
 			proxy.fail(writer, request, err)
 			return
@@ -330,7 +353,10 @@ func (proxy *hlsProxy) ServeHTTP(writer http.ResponseWriter, request *http.Reque
 				upstream.Header.Set(header, value)
 			}
 		}
-		response, err := proxy.fetch(upstream)
+		response := cachedResponse
+		if response == nil {
+			response, err = proxy.fetch(upstream)
+		}
 		if err != nil {
 			proxy.fail(writer, request, err)
 			return
