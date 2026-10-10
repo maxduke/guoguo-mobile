@@ -198,6 +198,11 @@ void main() {
             ),
             'recordWrite': await _async(() => app.persist(cache: false)),
             'cacheWrite': await _async(() => app.persist(records: false)),
+            'cacheWriteBurst5': await _async(() async {
+              await Future.wait([
+                for (var i = 0; i < 5; i++) app.persist(records: false),
+              ]);
+            }),
             'diskReadAndRestore': await _async(() async {
               final restored = AppStore(
                 storage: storage,
