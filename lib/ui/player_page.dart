@@ -18,6 +18,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'
     show ValueListenable, defaultTargetPlatform;
 import 'package:flutter/services.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../data/app_store.dart';
 import '../data/download_store.dart';
@@ -146,6 +147,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   bool _controls = false, _locked = false, _fill = false;
   bool _accessibleNavigation = false;
   bool _loading = true;
+  bool? _screenAwake = false;
   bool get _foreground => _lifecycle.foreground;
   bool get _pipActive => _lifecycle.pipActive;
   bool _modal = false, _gestureScrubbing = false, _transportScrubbing = false;
@@ -191,7 +193,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         autoPlay: false,
         autoDispose: false,
         fit: _fill ? BoxFit.cover : BoxFit.contain,
-        allowedScreenSleep: false,
         controlsConfiguration: const BetterPlayerControlsConfiguration(
           showControls: false,
         ),
@@ -344,6 +345,33 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   void _updateActionsState() {
     if (mounted) _actionsState.value = _currentActionsState;
+    _syncScreenAwake();
+  }
+
+  void _syncScreenAwake() {
+    // BetterPlayer's wakelock only covers its own fullscreen route. The app
+    // owns this fullscreen page, so it also owns the screen's playback policy.
+    _setScreenAwake(
+      mounted &&
+          _foreground &&
+          !_pipActive &&
+          !_localBlocked &&
+          !_loading &&
+          _error == null &&
+          _active != null &&
+          _player.videoPlayerController?.value.isPlaying == true,
+    );
+  }
+
+  void _setScreenAwake(bool awake) {
+    if (_screenAwake == awake) return;
+    _screenAwake = awake;
+    unawaited(
+      WakelockPlus.toggle(enable: awake).catchError((Object error) {
+        if (_screenAwake == awake) _screenAwake = null;
+        debugPrint('Could not update playback wakelock: $error');
+      }),
+    );
   }
 
   void _finishAttempt(PlaybackResult result) {
@@ -793,6 +821,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       default:
         break;
     }
+    _syncScreenAwake();
   }
 
   void _nativeEvent(VideoEvent event) {
@@ -2173,6 +2202,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   );
   @override
   void dispose() {
+    _setScreenAwake(false);
     _finishAttempt(PlaybackResult.cancelled);
     _session.invalidate();
     _save();

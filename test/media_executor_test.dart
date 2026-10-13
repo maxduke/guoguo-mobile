@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guoguo_mobile/platform/media_executor.dart';
 import 'package:guoguo_mobile/platform/provider_client.dart';
@@ -7,9 +9,13 @@ class _Session implements MediaNativeSession {
 
   @override
   final int id;
+  final completion = Completer<void>();
   int? code;
   String log;
   Object? resultError;
+
+  @override
+  Future<void> get done => completion.future;
 
   @override
   Future<int?> returnCode() async {
@@ -26,7 +32,6 @@ class _Adapter implements MediaNativeAdapter {
 
   final _Session session;
   final bool completeBeforeReturn;
-  void Function(MediaNativeSession)? callback;
   List<String>? receivedArguments;
   final cancelledIds = <int>[];
   Object? configureError;
@@ -37,13 +42,9 @@ class _Adapter implements MediaNativeAdapter {
   }
 
   @override
-  Future<MediaNativeSession> execute(
-    List<String> arguments,
-    void Function(MediaNativeSession) onComplete,
-  ) async {
+  Future<MediaNativeSession> execute(List<String> arguments) async {
     receivedArguments = arguments;
-    callback = onComplete;
-    if (completeBeforeReturn) onComplete(session);
+    if (completeBeforeReturn) finish();
     return session;
   }
 
@@ -52,7 +53,7 @@ class _Adapter implements MediaNativeAdapter {
     cancelledIds.add(sessionId);
   }
 
-  void finish() => callback!(session);
+  void finish() => session.completion.complete();
 }
 
 void main() {
