@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
   workflow_call:
     inputs:
-      artifact-retention-days:
-        type: number
-        default: 7
+      checks-only:
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -48,41 +48,26 @@ jobs:
         working-directory: native/core
   ios:
     name: iOS unsigned build
+    if: ${{ !inputs.checks-only }}
     needs: checks
     runs-on: macos-15
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.47.4'
-          channel: stable
-          cache: true
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.27.1'
-          cache-dependency-path: native/core/go.sum
-      - run: scripts/setup_core.sh
-      - run: scripts/build_core.sh ios
-      - run: flutter config --no-enable-swift-package-manager
-      - run: flutter pub get
-      - name: Verify iOS player correction
-        run: |
-          python3 scripts/prepare_ios_player.py
-          swiftc patches/better_player_plus/GuoguoMediaPolicy.swift packages/guoguo_core/ios/guoguo_core/Sources/guoguo_core/AirPlayQueueState.swift scripts/test_player_policy.swift -o "$RUNNER_TEMP/player-policy-tests"
-          "$RUNNER_TEMP/player-policy-tests"
-          swiftc patches/better_player_plus/GuoguoSeekCoordinator.swift scripts/test_player_seek.swift -o "$RUNNER_TEMP/player-seek-tests"
-          "$RUNNER_TEMP/player-seek-tests"
-      - name: Prepare linked media libraries
-        run: scripts/prepare_ios_media.sh
-      - run: flutter build ios --release --no-codesign
-      - name: Package and verify app version
-        run: python3 scripts/release.py package
+      - uses: ./.github/actions/build-ios
       - uses: actions/upload-artifact@v4
+        id: development-artifact
         if: github.event_name != 'pull_request'
+        continue-on-error: true
         with:
           name: Guoguo-iOS-unsigned
           path: build/release/*
           if-no-files-found: error
           compression-level: 0
-          retention-days: ${{ inputs.artifact-retention-days || 7 }}
+          retention-days: 7
+      - name: Report unavailable development download
+        if: steps.development-artifact.outcome == 'failure'
+        shell: bash
+        run: |
+          echo '::warning::The build and package verification passed, but the optional development download could not be stored. See the upload step for the cause.'
+          echo 'The optional development IPA download is unavailable. The build and package verification passed; Release publishes its verified package directly.' >> "$GITHUB_STEP_SUMMARY"
