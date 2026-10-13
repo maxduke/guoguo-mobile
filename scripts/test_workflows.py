@@ -17,37 +17,49 @@ class WorkflowTest(unittest.TestCase):
     def setUp(self):
         self.ci = (WORKFLOWS / 'ci.yml').read_text()
         self.release = (WORKFLOWS / 'release.yml').read_text()
+        self.ios_build = (WORKFLOWS.parent / 'actions/build-ios/action.yml').read_text()
 
-    def test_release_reuses_checks_and_builds_with_one_day_retention(self):
-        self.assertIn('  workflow_call:\n    inputs:\n      artifact-retention-days:\n'
-                      '        type: number\n        default: 7\n', self.ci)
-        build = job(self.release, 'build')
-        self.assertIn('uses: ./.github/workflows/ci.yml', build)
-        self.assertIn('artifact-retention-days: 1', build)
+    def test_release_reuses_required_checks_and_shared_ios_build(self):
+        self.assertIn('  workflow_call:\n    inputs:\n      checks-only:\n'
+                      '        type: boolean\n        default: false\n', self.ci)
+        checks = job(self.release, 'checks')
+        self.assertIn('uses: ./.github/workflows/ci.yml', checks)
+        self.assertIn('checks-only: true', checks)
+        self.assertIn('if: ${{ !inputs.checks-only }}', job(self.ci, 'ios'))
         self.assertIn('needs: checks', job(self.ci, 'ios'))
         self.assertIn('python3 -m unittest discover', job(self.ci, 'checks'))
-        self.assertIn('flutter build ios --release --no-codesign', job(self.ci, 'ios'))
+        for workflow in (self.ci, self.release):
+            self.assertIn('uses: ./.github/actions/build-ios', workflow)
+        self.assertIn('flutter build ios --release --no-codesign', self.ios_build)
+        self.assertNotIn('continue-on-error:', self.ios_build)
 
-    def test_pr_builds_but_does_not_upload_ipa(self):
+    def test_only_development_download_is_optional_after_verified_build(self):
         ios = job(self.ci, 'ios')
         before_upload, upload = ios.split('      - uses: actions/upload-artifact@v4\n')
-        self.assertIn('python3 scripts/release.py package', before_upload)
+        self.assertIn('uses: ./.github/actions/build-ios', before_upload)
+        self.assertNotIn('continue-on-error:', before_upload)
         self.assertNotIn("if: github.event_name != 'pull_request'", before_upload)
         self.assertIn("        if: github.event_name != 'pull_request'\n", upload)
-        self.assertIn('retention-days: ${{ inputs.artifact-retention-days || 7 }}', upload)
+        self.assertIn('continue-on-error: true', upload)
+        self.assertIn('retention-days: 7', upload)
+        self.assertIn("if: steps.development-artifact.outcome == 'failure'", upload)
+        package = self.ios_build.index('python3 scripts/release.py package')
+        verify = self.ios_build.index('python3 scripts/release.py verify --artifacts build/release')
+        self.assertLess(package, verify)
 
-    def test_release_downloads_only_the_current_run_package(self):
+    def test_release_builds_verifies_and_uploads_in_the_same_job(self):
         publish = job(self.release, 'release')
-        self.assertIn("if: startsWith(github.ref, 'refs/tags/v')\n    needs: build\n", publish)
-        self.assertIn('uses: actions/download-artifact@v4', publish)
-        self.assertIn('name: Guoguo-iOS-unsigned', publish)
-        self.assertIn('path: release-assets', publish)
+        self.assertIn("if: startsWith(github.ref, 'refs/tags/v')\n    needs: checks\n", publish)
+        self.assertIn('runs-on: macos-15', publish)
+        build = publish.index('uses: ./.github/actions/build-ios')
+        self.assertLess(build, publish.index('gh release upload'))
+        self.assertIn('gh release upload "$RELEASE_TAG" build/release/*', publish)
+        self.assertNotIn('actions/download-artifact', self.release)
+        self.assertNotIn('actions/upload-artifact', self.release)
         self.assertNotIn('gh run ', self.release)
         self.assertNotIn('run-id:', self.release)
         self.assertNotIn('always()', publish)
         self.assertNotIn('continue-on-error:', self.release)
-        verify = publish.index('python3 scripts/release.py verify --artifacts release-assets')
-        self.assertLess(verify, publish.index('gh release upload'))
 
     def test_tag_builds_are_not_cancelled_by_regular_ci(self):
         ci_header = self.ci.split('jobs:\n', 1)[0]
@@ -63,7 +75,7 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn('--verify-tag --draft', publish)
         self.assertLess(publish.index('gh release upload'), publish.index('--draft=false'))
         self.assertNotIn('contents: write', self.ci)
-        self.assertNotIn('contents: write', job(self.release, 'build'))
+        self.assertNotIn('contents: write', job(self.release, 'checks'))
         self.assertNotIn('gh release ', self.ci)
 
 
