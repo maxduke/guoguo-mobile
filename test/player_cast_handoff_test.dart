@@ -110,11 +110,12 @@ class NativeCastPlayer {
       }
       if (call.method == 'play') plays++;
       if (call.method == 'pause') pauses++;
-      if (call.method == 'seekTo') {
+      if (call.method == 'seekTo' || call.method == 'guoguoSeek') {
         final target = (call.arguments as Map)['location'] as int;
         seeks.add(target);
         await seekGate?.future;
         position = target;
+        if (call.method == 'guoguoSeek') return position;
       }
       if (call.method == 'position') return position;
       if (call.method == 'isPictureInPictureSupported') return true;
