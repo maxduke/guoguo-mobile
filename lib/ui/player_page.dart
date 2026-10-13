@@ -185,6 +185,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           _foreground &&
           !_pipActive &&
           _airplay?.blocksLocal != true,
+      completePrefetch: () => !widget.store.preferences.progressivePreparation,
       onPhase: _phase,
       preparerFactory: widget.preparerFactory,
     );
@@ -879,7 +880,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       bufferedAhead: ahead,
       playing: value.isPlaying,
       buffering: value.isBuffering,
-      local: _active?.timing.local == true,
+      local: _active != null && !_active!.path.startsWith('http'),
     );
   }
 
@@ -1219,6 +1220,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           widget.downloads.localFile(widget.drama, widget.episodes[index]),
       canResolve: () => !widget.localOnly && !widget.store.offline,
       progressive: (_) => false,
+      completePrefetch: () => true,
       onPhase: (_, label) {
         if (mounted && airplay.preparing) setState(() => _loadingPhase = label);
       },

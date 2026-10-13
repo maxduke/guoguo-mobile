@@ -84,6 +84,10 @@ void main() {
       expect(ready(100, buffer: 2), false);
       expect(ready(100, buffering: true), false);
       expect(ready(100, buffer: 0, local: true), true);
+      expect(ready(1, buffer: 0, local: true), false);
+      expect(ready(2, buffer: 0, local: true), true);
+      expect(ready(30, buffer: 0, local: true), true);
+      expect(ready(30, buffer: 0, local: true, buffering: true), false);
     },
   );
 

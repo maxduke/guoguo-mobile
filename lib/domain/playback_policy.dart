@@ -61,5 +61,6 @@ bool shouldPrefetch({
     duration > Duration.zero &&
     position >= const Duration(seconds: 2) &&
     (local || bufferedAhead >= const Duration(seconds: 5)) &&
-    (position.inMilliseconds >= duration.inMilliseconds ~/ 2 ||
+    (local ||
+        position.inMilliseconds >= duration.inMilliseconds ~/ 2 ||
         duration - position <= const Duration(seconds: 45));

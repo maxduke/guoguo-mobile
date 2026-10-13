@@ -252,6 +252,10 @@ class _PrefetchRoutes extends _Routes {
 }
 
 class _ProgressivePreparer extends MediaPreparer {
+  _ProgressivePreparer({
+    this.completePath = 'https://example.test/complete.mp4',
+  });
+  final String completePath;
   int preparations = 0;
   ResolvedMedia? preparedMedia;
   bool requested = false, cancelled = false, disposed = false;
@@ -279,7 +283,7 @@ class _ProgressivePreparer extends MediaPreparer {
     await readyGate?.future;
     return progressive
         ? 'http://127.0.0.1:43210/fixture/index.m3u8'
-        : 'https://example.test/complete.mp4';
+        : completePath;
   }
 
   @override
@@ -734,7 +738,7 @@ void main() {
   }
 
   for (final mode in ['ready', 'promote', 'network eviction', 'cellular']) {
-    testWidgets('bounded encrypted prefetch $mode defers media preparation', (
+    testWidgets('bounded progressive prefetch $mode defers media preparation', (
       tester,
     ) async {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
@@ -754,7 +758,8 @@ void main() {
       );
       final store = AppStore(storage: MemoryStorage(), provider: provider);
       final downloads = _OnlineDownloads(store);
-      final first = _ProgressivePreparer(), next = _ProgressivePreparer();
+      final first = _ProgressivePreparer();
+      final next = _ProgressivePreparer();
       var created = 0;
       addTearDown(() {
         downloads.dispose();
@@ -780,6 +785,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      store.preferences.progressivePreparation = true;
       final player = tester
           .widget<BetterPlayer>(find.byType(BetterPlayer))
           .controller;
@@ -821,6 +827,165 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       await tester.pumpAndSettle();
     });
+  }
+
+  for (final mode in [
+    'ready',
+    'promote preparation',
+    'disable prefetch',
+    'network eviction',
+    'background',
+    'cellular',
+    'PiP ready',
+    'PiP promote',
+    'PiP close',
+  ]) {
+    testWidgets(
+      'complete Hongguo prefetch $mode works without native buffer ranges',
+      (tester) async {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        final platform = _NativePlayer()
+          ..followSeeks = true
+          ..install();
+        addTearDown(platform.uninstall);
+        if (mode == 'cellular') {
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(
+                _NativePlayer.connectivity,
+                (_) async => ['mobile'],
+              );
+        }
+        final directory = Directory.systemTemp.createTempSync(
+          'guoguo-prefetch-',
+        );
+        addTearDown(() => directory.deleteSync(recursive: true));
+        final firstPath = '${directory.path}/first.mp4';
+        final nextPath = '${directory.path}/next.mp4';
+        final firstUri = Uri.file(firstPath).toString();
+        final nextUri = Uri.file(nextPath).toString();
+        File(firstPath).writeAsBytesSync([1]);
+        File(nextPath).writeAsBytesSync([2]);
+        final provider = _PrefetchRoutes();
+        final store = AppStore(storage: MemoryStorage(), provider: provider);
+        final downloads = _OnlineDownloads(store);
+        final first = _ProgressivePreparer(completePath: firstPath);
+        final next = _ProgressivePreparer(completePath: nextPath);
+        final gate =
+            mode == 'ready' || mode == 'cellular' || mode == 'PiP ready'
+            ? null
+            : (next.readyGate = Completer<void>());
+        var created = 0;
+        addTearDown(() {
+          downloads.dispose();
+          store.dispose();
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            home: PlayerPage(
+              store: store,
+              downloads: downloads,
+              drama: const Drama(
+                id: 'fixture',
+                source: DramaSource.hongguo,
+                title: '完整预缓冲',
+              ),
+              episodes: [
+                Episode.fromJson({'id': '1'}, 0),
+                Episode.fromJson({'id': '2'}, 1),
+              ],
+              initialIndex: 0,
+              preparerFactory: () => created++ == 0 ? first : next,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final player = tester
+            .widget<BetterPlayer>(find.byType(BetterPlayer))
+            .controller;
+        expect(player.videoPlayerController!.value.buffered, isEmpty);
+        await player.seekTo(const Duration(seconds: 2));
+        await tester.pump(const Duration(seconds: 2));
+        await tester.pump(const Duration(seconds: 2));
+        await tester.pump();
+        expect(provider.resolves, mode == 'cellular' ? 1 : 2);
+        expect(next.preparations, mode == 'cellular' ? 0 : 1);
+        expect(next.requested, isFalse);
+        expect(platform.sources, [firstUri]);
+        if (mode.startsWith('PiP')) {
+          platform.emit('pipStart');
+          await tester.pump();
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.paused,
+          );
+          await tester.pump(const Duration(seconds: 1));
+          expect(next.cancelled, isFalse);
+        }
+        if (mode == 'ready' ||
+            mode == 'promote preparation' ||
+            mode == 'PiP ready' ||
+            mode == 'PiP promote') {
+          platform.emit('completed');
+          await tester.pump(const Duration(milliseconds: 500));
+          if (gate != null) {
+            expect(platform.sources, [firstUri]);
+            expect(next.preparations, 1);
+            expect(next.cancelled, isFalse);
+            gate.complete();
+          }
+          await tester.pumpAndSettle();
+          expect(platform.sources, [firstUri, nextUri]);
+          expect(next.preparations, 1);
+          expect(provider.resolves, 2);
+          expect(provider.releases, isEmpty);
+          expect(platform.ids, [7, 7]);
+          expect(player.isPlaying(), isTrue);
+        } else if (mode != 'cellular') {
+          if (mode == 'disable prefetch') {
+            await store.preferences.setPrefetch(false);
+          } else if (mode == 'network eviction') {
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+                .handlePlatformMessage(
+                  _NativePlayer.connectivityStatus.name,
+                  const StandardMethodCodec().encodeSuccessEnvelope(['mobile']),
+                  (_) {},
+                );
+          } else if (mode == 'PiP close') {
+            platform.emit('pipStop');
+          } else {
+            tester.binding.handleAppLifecycleStateChanged(
+              AppLifecycleState.paused,
+            );
+            await tester.pump(const Duration(seconds: 1));
+          }
+          await tester.pump();
+          expect(next.cancelled, isTrue);
+          expect(first.cancelled, isFalse);
+          final plays = platform.plays.length;
+          gate!.complete();
+          await tester.pumpAndSettle();
+          expect(next.disposed, isTrue);
+          expect(provider.releases, ['session-2-0']);
+          expect(platform.sources, [firstUri]);
+          expect(platform.plays, hasLength(plays));
+        }
+        if (mode == 'background' || mode.startsWith('PiP')) {
+          store.preferences.prefetch = false;
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+          if (mode.startsWith('PiP')) platform.emit('pipStop');
+          await tester.pump();
+        }
+        await tester.pumpWidget(const SizedBox());
+        await tester.pumpAndSettle();
+        expect(provider.releases, contains('session-1-0'));
+        if (mode != 'cellular') {
+          expect(provider.releases, contains('session-2-0'));
+        }
+      },
+    );
   }
 
   for (final trigger in [

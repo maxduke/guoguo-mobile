@@ -77,7 +77,7 @@ class PlaybackDiagnosticsPage extends StatelessWidget {
                       '${sample.at.toLocal().toString().split('.').first} · ${sample.local ? '本地视频' : '在线视频'}${sample.preloaded
                           ? sample.local
                                 ? ' · 已准备本地文件'
-                                : ' · 已提前准备地址'
+                                : ' · 已提前准备'
                           : ''}',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
@@ -101,8 +101,8 @@ class PlaybackDiagnosticsPage extends StatelessWidget {
                       Text(
                         sample.prefetchBytes > 0
                             ? '预取缓存 ${(sample.prefetchBytes / 1024).toStringAsFixed(0)} KiB · 预取 ${sample.prefetchMs} ms；本次等待单独计时。'
-                            : sample.local
-                            ? '本地准备耗时来自缓存，本次等待单独计时。'
+                            : sample.local || sample.preparation == 'complete'
+                            ? '媒体准备耗时包含预缓冲阶段，本次等待单独计时。'
                             : '本次未缓存媒体首段；地址解析耗时来自预备阶段，本次等待单独计时。',
                         style: TextStyle(fontSize: 12),
                       ),
