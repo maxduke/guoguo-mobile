@@ -40,6 +40,7 @@ class PlaybackSessionController {
     required this.localFile,
     required this.canResolve,
     required this.progressive,
+    required this.completePrefetch,
     required this.onPhase,
     MediaPreparer Function()? preparerFactory,
     DateTime Function()? now,
@@ -63,6 +64,7 @@ class PlaybackSessionController {
   final Future<String?> Function(int) localFile;
   final bool Function() canResolve;
   final bool Function(int) progressive;
+  final bool Function() completePrefetch;
   final void Function(int, String) onPhase;
   final MediaPreparer Function() _preparerFactory;
   final DateTime Function() _now;
@@ -84,7 +86,7 @@ class PlaybackSessionController {
 
   Future<PreparedEpisode> prefetch(
     int index, {
-    Duration timeout = const Duration(seconds: 15),
+    Duration timeout = const Duration(minutes: 1),
   }) => _buffer.prepare(index, backgroundTimeout: timeout);
 
   Future<PreparedEpisode> prepare(int index, {required int ticket}) async {
@@ -187,22 +189,32 @@ class PlaybackSessionController {
           cancellation.check();
           timing.prefetchBytes = media.prefetchedBytes;
           timing.prefetchMs = media.prefetchMs;
-          return PreparedEpisode._(
-            preparer,
-            media,
-            media.url,
-            timing,
-            cancellation,
-            _now(),
-            deferred: true,
-          );
+          if (media.contentKey.isEmpty ||
+              !(_forceComplete.contains(index) || completePrefetch())) {
+            return PreparedEpisode._(
+              preparer,
+              media,
+              media.url,
+              timing,
+              cancellation,
+              _now(),
+              deferred: true,
+            );
+          }
+          // Complete playback must finish decryption before the next selection.
+          // Selection shares this job and only removes its background deadline.
+          stage.reset();
+          stageName = 'prepare';
         }
         _phase(
           index,
           media.contentKey.isEmpty ? '正在连接视频…' : '正在准备视频，首次播放可能稍久…',
         );
         cancellation.check();
-        path = await preparer.prepare(media, progressive: _progressive(index));
+        path = await preparer.prepare(
+          media,
+          progressive: !cancellation.background && _progressive(index),
+        );
         _prepared(timing, preparer, media, index);
         timing.prepareMs = stage.elapsedMilliseconds;
         cancellation.check();

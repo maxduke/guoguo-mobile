@@ -106,6 +106,7 @@ class _Fixture {
   DateTime now = DateTime.utc(2026, 10, 3);
   String? local;
   bool online = true, progressive = false;
+  bool? fullPrefetch;
   _Preparer Function()? jobFactory;
   late final session = PlaybackSessionController(
     provider: provider,
@@ -117,6 +118,7 @@ class _Fixture {
     localFile: (_) async => local,
     canResolve: () => online,
     progressive: (_) => progressive,
+    completePrefetch: () => fullPrefetch ?? !progressive,
     onPhase: (_, label) => phases.add(label),
     now: () => now,
     preparerFactory: () {
@@ -135,12 +137,16 @@ class _Fixture {
 
 void main() {
   test(
-    'background CENC warms once and foreground uses the same owned session',
+    'background CENC completes preparation before selection and reuses its file',
     () async {
       final f = _Fixture();
       final warmed = await f.session.prefetch(1);
-      expect(f.jobs.single.inputs, isEmpty);
+      expect(f.jobs.single.inputs, hasLength(1));
+      expect(f.jobs.single.policies, [false]);
+      expect(warmed.path, '/tmp/prepared-session-1.mp4');
+      expect(warmed.timing.preparation, 'complete');
       expect(warmed.timing.prefetchBytes, 64);
+      f.now = f.now.add(const Duration(minutes: 3));
       final selected = await f.session.prepare(
         1,
         ticket: f.session.invalidate(),
@@ -148,6 +154,7 @@ void main() {
       expect(identical(warmed, selected), isTrue);
       expect(f.provider.resolves, 1);
       expect(f.provider.warms, 1);
+      expect(f.jobs.single.inputs, hasLength(1));
       expect(
         f.jobs.single.inputs.single.url,
         'http://127.0.0.1:43210/session-1.mp4',
@@ -162,6 +169,39 @@ void main() {
       expect(f.jobs.single.disposals, 1);
     },
   );
+
+  test(
+    'progressive and direct prefetch keep bounded media preparation',
+    () async {
+      for (final mode in ['progressive', 'direct']) {
+        final f = _Fixture()..progressive = mode == 'progressive';
+        f.provider.encrypted = mode != 'direct';
+        final warmed = await f.session.prefetch(1);
+        expect(f.jobs.single.inputs, isEmpty);
+        expect(warmed.timing.prefetchBytes, 64);
+        final selected = await f.session.prepare(
+          1,
+          ticket: f.session.invalidate(),
+        );
+        expect(selected, same(warmed));
+        expect(f.jobs.single.policies, [mode == 'progressive']);
+        expect(selected.timing.preparation, mode);
+        expect(f.provider.resolves, 1);
+      }
+    },
+  );
+
+  test('complete prefetch does not start a progressive producer', () async {
+    final f = _Fixture()
+      ..progressive = true
+      ..fullPrefetch = true;
+    final warmed = await f.session.prefetch(1);
+    expect(f.jobs.single.policies, [false]);
+    expect(warmed.path, '/tmp/prepared-session-1.mp4');
+    final selected = await f.session.prepare(1, ticket: f.session.invalidate());
+    expect(selected, same(warmed));
+    expect(f.jobs.single.inputs, hasLength(1));
+  });
 
   test(
     'selection ends in-flight warming and removes only the background deadline',
@@ -180,6 +220,80 @@ void main() {
       expect(f.provider.resolves, 1);
       expect(f.provider.releases, isEmpty);
       expect(f.jobs.single.inputs, hasLength(1));
+    },
+  );
+
+  testWidgets(
+    'selection shares CENC preparation after the old 15 second limit',
+    (tester) async {
+      final f = _Fixture();
+      final gate = Completer<String>();
+      f.jobFactory = () => _Preparer()..ready = gate;
+      final prefetch = f.session.prefetch(1);
+      await tester.pump();
+      expect(f.jobs.single.inputs, hasLength(1));
+      await tester.pump(const Duration(seconds: 30));
+      expect(f.jobs.single.cancelled, isFalse);
+      expect(f.session.contains(1), isTrue);
+      final selecting = f.session.prepare(1, ticket: f.session.invalidate());
+      await tester.pump(const Duration(seconds: 40));
+      expect(f.jobs.single.cancelled, isFalse);
+      gate.complete('/tmp/ready.mp4');
+      await tester.pump();
+      expect(await selecting, same(await prefetch));
+      expect(f.jobs.single.inputs, hasLength(1));
+      expect(f.provider.resolves, 1);
+      f.session.close();
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'CENC background deadline cancels preparation and frees late media',
+    (tester) async {
+      final f = _Fixture();
+      final gate = Completer<String>();
+      f.jobFactory = () => _Preparer()..ready = gate;
+      final prefetch = f.session.prefetch(
+        1,
+        timeout: const Duration(seconds: 3),
+      );
+      final failure = expectLater(prefetch, throwsA(isA<TimeoutException>()));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 3));
+      await failure;
+      expect(f.jobs.single.cancelled, isTrue);
+      expect(f.session.contains(1), isFalse);
+      gate.complete('/tmp/late.mp4');
+      await tester.pump();
+      expect(f.session.peek(1), isNull);
+      expect(f.jobs.single.disposals, 1);
+      expect(f.provider.releases, ['session-1']);
+    },
+  );
+
+  test(
+    'background preparation failure keeps the active episode usable',
+    () async {
+      final f = _Fixture();
+      final current = await f.session.prepare(
+        0,
+        ticket: f.session.invalidate(),
+      );
+      final gate = Completer<String>();
+      f.jobFactory = () => _Preparer()..ready = gate;
+      final prefetch = f.session.prefetch(1);
+      final failure = expectLater(prefetch, throwsA(isA<ProviderException>()));
+      await settle();
+      gate.completeError(const ProviderException('准备失败'));
+      await failure;
+      expect(f.session.peek(0), same(current));
+      expect(f.jobs.first.cancelled, isFalse);
+      expect(f.provider.releases, ['session-2']);
+      f.jobFactory = null;
+      final next = await f.session.prepare(1, ticket: f.session.invalidate());
+      expect(next.path, '/tmp/prepared-session-3.mp4');
+      expect(f.provider.resolves, 3);
     },
   );
 
@@ -223,13 +337,17 @@ void main() {
   });
 
   test(
-    'evicting deferred preparation rejects its late completion and preserves retry',
+    'evicting background preparation rejects its late completion and preserves retry',
     () async {
       final f = _Fixture();
       final gate = Completer<String>();
       f.jobFactory = () =>
           f.jobs.isEmpty ? (_Preparer()..ready = gate) : _Preparer();
-      await f.session.prefetch(1);
+      final prefetch = f.session.prefetch(1);
+      final prefetchFailure = expectLater(
+        prefetch,
+        throwsA(isA<EpisodeCancelled>()),
+      );
       final old = f.session.prepare(1, ticket: f.session.invalidate());
       final failure = expectLater(old, throwsA(isA<EpisodeCancelled>()));
       await settle();
@@ -238,6 +356,7 @@ void main() {
       final fresh = await f.session.prepare(1, ticket: f.session.invalidate());
       gate.complete('/tmp/late.mp4');
       await failure;
+      await prefetchFailure;
       await settle();
       expect(f.session.peek(1), same(fresh));
       expect(f.jobs.first.cancelled, isTrue);

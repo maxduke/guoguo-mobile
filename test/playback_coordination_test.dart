@@ -84,6 +84,7 @@ class _Fixture {
     localFile: (_) async => null,
     canResolve: () => true,
     progressive: (_) => false,
+    completePrefetch: () => true,
     onPhase: (_, _) {},
   );
   late final recovery = PlaybackRecoveryController(session, provider);
