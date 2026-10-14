@@ -52,6 +52,7 @@ IPA 未签名，不能直接点击安装。签名工具、账号与证书均由�
 工具版本与 CI 对齐：Flutter 3.47.4、Go 1.27.1。iOS 原生编译需要 macOS、Xcode 和 CocoaPods。
 
 ```bash
+python3 scripts/prepare_player.py
 flutter pub get
 scripts/setup_core.sh
 scripts/build_core.sh ios
@@ -62,6 +63,8 @@ flutter build ios --release --no-codesign
 ```
 
 `prepare_ios_media.sh` 在构建时准备依赖包提供的原生 FFmpeg 库；应用运行时不会下载或启动桌面可执行文件。
+
+`prepare_player.py` 下载并校验锁定的 BetterPlayer 1.4.1 包，在 `.dart_tool/player` 生成带 Dart 轮询修复的副本；`pubspec.yaml` 的路径覆盖确保后续 `flutter pub get`、分析、测试与构建继续使用该副本。首次检出或 `flutter clean` 后先运行此脚本。共享 pub 缓存和个人 `pubspec_overrides.yaml` 不会被修改；个人配置如覆盖 BetterPlayer，脚本会明确拒绝冲突。
 
 `prepare_ios_player.py` 校验锁定的播放器源码并生成仅供 CocoaPods 使用的 iOS 修复副本，依赖缓存保持原样；Podfile 也会在安装依赖时准备该副本。当前 iOS 构建使用 CocoaPods，保持 Swift Package Manager 关闭。
 

@@ -36,6 +36,7 @@ jobs:
           cache-dependency-path: native/core/go.sum
       - name: Lint GitHub Actions workflow
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - run: python3 scripts/prepare_player.py
       - run: flutter pub get
       - run: dart format --output=none --set-exit-if-changed lib test packages/guoguo_core/lib
       - run: flutter analyze
