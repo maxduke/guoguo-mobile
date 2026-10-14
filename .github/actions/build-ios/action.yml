@@ -18,6 +18,8 @@ runs:
       shell: bash
     - run: flutter config --no-enable-swift-package-manager
       shell: bash
+    - run: python3 scripts/prepare_player.py
+      shell: bash
     - run: flutter pub get
       shell: bash
     - name: Verify iOS player correction

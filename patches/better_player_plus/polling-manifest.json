@@ -1,0 +1,10 @@
+{
+  "version": "1.4.1",
+  "archiveSha256": "49c02ec4d975cf0da3f55c3bf07a4eb3eeab2b417790d8fa3e29a77947cb02f1",
+  "files": {
+    "lib/src/video_player/video_player.dart": {
+      "original": "bf10e0ac3cfa56c3a0576912a6dec9c40f630d0a51ea399a8f175da3eb107a24",
+      "patched": "0a2dd1f5eab2b313372376e463fe10d6c32e615f419e763ca37daa23492acda2"
+    }
+  }
+}

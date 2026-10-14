@@ -1,4 +1,4 @@
-# BetterPlayer iOS HLS correction
+# BetterPlayer Dart polling and iOS HLS corrections
 
 This is a scoped correction to the locked `better_player_plus` 1.4.1 package.
 The original code is licensed under Apache 2.0; see [LICENSE](LICENSE).
@@ -37,3 +37,27 @@ in `manifest.json`, prepares a copy under `.dart_tool/ios_player`, and adds
 `GuoguoMediaPolicy.swift`. CocoaPods uses this copy; the pub cache stays unchanged.
 CI compiles the policy's Swift regressions and the full iOS app. The package pin
 and source checks must be deliberately updated before using another package version.
+
+
+`dart-polling.patch` fixes overlapping asynchronous play commands installing
+multiple 300 ms position timers on the same player. A generation owns the timer
+and its in-flight results. Pause, completion, source replacement, seek, errors and
+disposal invalidate it before asynchronous work can resume. Only one position /
+absolute-position request pair may be in flight, even across source changes.
+Late seek completion cannot restore superseded play intent or update a new source.
+Disposal cancels polling immediately and does not wait for outstanding play or
+position replies; repeated disposal shares the same cleanup future.
+
+`scripts/prepare_player.py` verifies the original pub.dev archive checksum and
+both source hashes in `polling-manifest.json`, then generates the full dependency
+under `.dart_tool/player`. The checked-in `pubspec.yaml` path override makes normal
+pub resolution retain this correction. Run preparation before the first
+`flutter pub get`, and again after `flutter clean`. CI and the shared iOS build
+perform this step automatically. A failed verification leaves an existing build
+copy untouched and fails the setup command. No shared pub cache files or personal
+pub overrides are modified. The existing iOS preparation still applies its own
+verified patch to the generated dependency's unchanged native sources.
+
+`test/player_polling_test.dart` exercises the actual dependency with gated native
+play/position replies, source changes, native play/pause events, disposal and 80
+successive episodes. Widget-test timer checks also reject leaked polling timers.

@@ -1,2 +1,3 @@
 # A unified patch uses a single space for an empty context line.
 patches/better_player_plus/ios-hls.patch -whitespace
+patches/better_player_plus/dart-polling.patch -whitespace

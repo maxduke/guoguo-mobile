@@ -1,0 +1,222 @@
+--- a/lib/src/video_player/video_player.dart
++++ b/lib/src/video_player/video_player.dart
+@@ -186,6 +186,10 @@
+   int? _textureId;
+ 
+   Timer? _timer;
++  int _pollGeneration = 0;
++  bool _pollInFlight = false;
++  Future<void>? _disposeFuture;
++  int? _seekGeneration;
+   bool _isDisposed = false;
+   late Completer<void> _initializingCompleter;
+   StreamSubscription<dynamic>? _eventSubscription;
+@@ -217,8 +221,8 @@
+           _initializingCompleter.complete(null);
+           _applyPlayPause();
+         case VideoEventType.completed:
++          _invalidatePolling();
+           value = value.copyWith(isPlaying: false, position: value.duration);
+-          _timer?.cancel();
+         case VideoEventType.bufferingUpdate:
+           value = value.copyWith(buffered: event.buffered);
+         case VideoEventType.bufferingStart:
+@@ -244,13 +248,14 @@
+     }
+ 
+     void errorListener(Object object) {
++      if (_isDisposed) return;
++      _invalidatePolling();
+       if (object is PlatformException) {
+         final PlatformException e = object;
+         value = value.copyWith(errorDescription: e.message);
+       } else {
+         value.copyWith(errorDescription: object.toString());
+       }
+-      _timer?.cancel();
+       if (!_initializingCompleter.isCompleted) {
+         _initializingCompleter.completeError(object);
+       }
+@@ -376,12 +381,15 @@
+       return;
+     }
+ 
++    _invalidatePolling();
++    _seekPosition = null;
+     value = VideoPlayerValue(duration: null, isLooping: value.isLooping, volume: value.volume);
+ 
+     if (!_creatingCompleter.isCompleted) {
+       await _creatingCompleter.future;
+     }
+ 
++    if (_isDisposed) return;
+     _initializingCompleter = Completer<void>();
+ 
+     await VideoPlayerPlatform.instance.setDataSource(_textureId, dataSourceDescription);
+@@ -389,17 +397,24 @@
+   }
+ 
+   @override
+-  Future<void> dispose() async {
++  Future<void> dispose() {
++    if (_disposeFuture != null) return _disposeFuture!;
++    // Reserve cleanup before notifying listeners, which may dispose reentrantly.
++    final completion = Completer<void>();
++    _disposeFuture = completion.future;
++    completion.complete(_dispose());
++    return completion.future;
++  }
++
++  Future<void> _dispose() async {
++    // Invalidate synchronously: native play/position replies may still be pending.
++    _isDisposed = true;
++    _invalidatePolling();
++    value = VideoPlayerValue.uninitialized();
+     await _creatingCompleter.future;
+-    if (!_isDisposed) {
+-      _isDisposed = true;
+-      value = VideoPlayerValue.uninitialized();
+-      _timer?.cancel();
+-      await _eventSubscription?.cancel();
+-      await _videoPlayerPlatform.dispose(_textureId);
+-      await videoEventStreamController.close();
+-    }
+-    _isDisposed = true;
++    await _eventSubscription?.cancel();
++    await _videoPlayerPlatform.dispose(_textureId);
++    await videoEventStreamController.close();
+     super.dispose();
+   }
+ 
+@@ -409,6 +424,7 @@
+   /// has been sent to the platform, not when playback itself is totally
+   /// finished.
+   Future<void> play() async {
++    if (_isDisposed) return;
+     value = value.copyWith(isPlaying: true);
+     await _applyPlayPause();
+   }
+@@ -422,6 +438,7 @@
+ 
+   /// Pauses the video.
+   Future<void> pause() async {
++    if (_isDisposed) return;
+     value = value.copyWith(isPlaying: false);
+     await _applyPlayPause();
+   }
+@@ -448,32 +465,45 @@
+     }
+   }
+ 
++  int _invalidatePolling() {
++    _timer?.cancel();
++    _timer = null;
++    return ++_pollGeneration;
++  }
++
++  bool _canPoll(int generation) =>
++      !_isDisposed && generation == _pollGeneration && value.isPlaying && value.initialized;
++
+   Future<void> _applyPlayPause() async {
+-    if (!_created || _isDisposed) {
+-      return;
+-    }
+-    _timer?.cancel();
++    final generation = _invalidatePolling();
++    if (!_created || _isDisposed) return;
+     if (value.isPlaying) {
+       await _videoPlayerPlatform.play(_textureId);
+-      _timer = Timer.periodic(const Duration(milliseconds: 300), (Timer timer) async {
+-        if (_isDisposed) {
+-          return;
+-        }
+-        final Duration? newPosition = await position;
+-        final DateTime? newAbsolutePosition = await absolutePosition;
+-        if (_isDisposed) {
+-          return;
+-        }
+-        _updatePosition(newPosition, absolutePosition: newAbsolutePosition);
+-        if (_seekPosition != null && newPosition != null) {
+-          final difference = newPosition.inMilliseconds - _seekPosition!.inMilliseconds;
+-          if (difference > 0) {
+-            _seekPosition = null;
+-          }
+-        }
+-      });
++      // An overlapping command, source replacement or disposal owns the clock now.
++      if (!_canPoll(generation)) return;
++      _timer = Timer.periodic(const Duration(milliseconds: 300), (_) => _pollPosition(generation));
+     } else {
+       await _videoPlayerPlatform.pause(_textureId);
++    }
++  }
++
++  Future<void> _pollPosition(int generation) async {
++    // Keep one request pair in flight, including across source/play generations.
++    if (!_canPoll(generation) || _pollInFlight) return;
++    _pollInFlight = true;
++    try {
++      final Duration? newPosition = await position;
++      if (!_canPoll(generation)) return;
++      final DateTime? newAbsolutePosition = await absolutePosition;
++      if (!_canPoll(generation)) return;
++      _updatePosition(newPosition, absolutePosition: newAbsolutePosition);
++      if (_canPoll(generation) && _seekPosition != null && newPosition != null && newPosition > _seekPosition!) {
++        _seekPosition = null;
++      }
++    } catch (_) {
++      if (_canPoll(generation)) rethrow;
++    } finally {
++      _pollInFlight = false;
+     }
+   }
+ 
+@@ -514,7 +544,9 @@
+   /// If [moment] is outside of the video's full range it will be automatically
+   /// and silently clamped.
+   Future<void> seekTo(Duration? position) async {
+-    _timer?.cancel();
++    if (_isDisposed || !value.initialized || position == null) return;
++    final generation = _invalidatePolling();
++    _seekGeneration = generation;
+     bool isPlaying = value.isPlaying;
+     final int positionInMs = value.position.inMilliseconds;
+     final int durationInMs = value.duration?.inMilliseconds ?? 0;
+@@ -527,7 +559,7 @@
+     }
+ 
+     Duration? positionToSeek = position;
+-    if (position! > value.duration!) {
++    if (position > value.duration!) {
+       positionToSeek = value.duration;
+     } else if (position < Duration.zero) {
+       positionToSeek = Duration.zero;
+@@ -535,7 +567,12 @@
+     _seekPosition = positionToSeek;
+ 
+     await _videoPlayerPlatform.seekTo(_textureId, positionToSeek);
++    if (_isDisposed || generation != _pollGeneration) {
++      if (_seekGeneration == generation) _seekPosition = null;
++      return;
++    }
+     _updatePosition(position);
++    if (_isDisposed || generation != _pollGeneration) return;
+ 
+     if (isPlaying) {
+       await play();
+@@ -585,10 +622,11 @@
+   }
+ 
+   void _updatePosition(Duration? position, {DateTime? absolutePosition}) {
+-    value = value.copyWith(position: _seekPosition ?? position);
+-    if (_seekPosition == null) {
+-      value = value.copyWith(absolutePosition: absolutePosition);
+-    }
++    // Publish one snapshot: a listener may synchronously pause or replace source.
++    value = value.copyWith(
++      position: _seekPosition ?? position,
++      absolutePosition: _seekPosition == null ? absolutePosition : null,
++    );
+   }
+ 
+   Future<bool?> isPictureInPictureSupported() async {
