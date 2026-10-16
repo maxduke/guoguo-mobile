@@ -174,6 +174,8 @@ Future<_Fixture> _mount(
   final store = AppStore(
     storage: storage ?? MemoryStorage(),
     provider: provider,
+    // Keep dated cache fixtures inside retention regardless of the run date.
+    now: () => DateTime.utc(2026, 10, 9, 12),
   )..offline = offline;
   store.catalog.source = source;
   await seed?.call(store);
