@@ -17,16 +17,30 @@ func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoI
 		return providerMedia{}, errors.New("红果视频 ID 无效")
 	}
 	payload := map[string]any{
-		"video_id": videoID, "content_type": 1,
-		"biz_param": map[string]any{"need_all_video_definition": true, "video_platform": 3},
+		"biz_param": map[string]any{
+			"detail_page_version":       0,
+			"device_level":              3,
+			"disable_digg_stat":         false,
+			"need_all_video_definition": true,
+			"need_mp4_align":            false,
+			"use_os_player":             false,
+			"use_server_dns":            false,
+			// preload rejects the detail API's video_platform value of 3.
+			"video_platform": 1024,
+		},
+		"mixed_video_id_map": map[string]any{
+			"1004": []string{videoID}, // Short-drama content type.
+		},
 	}
-	result, err := downloader.hongguoAppRequest(ctx, http.MethodPost, "/novel/player/video_model/v1/", nil, payload)
+	// The legacy single and multi video_model endpoints return HTTP 200 with an empty body.
+	result, err := downloader.hongguoAppRequest(ctx, http.MethodPost, "/novel/player/multi_video_model/preload/v1/", nil, payload)
 	if err != nil {
 		return providerMedia{}, err
 	}
-	data := nestedMap(result, "data")
-	model, _ := data["video_model"].(map[string]any)
-	if encoded, ok := data["video_model"].(string); ok {
+	// Never substitute another episode when the requested ID is missing.
+	entry := nestedMap(result, "data", videoID)
+	model, _ := entry["video_model"].(map[string]any)
+	if encoded, ok := entry["video_model"].(string); ok {
 		decoder := json.NewDecoder(strings.NewReader(encoded))
 		decoder.UseNumber()
 		if err := decoder.Decode(&model); err != nil {

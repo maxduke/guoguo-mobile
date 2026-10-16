@@ -73,3 +73,21 @@ Ranking refresh and original fetch timestamps now cross the mobile facade;
 Huangguo route recovery and recognition of the current Shuangguo verification
 page are local fixes. See [the adoption record](../../docs/archive/upstream-refresh-2026-10-09.md)
 for selection decisions and live-network limits.
+
+## October 16 Hongguo playback repair
+
+The App stream request is adapted from
+[onedrama `6905554a2c5da06c345776ff594d34735a29fad5`](https://github.com/yhoops/onedrama/commit/6905554a2c5da06c345776ff594d34735a29fad5).
+It uses `/novel/player/multi_video_model/preload/v1/`, with
+`biz_param.video_platform = 1024` and the short-drama content type `1004` in
+`mixed_video_id_map`. The response is selected by the requested episode ID;
+JSON-string and object video models use the existing mobile media selection,
+quality and CENC key handling. Local regression fixtures cover the request
+contract, model formats, episode identity and invalid responses.
+
+Live sampling on 2026-10-16 with
+`go run ./cmd/probe -source hongguo -genre short_play -decode` returned 18
+recommendations and 71 episodes for series `7691530085832068121`. One episode
+passed the HTTP 206 / 1024-byte range check, full CENC decryption and MP4
+preparation, and full decoding with Ubuntu FFmpeg 6.1.1. This host sample does
+not establish iPhone / iPad playback or ongoing upstream availability.

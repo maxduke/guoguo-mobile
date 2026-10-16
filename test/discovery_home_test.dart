@@ -63,7 +63,12 @@ Future<({AppStore store, _Provider provider})> _fixture(
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   final provider = _Provider();
-  final store = AppStore(storage: MemoryStorage(), provider: provider);
+  final store = AppStore(
+    storage: MemoryStorage(),
+    provider: provider,
+    // Keep dated cache fixtures inside retention regardless of the run date.
+    now: () => DateTime.utc(2026, 10, 9, 12),
+  );
   await store.catalog.selectSource(source);
   addTearDown(() async {
     await tester.pumpWidget(const SizedBox());
