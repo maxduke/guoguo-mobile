@@ -22,7 +22,7 @@ func TestHongguoSearchSortMetadata(t *testing.T) {
 		}
 		return rankingHTTPResponse(request, http.StatusOK, searchSortFixture), nil
 	})
-	result, err := d.fetchHongguoSearchPage(context.Background(), "测试")
+	result, err := d.fetchHongguoSearchPage(context.Background(), "测试", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestHongguoJSONSearchResponseValidation(t *testing.T) {
 				}
 				return rankingHTTPResponse(request, http.StatusOK, test.body), nil
 			})
-			result, err := d.fetchHongguoSearchPage(context.Background(), keyword)
+			result, err := d.fetchHongguoSearchPage(context.Background(), keyword, 1)
 			if (err == nil) != test.valid || err == nil && result.Limited != test.limited {
 				t.Fatalf("unexpected search validation: limited=%v err=%v", result.Limited, err)
 			}
