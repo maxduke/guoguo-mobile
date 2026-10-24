@@ -10,10 +10,13 @@ import 'data/app_store.dart';
 import 'data/app_startup.dart';
 import 'data/download_store.dart';
 import 'data/storage.dart';
+import 'data/startup_record_recovery.dart';
 import 'platform/provider_client.dart';
 import 'platform/playback_temporary_files.dart';
+import 'platform/network_policy.dart';
 import 'ui/home_page.dart';
 import 'ui/theme.dart';
+import 'ui/record_recovery_page.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -30,7 +33,9 @@ class Bootstrap extends StatefulWidget {
 class _BootstrapState extends State<Bootstrap> {
   AppStartup? _startup;
   String? _error;
+  StartupRecordRecovery? _recordRecovery;
   bool _loading = false;
+  bool _recoveringRecords = false;
   @override
   void initState() {
     super.initState();
@@ -41,6 +46,7 @@ class _BootstrapState extends State<Bootstrap> {
     if (_loading || !mounted) return;
     _loading = true;
     setState(() => _error = null);
+    _recordRecovery = null;
     try {
       final startup = await (widget.load ?? _loadStartup)();
       if (!mounted) {
@@ -49,12 +55,31 @@ class _BootstrapState extends State<Bootstrap> {
       }
       startup.start();
       setState(() => _startup = startup);
-    } catch (_) {
+    } catch (error) {
       if (mounted) {
-        setState(() => _error = '本地记录暂时无法读取，请检查设备空间后重试');
+        setState(() {
+          _error = '本地记录暂时无法读取，请检查设备空间后重试';
+          _recordRecovery = error is RecordLoadFailure ? error.recovery : null;
+        });
       }
     } finally {
       _loading = false;
+    }
+  }
+
+  Future<void> _recoverRecords(BuildContext context) async {
+    final recovery = _recordRecovery;
+    if (recovery == null || _loading || _recoveringRecords) return;
+    _recoveringRecords = true;
+    try {
+      final recovered = await Navigator.of(context).push<bool>(
+        MaterialPageRoute(
+          builder: (_) => RecordRecoveryPage(recovery: recovery),
+        ),
+      );
+      if (recovered == true && mounted) await _initialize();
+    } finally {
+      _recoveringRecords = false;
     }
   }
 
@@ -71,41 +96,64 @@ class _BootstrapState extends State<Bootstrap> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: guoguoTheme(Brightness.light),
-      home: Scaffold(
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(
-                  Icons.play_circle_outline_rounded,
-                  size: 64,
-                  color: forest,
-                ),
-                const SizedBox(height: 20),
-                const Text(
-                  '果果',
-                  style: TextStyle(
-                    fontSize: 32,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 4,
+      darkTheme: guoguoTheme(Brightness.dark),
+      home: Builder(
+        builder: (context) => Scaffold(
+          body: SafeArea(
+            child: LayoutBuilder(
+              builder: (context, constraints) => SingleChildScrollView(
+                padding: const EdgeInsets.all(28),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: (constraints.maxHeight - 56).clamp(
+                      0,
+                      double.infinity,
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(
+                        Icons.play_circle_outline_rounded,
+                        size: 64,
+                        color: forest,
+                      ),
+                      const SizedBox(height: 20),
+                      const Text(
+                        '果果',
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 4,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        _error == null ? '好故事，接着看' : '暂时无法打开，原有记录已保留',
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 24),
+                      if (_error == null)
+                        const CircularProgressIndicator()
+                      else ...[
+                        Text(_error!, textAlign: TextAlign.center),
+                        const SizedBox(height: 20),
+                        FilledButton(
+                          onPressed: _initialize,
+                          child: const Text('重试'),
+                        ),
+                        if (_recordRecovery != null)
+                          TextButton(
+                            onPressed: () =>
+                                unawaited(_recoverRecords(context)),
+                            child: const Text('记录恢复'),
+                          ),
+                      ],
+                    ],
                   ),
                 ),
-                const SizedBox(height: 10),
-                Text(
-                  _error == null ? '好故事，接着看' : '暂时无法打开，原有记录已保留',
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 24),
-                if (_error == null)
-                  const CircularProgressIndicator()
-                else ...[
-                  Text(_error!, textAlign: TextAlign.center),
-                  const SizedBox(height: 20),
-                  FilledButton(onPressed: _initialize, child: const Text('重试')),
-                ],
-              ],
+              ),
             ),
           ),
         ),
@@ -132,15 +180,13 @@ Future<AppStartup> _loadStartup() async {
   }
   final directory = await getApplicationSupportDirectory();
   final provider = NativeProviderClient.shared;
-  final store = AppStore(
-    storage: AppFileStorage(Directory('${directory.path}/records')),
-    provider: provider,
-  );
+  final storage = AppFileStorage(Directory('${directory.path}/records'));
+  final store = AppStore(storage: storage, provider: provider);
   try {
     await store.load();
   } catch (_) {
     store.dispose();
-    rethrow;
+    throw RecordLoadFailure(StartupRecordRecovery(storage));
   }
   final downloads = DownloadStore(store, waitForProvider: () => provider.ready);
   final connectivity = Connectivity();
@@ -148,22 +194,12 @@ Future<AppStartup> _loadStartup() async {
     store: store,
     downloads: downloads,
     initializeCore: () => provider.initialize('${directory.path}/providers'),
-    checkOffline: () async => (await connectivity.checkConnectivity()).contains(
-      ConnectivityResult.none,
-    ),
-    offlineChanges: connectivity.onConnectivityChanged.map(
-      (values) => values.contains(ConnectivityResult.none),
-    ),
-    checkWifi: () async {
-      final values = await connectivity.checkConnectivity();
-      return values.contains(ConnectivityResult.wifi) &&
-          !values.contains(ConnectivityResult.mobile);
-    },
-    wifiChanges: connectivity.onConnectivityChanged.map(
-      (values) =>
-          values.contains(ConnectivityResult.wifi) &&
-          !values.contains(ConnectivityResult.mobile),
-    ),
+    checkOffline: () async =>
+        isOfflineNetwork(await connectivity.checkConnectivity()),
+    offlineChanges: connectivity.onConnectivityChanged.map(isOfflineNetwork),
+    checkWifi: () async =>
+        isWifiNetwork(await connectivity.checkConnectivity()),
+    wifiChanges: connectivity.onConnectivityChanged.map(isWifiNetwork),
   );
 }
 

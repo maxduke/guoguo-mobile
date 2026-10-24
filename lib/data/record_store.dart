@@ -10,6 +10,7 @@ import '../platform/provider_client.dart';
 import '../domain/catalog_response.dart';
 import 'series_lookup.dart';
 import 'store_persistence.dart';
+import 'record_backup_codec.dart';
 
 class RecordStore extends ChangeNotifier {
   RecordStore({
@@ -345,17 +346,7 @@ class RecordStore extends ChangeNotifier {
     ).toJson(),
   );
 
-  RecordBackup inspectBackup(String raw) {
-    if (utf8.encode(raw).length > 20 * 1024 * 1024) {
-      throw const UserInputException('备份文件超过 20 MB');
-    }
-    try {
-      final decoded = Map<String, dynamic>.from(jsonDecode(raw) as Map);
-      return RecordBackup.fromJson(decoded);
-    } catch (_) {
-      throw const UserInputException('备份损坏或格式不兼容，原记录未修改');
-    }
-  }
+  RecordBackup inspectBackup(String raw) => decodeRecordBackup(raw);
 
   Future<void> importBackup(RecordBackup backup) async {
     // Detach and validate the caller's collections before waiting in the queue.
