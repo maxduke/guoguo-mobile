@@ -171,7 +171,7 @@ func (transport *huangguoBrowserTransport) RoundTrip(request *http.Request) (*ht
 	}
 	client, err := transport.client(request)
 	if err != nil {
-		return nil, fmt.Errorf("黄果浏览器客户端初始化失败：%w", publicError(err))
+		return nil, fmt.Errorf("浏览器兼容连接初始化失败：%w", publicError(err))
 	}
 	upstream, err := fhttp.NewRequestWithContext(request.Context(), request.Method, request.URL.String(), request.Body)
 	if err != nil {
@@ -202,14 +202,18 @@ func (transport *huangguoBrowserTransport) RoundTrip(request *http.Request) (*ht
 			ServerName: state.ServerName, PeerCertificates: state.PeerCertificates, VerifiedChains: state.VerifiedChains}
 	}
 	if transport.record != nil {
+		source := providerSourceForURL(request.URL.String())
+		if source == "" {
+			source = sourceHuangguoVideo
+		}
 		level := "info"
 		if result.StatusCode >= 400 || strings.EqualFold(result.Header.Get("Cf-Mitigated"), "challenge") {
 			level = "warning"
 		}
-		transport.record(diagnosticEvent{Event: "network.browser_request", Level: level, Source: sourceHuangguoVideo,
+		transport.record(diagnosticEvent{Event: "network.browser_request", Level: level, Source: source,
 			Host: request.URL.Hostname(), HTTPStatus: result.StatusCode, Client: huangguoBrowserProfile,
 			Protocol: result.Proto, CFRay: truncate(result.Header.Get("Cf-Ray"), 128),
-			ResponseType: truncate(result.Header.Get("Content-Type"), 128), Message: "黄果浏览器指纹请求完成"})
+			ResponseType: truncate(result.Header.Get("Content-Type"), 128), Message: "浏览器兼容请求完成"})
 	}
 	return result, nil
 }

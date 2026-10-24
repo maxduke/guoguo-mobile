@@ -97,7 +97,10 @@ class AppStore extends ChangeNotifier implements StorePersistence {
     cachePersistenceError =
         catalog.restoreCache(state) ?? cachePersistenceError;
     catalog.restoreSettings(
-      selected: source,
+      selected:
+          !source.enabledByDefault && preferences.hiddenSources.contains(source)
+          ? DramaSource.hongguo
+          : source,
       categories: selections,
       hideVip: state['hideVip'] != false,
       searches: searches,

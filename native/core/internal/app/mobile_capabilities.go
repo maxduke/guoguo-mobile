@@ -13,13 +13,17 @@ func (c *MobileClient) sourceCapabilities() []mobileSourceCapability {
 	items := make([]mobileSourceCapability, 0, len(sources))
 	for _, source := range sources {
 		_, categories := c.downloader.mobileSource(source)
+		search := source != sourceHuangdou
+		if spec, found := duanjuSourcesByName[source]; found {
+			search = spec.Searcher
+		}
 		scope := "online"
 		if source == "huangguo" {
 			scope = "huangguoai"
-		} else if source == sourceHuangdou {
+		} else if !search {
 			scope = "local"
 		}
-		items = append(items, mobileSourceCapability{Source: source, Categories: categories, Search: source != sourceHuangdou, SearchScope: scope, BackgroundCatalog: categories})
+		items = append(items, mobileSourceCapability{Source: source, Categories: categories, Search: search, SearchScope: scope, BackgroundCatalog: categories})
 	}
 	return items
 }
