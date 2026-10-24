@@ -737,7 +737,16 @@ void main() {
     });
   }
 
-  for (final mode in ['ready', 'promote', 'network eviction', 'cellular']) {
+  for (final mode in [
+    'ready',
+    'promote',
+    'network eviction',
+    'mixed network eviction',
+    'cellular',
+    'mixed network',
+    'no network',
+    'unknown network',
+  ]) {
     testWidgets('bounded progressive prefetch $mode defers media preparation', (
       tester,
     ) async {
@@ -746,15 +755,26 @@ void main() {
         ..followSeeks = true
         ..install();
       addTearDown(platform.uninstall);
-      if (mode == 'cellular') {
+      final blocked = [
+        'cellular',
+        'mixed network',
+        'no network',
+        'unknown network',
+      ].contains(mode);
+      if (blocked) {
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
             .setMockMethodCallHandler(
               _NativePlayer.connectivity,
-              (_) async => ['mobile'],
+              (_) async => switch (mode) {
+                'mixed network' => ['wifi', 'mobile'],
+                'no network' => ['none'],
+                'unknown network' => <String>[],
+                _ => ['mobile'],
+              },
             );
       }
       final provider = _PrefetchRoutes(
-        hold: mode == 'promote' || mode == 'network eviction',
+        hold: mode == 'promote' || mode.endsWith('network eviction'),
       );
       final store = AppStore(storage: MemoryStorage(), provider: provider);
       final downloads = _OnlineDownloads(store);
@@ -800,8 +820,8 @@ void main() {
       await tester.pump();
       expect(first.preparations, 1);
       expect(next.preparations, 0);
-      expect(provider.resolves, mode == 'cellular' ? 1 : 2);
-      expect(provider.warmed, mode == 'cellular' ? isEmpty : ['session-2-0']);
+      expect(provider.resolves, blocked ? 1 : 2);
+      expect(provider.warmed, blocked ? isEmpty : ['session-2-0']);
       if (mode == 'ready' || mode == 'promote') {
         platform.emit('completed');
         await tester.pumpAndSettle();
@@ -811,11 +831,14 @@ void main() {
         expect(provider.resolves, 2);
         expect(provider.cancelledPrefetches, contains('session-2-0'));
         expect(provider.releases, isNot(contains('session-2-0')));
-      } else if (mode == 'network eviction') {
+      } else if (mode.endsWith('network eviction')) {
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
             .handlePlatformMessage(
               _NativePlayer.connectivityStatus.name,
-              const StandardMethodCodec().encodeSuccessEnvelope(['mobile']),
+              const StandardMethodCodec().encodeSuccessEnvelope([
+                if (mode == 'mixed network eviction') 'wifi',
+                'mobile',
+              ]),
               (_) {},
             );
         await tester.pumpAndSettle();

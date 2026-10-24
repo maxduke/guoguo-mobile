@@ -151,6 +151,11 @@ class DownloadEntry {
   );
 }
 
+class _DownloadSubmission {
+  final drained = Completer<void>();
+  bool stopped = false;
+}
+
 class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   DownloadStore(
     this.app, {
@@ -180,6 +185,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _refreshTimer;
   bool _verifyFiles = false;
   final Set<String> _removing = {};
+  final Map<String, _DownloadSubmission> _submissions = {};
   bool _loading = false,
       _reloadAgain = false,
       _disposed = false,
@@ -400,14 +406,17 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         for (final entry in entries.toList()) {
           if (_removing.contains(entry.id)) continue;
           if (entry.ready) {
-            if (!checkFiles || await File(entry.output).exists()) {
+            final valid = !checkFiles || await _hasOutput(entry);
+            if (_disposed) return;
+            if (!entries.contains(entry) || _removing.contains(entry.id)) {
+              continue;
+            }
+            if (valid) {
               entry.status = TaskStatus.complete;
               entry.progress = 1;
               continue;
             }
-            entry.ready = false;
-            entry.failure = '视频文件已不存在，请重新下载';
-            entry.status = TaskStatus.failed;
+            _invalidateOutput(entry);
             continue;
           }
           final parts = entry.tasks.map((t) => records[t.taskId]).toList();
@@ -522,8 +531,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         );
         await File(temporary).rename(entry.output);
       }
-      if (!await File(entry.output).exists() ||
-          await File(entry.output).length() == 0) {
+      if (!await _hasOutput(entry)) {
         throw const ProviderException('视频文件未完整保存');
       }
       entry.ready = true;
@@ -564,7 +572,9 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     if (!_enqueuing.add(identity)) return;
     Directory? staging;
     DownloadEntry? created;
+    _DownloadSubmission? submission;
     var registered = false;
+    var submitted = false;
     try {
       final existing = entryFor(drama, episode);
       if (existing != null &&
@@ -585,15 +595,18 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         return;
       }
       final plan = await app.provider.downloadPlan(drama, episode);
+      if (_disposed) return;
       final id = '${DateTime.now().microsecondsSinceEpoch}';
       final directory = Directory('${_root!.path}/$id');
       staging = directory;
       await directory.create(recursive: true);
       for (final inline in plan.inline) {
+        if (_disposed) return;
         await File(
           '${directory.path}/${inline.name}',
         ).writeAsBytes(inline.bytes, flush: true);
       }
+      if (_disposed) return;
       final tasks = <DownloadTask>[];
       for (var i = 0; i < plan.assets.length; i++) {
         final asset = plan.assets[i];
@@ -631,6 +644,8 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         tasks: tasks,
       );
       created = entry;
+      submission = _DownloadSubmission();
+      _submissions[id] = submission;
       entries.add(entry);
       try {
         await _save();
@@ -639,16 +654,16 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         entries.remove(entry);
         rethrow;
       }
-      notifyListeners();
+      if (!_disposed) notifyListeners();
       for (final task in tasks) {
+        if (_disposed || submission.stopped || !entries.contains(entry)) return;
         if (!await driver.enqueue(task)) {
-          entry.failure = '部分资源未能加入下载，请重试';
-          entry.status = TaskStatus.failed;
-          await _save();
-          notifyListeners();
+          if (_disposed || submission.stopped) return;
           throw const ProviderException('部分资源未能加入下载，已加入的任务会保留，请重试');
         }
       }
+      if (_disposed || submission.stopped) return;
+      submitted = true;
       await reload();
     } catch (e) {
       final message = e is FileSystemException
@@ -658,7 +673,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
           : e is ProviderException
           ? e.message
           : '下载未能完成，请检查网络和设备空间后重试';
-      if (registered && created != null) {
+      if (registered && created != null && entries.contains(created)) {
         created.failure = message;
         created.status = TaskStatus.failed;
         try {
@@ -671,10 +686,27 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       throw ProviderException(message);
     } finally {
       try {
+        if (_disposed && registered && !submitted && created != null) {
+          // Closing the store must not leave a partly submitted batch running.
+          // Other, already submitted downloads continue in the native queue.
+          created.userPaused = true;
+          try {
+            if (!await driver.cancel(created.tasks.map((t) => t.taskId))) {
+              created.failure = '下载提交已中断，后台任务未能停止，请重试';
+            }
+            await _save();
+          } catch (_) {
+            // The saved entry retains every task ID for the next reconciliation.
+          }
+        }
         if (!registered && staging != null && await staging.exists()) {
           await staging.delete(recursive: true);
         }
       } finally {
+        if (created != null && submission != null) {
+          _submissions.remove(created.id);
+          submission.drained.complete();
+        }
         _enqueuing.remove(identity);
       }
     }
@@ -685,6 +717,13 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> resume(DownloadEntry entry) =>
       entry.refreshOnResume ? retry(entry) : _setPaused(entry, false);
 
+  Future<void> _stopSubmission(DownloadEntry entry) async {
+    final submission = _submissions[entry.id];
+    if (submission == null) return;
+    submission.stopped = true;
+    await submission.drained.future;
+  }
+
   Future<void> _setPaused(DownloadEntry entry, bool paused) async {
     _requireReady();
     if (entry.ready || !entries.contains(entry)) return;
@@ -692,11 +731,15 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       throw const ProviderException('任务正在处理中，请稍候');
     }
     try {
+      await _stopSubmission(entry);
+      if (_disposed || !entries.contains(entry)) return;
       entry.userPaused = paused;
       entry.failure = null;
       await _save();
       for (final task in entry.tasks) {
+        if (_disposed) return;
         final record = await driver.record(task.taskId);
+        if (_disposed) return;
         if (paused) {
           if (record?.status == TaskStatus.running) {
             if (!await driver.pause(task) &&
@@ -779,6 +822,8 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       throw const ProviderException('任务正在处理中，请稍候');
     }
     try {
+      await _stopSubmission(entry);
+      if (_disposed || !entries.contains(entry)) return;
       final complete = <String>{};
       for (final task in entry.tasks) {
         final record = await driver.record(task.taskId);
@@ -895,8 +940,13 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     var deletingFiles = false;
     var filesRemoved = false;
     try {
+      await _stopSubmission(entry);
+      if (_disposed || !entries.contains(entry)) return;
       if (entry.tasks.isNotEmpty &&
           !await driver.cancel(entry.tasks.map((t) => t.taskId))) {
+        entry.failure = '后台下载尚未停止，请重试删除或恢复下载';
+        entry.status = TaskStatus.failed;
+        await _save();
         throw const ProviderException('后台下载尚未停止，文件与记录已保留，请稍后再删除');
       }
       final directory = Directory(entry.directory);
@@ -970,7 +1020,8 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         for (final entry in entries.toList()) {
           await _measureEntryUsage(entry);
         }
-        bytesByEntry.removeWhere((id, _) => !entries.any((e) => e.id == id));
+        final currentIds = entries.map((e) => e.id).toSet();
+        bytesByEntry.removeWhere((id, _) => !currentIds.contains(id));
       } while (_usageAgain && !_disposed);
     } finally {
       _usageRefresh = null;
@@ -1014,9 +1065,35 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
               e.ready && e.drama.key == drama.key && e.episode.id == episode.id,
         )
         .firstOrNull;
-    return found != null && await File(found.output).exists()
-        ? found.output
-        : null;
+    if (found == null || _removing.contains(found.id)) return null;
+    final valid = await _hasOutput(found);
+    if (_disposed || !entries.contains(found) || _removing.contains(found.id)) {
+      return null;
+    }
+    if (valid) return found.ready ? found.output : null;
+    _invalidateOutput(found);
+    try {
+      await _save();
+    } catch (_) {
+      // The manifest error remains actionable; an invalid path is never returned.
+    }
+    if (!_disposed) notifyListeners();
+    return null;
+  }
+
+  Future<bool> _hasOutput(DownloadEntry entry) async {
+    try {
+      final stat = await File(entry.output).stat();
+      return stat.type == FileSystemEntityType.file && stat.size > 0;
+    } on FileSystemException {
+      return false;
+    }
+  }
+
+  void _invalidateOutput(DownloadEntry entry) {
+    entry.ready = false;
+    entry.failure = '视频文件已丢失或为空，请重新下载';
+    entry.status = TaskStatus.failed;
   }
 
   @override

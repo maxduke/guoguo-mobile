@@ -32,6 +32,7 @@ import '../platform/playback_failure.dart';
 import '../platform/playback_recovery.dart';
 import '../platform/playback_lifecycle.dart';
 import '../platform/playback_seek.dart';
+import '../platform/network_policy.dart';
 import '../platform/media_preparer.dart';
 import '../platform/casting.dart';
 import '../platform/cast_session.dart';
@@ -260,8 +261,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     widget.store.preferences.addListener(_preferencesChanged);
     _network = Connectivity().onConnectivityChanged.listen((states) {
-      if (!states.contains(ConnectivityResult.wifi) &&
-          !widget.store.preferences.cellularPrefetch) {
+      if (!allowsPrefetchNetwork(
+        states,
+        cellular: widget.store.preferences.cellularPrefetch,
+      )) {
         _preloadTimer?.cancel();
         _session.retain({_index});
       } else {
@@ -915,9 +918,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             _error != null ||
             (!_foreground && !_pipActive) ||
             !widget.store.preferences.prefetch ||
-            states.contains(ConnectivityResult.none) ||
-            (!states.contains(ConnectivityResult.wifi) &&
-                !widget.store.preferences.cellularPrefetch)) {
+            !allowsPrefetchNetwork(
+              states,
+              cellular: widget.store.preferences.cellularPrefetch,
+            )) {
           return;
         }
         await _session.prefetch(index + 1);
