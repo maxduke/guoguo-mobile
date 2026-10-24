@@ -43,9 +43,9 @@ func hongguoSearchCompletenessFixtures() (string, string) {
 		map[string]any{"name": hongguoSeasonSearchTitle + "第六季", "word_type": "short_play_name", "keyword": "7681547176396213272"},
 		map[string]any{"name": "缺少series_id的剧集", "word_type": "short_play_name", "keyword": "7000000000000000999", "video_data": map[string]any{"episode_cnt": 10}},
 	)
-	page, _ := json.Marshal(map[string]any{"loaderData": map[string]any{"search_(keyword)/page": map[string]any{"query": hongguoSeasonSearchQuery, "isSuccess": true, "totalCount": 203, "searchList": rows}}})
+	page, _ := json.Marshal(map[string]any{"pageNum": 1, "hasMore": true, "totalCount": 203, "searchList": rows})
 	suggestions, _ := json.Marshal(map[string]any{"suggest_list": names})
-	return "<script>window._ROUTER_DATA=" + string(page) + "</script>", string(suggestions)
+	return string(page), string(suggestions)
 }
 
 func TestHongguoSearchCompletesMissingSeasonsBeyondFirstTen(t *testing.T) {
@@ -53,7 +53,7 @@ func TestHongguoSearchCompletesMissingSeasonsBeyondFirstTen(t *testing.T) {
 	var pageCalls, nameCalls atomic.Int32
 	d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {
 		switch r.URL.Path {
-		case "/search/" + hongguoSeasonSearchQuery:
+		case "/api/search/result":
 			pageCalls.Add(1)
 			return rankingHTTPResponse(r, 200, page), nil
 		case "/incent_resource/suggestion":
@@ -104,8 +104,8 @@ func TestHongguoSearchCompletesMissingSeasonsBeyondFirstTen(t *testing.T) {
 
 func TestHongguoSearchKeepsIdenticalTitlesWithDifferentIDs(t *testing.T) {
 	d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {
-		if strings.HasPrefix(r.URL.Path, "/search/") {
-			return rankingHTTPResponse(r, 200, `<script>window._ROUTER_DATA={"loaderData":{"search_(keyword)/page":{"query":"同名","isSuccess":true,"totalCount":0,"searchList":[]}}}</script>`), nil
+		if r.URL.Path == "/api/search/result" {
+			return rankingHTTPResponse(r, 200, `{"pageNum":1,"hasMore":false,"totalCount":0,"searchList":[]}`), nil
 		}
 		return rankingHTTPResponse(r, 200, `{"suggest_list":[{"name":"同名","word_type":"short_play_name","video_data":{"series_id":7668626435891809342}},{"name":"同名","word_type":"short_play_name","video_data":{"series_id":7680168711512132633}}]}`), nil
 	})
@@ -122,7 +122,7 @@ func TestHongguoSearchPartialFailureRetainsResultsAndAllowsRetry(t *testing.T) {
 			var failed atomic.Bool
 			failed.Store(true)
 			d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {
-				isPage := strings.HasPrefix(r.URL.Path, "/search/")
+				isPage := r.URL.Path == "/api/search/result"
 				if failed.Load() && (isPage == (broken == "page")) {
 					return rankingHTTPResponse(r, 200, `{}`), nil
 				}
@@ -171,7 +171,7 @@ func TestHongguoSearchConcurrentRequestsShareBothBranches(t *testing.T) {
 		case <-r.Context().Done():
 			return nil, r.Context().Err()
 		}
-		if strings.HasPrefix(r.URL.Path, "/search/") {
+		if r.URL.Path == "/api/search/result" {
 			return rankingHTTPResponse(r, 200, page), nil
 		}
 		return rankingHTTPResponse(r, 200, names), nil
@@ -207,7 +207,7 @@ func TestHongguoSearchCanceledOwnerDoesNotStrandAnotherBrowser(t *testing.T) {
 			return nil, r.Context().Err()
 		}
 		calls.Add(1)
-		if strings.HasPrefix(r.URL.Path, "/search/") {
+		if r.URL.Path == "/api/search/result" {
 			return rankingHTTPResponse(r, 200, page), nil
 		}
 		return rankingHTTPResponse(r, 200, names), nil

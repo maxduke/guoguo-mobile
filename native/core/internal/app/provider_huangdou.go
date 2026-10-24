@@ -288,12 +288,13 @@ func (c *huangdouAPIClient) callOnce(ctx context.Context, path string, data map[
 	req.Header.Set("deviceType", huangdouDeviceType)
 	req.Header.Set("requestId", rid)
 	req.Header.Set("sessionId", c.sessionID)
-	resp, err := c.d.doPreparedCatalogRequest(req, 20*time.Second, func(prepared *http.Request) {
+	resp, err := c.d.doPreparedCatalogRequest(req, 20*time.Second, func(prepared *http.Request) error {
 		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 		signRaw := "Dart|" + c.sessionID + "|" + rid + "|" + timestamp + "|" + path
 		signSum := sha256.Sum256([]byte(signRaw))
 		prepared.Header.Set("time", timestamp)
 		prepared.Header.Set("sign", hex.EncodeToString(signSum[:])+"-"+timestamp)
+		return nil
 	})
 	if err != nil {
 		return err

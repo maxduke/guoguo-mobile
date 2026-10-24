@@ -18,6 +18,20 @@ import (
 const hongguoAppBaseURL = "https://api5-normal-sinfonlineb.fqnovel.com"
 const hongguoAppUserAgent = "com.phoenix.read/73532 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
 
+type hongguoRequestMode uint8
+
+const (
+	hongguoSignedAppRequest hongguoRequestMode = iota
+	hongguoUnsignedPlayerRequest
+)
+
+// Playback identifiers belong to this client lifetime, never to the saved catalog.
+type hongguoPlayerIdentity struct {
+	deviceID  string
+	installID string
+	cdid      string
+}
+
 type hongguoCatalogCursor struct {
 	Offset        int       `json:"offset"`
 	SessionID     string    `json:"sessionId,omitempty"`
@@ -40,6 +54,7 @@ type hongguoAppClient struct {
 	catalogMu      sync.Mutex
 	baseURL        string
 	state          hongguoCatalogState
+	player         hongguoPlayerIdentity
 	details        map[string]hongguoDetailEntry
 	pending        map[string]*hongguoDetailCall
 	searches       map[string]hongguoSearchEntry
@@ -53,6 +68,7 @@ func (downloader *Downloader) hongguoClient() *hongguoAppClient {
 		downloader.hongguo = &hongguoAppClient{
 			baseURL: hongguoAppBaseURL,
 			state:   hongguoCatalogState{Version: 1, DeviceID: newHongguoDeviceID(), InstallID: newHongguoDeviceID(), Feeds: map[string]hongguoCatalogCursor{}},
+			player:  hongguoPlayerIdentity{deviceID: newHongguoDeviceID(), installID: newHongguoDeviceID(), cdid: newHongguoDeviceID()},
 			details: map[string]hongguoDetailEntry{}, pending: map[string]*hongguoDetailCall{},
 			searches: map[string]hongguoSearchEntry{}, searchPending: map[string]*hongguoSearchCall{},
 			suggestions: map[string]hongguoSuggestionEntry{}, suggestPending: map[string]*hongguoSuggestionCall{},
@@ -127,10 +143,22 @@ func hongguoCatalogHasMore(state *hongguoCatalogState) bool {
 }
 
 func (downloader *Downloader) hongguoAppRequest(ctx context.Context, method, path string, extra url.Values, payload any) (map[string]any, error) {
+	return downloader.hongguoRequest(ctx, hongguoSignedAppRequest, method, path, extra, payload)
+}
+
+func (downloader *Downloader) hongguoPlayerRequest(ctx context.Context, path string, payload any) (map[string]any, error) {
+	return downloader.hongguoRequest(ctx, hongguoUnsignedPlayerRequest, http.MethodPost, path, nil, payload)
+}
+
+func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRequestMode, method, path string, extra url.Values, payload any) (map[string]any, error) {
 	client := downloader.hongguoClient()
 	client.mu.Lock()
 	base, deviceID, installID := client.baseURL, client.state.DeviceID, client.state.InstallID
+	player := client.player
 	client.mu.Unlock()
+	if mode == hongguoUnsignedPlayerRequest {
+		deviceID, installID = player.deviceID, player.installID
+	}
 	query := url.Values{
 		"aid": {"8662"}, "app_name": {"novelread"}, "version_code": {"73532"}, "version_name": {"7.3.5.32"},
 		"manifest_version_code": {"73532"}, "update_version_code": {"73532"}, "channel": {"update_64"},
@@ -140,6 +168,9 @@ func (downloader *Downloader) hongguoAppRequest(ctx context.Context, method, pat
 	}
 	for key, values := range extra {
 		query[key] = append([]string(nil), values...)
+	}
+	if mode == hongguoUnsignedPlayerRequest {
+		query.Set("cdid", player.cdid)
 	}
 	var body []byte
 	var err error
@@ -174,6 +205,7 @@ func (downloader *Downloader) hongguoAppRequest(ctx context.Context, method, pat
 		request.Header.Set("X-XS-From-Web", "0")
 		request.Header.Set("Sdk-Version", "2")
 		comment, _ := ctx.Value(hongguoCommentKey{}).(bool)
+		comment = comment && mode == hongguoSignedAppRequest
 		var commentNonce hongguoCommentNonce
 		if comment {
 			commentNonce, err = newHongguoCommentNonce()
@@ -186,15 +218,25 @@ func (downloader *Downloader) hongguoAppRequest(ctx context.Context, method, pat
 		if payload != nil {
 			request.Header.Set("Content-Type", "application/json; charset=utf-8")
 		}
-		response, err := downloader.doPreparedCatalogRequest(request, 20*time.Second, func(prepared *http.Request) {
+		response, err := downloader.doPreparedCatalogRequest(request, 20*time.Second, func(prepared *http.Request) error {
 			now := time.Now()
 			query.Set("_rticket", strconv.FormatInt(now.UnixMilli(), 10))
+			if mode == hongguoUnsignedPlayerRequest {
+				query.Set("ts", strconv.FormatInt(now.Unix(), 10))
+				prepared.Header.Set("Accept", "application/json; charset=utf-8,application/x-protobuf")
+				prepared.Header.Set("X-SS-Req-Ticket", query.Get("_rticket"))
+				prepared.Header.Set("X-TT-Request-Tag", "t=0;n=0")
+			}
 			prepared.URL.RawQuery = query.Encode()
+			if mode == hongguoUnsignedPlayerRequest {
+				// The playback cluster rejects signature headers, including body stubs.
+				return nil
+			}
 			if comment {
 				signHongguoCommentRequest(prepared, commentNonce, now)
-			} else {
-				signHongguoRequest(prepared, body, now)
+				return nil
 			}
+			return signHongguoRequest(prepared, body, now)
 		})
 		if err != nil {
 			lastErr = err

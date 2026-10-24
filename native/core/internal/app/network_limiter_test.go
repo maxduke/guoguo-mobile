@@ -7,7 +7,37 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
+
+func TestCatalogPreparationFailureDoesNotSendOrHoldSlot(t *testing.T) {
+	var calls atomic.Int32
+	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return rankingHTTPResponse(request, http.StatusOK, `{}`), nil
+	})
+	d.limiter = newRequestLimiter(1, time.Nanosecond)
+	want := errors.New("signing failed")
+	request, _ := http.NewRequest(http.MethodGet, "https://catalog.example/detail", nil)
+	var preparedContext context.Context
+	response, err := d.doPreparedCatalogRequest(request, time.Second, func(prepared *http.Request) error {
+		preparedContext = prepared.Context()
+		return want
+	})
+	if !errors.Is(err, want) || response != nil || calls.Load() != 0 || preparedContext == nil || preparedContext.Err() != context.Canceled {
+		t.Fatal("failed preparation sent a request or retained its timeout", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	response, err = d.doCatalogRequest(request.WithContext(ctx))
+	if err != nil {
+		t.Fatal("failed preparation retained the only request slot", err)
+	}
+	response.Body.Close()
+	if calls.Load() != 1 {
+		t.Fatal("prepared request was sent more than once")
+	}
+}
 
 func TestCatalogBlockReasonSurvivesCooldown(t *testing.T) {
 	var calls atomic.Int32

@@ -35,7 +35,7 @@ func TestMobileSeasonPaginationCompletesGapsWithoutDelayingFirstPage(t *testing.
 		query := r.URL.Query().Get("query")
 		queries = append(queries, query)
 		body := fixtures[query]
-		if strings.HasPrefix(r.URL.Path, "/search/") {
+		if r.URL.Path == "/api/search/result" {
 			body = fixtures["page"]
 		}
 		if body == "" {

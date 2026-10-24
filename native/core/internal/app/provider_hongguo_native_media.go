@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,8 +31,7 @@ func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoI
 			"1004": []string{videoID}, // Short-drama content type.
 		},
 	}
-	// The legacy single and multi video_model endpoints return HTTP 200 with an empty body.
-	result, err := downloader.hongguoAppRequest(ctx, http.MethodPost, "/novel/player/multi_video_model/preload/v1/", nil, payload)
+	result, err := downloader.hongguoPlayerRequest(ctx, "/novel/player/multi_video_model/v1/", payload)
 	if err != nil {
 		return providerMedia{}, err
 	}

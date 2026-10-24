@@ -66,8 +66,8 @@ func hongguoManySeasonFixtures() map[string]string {
 		rows = append(rows, map[string]any{"video_data": hongguoManySeasonVideo(season)})
 	}
 	rows = append(rows, map[string]any{"video_data": map[string]any{"series_id": "7300000000000000999", "series_title": "修仙相关作品"}})
-	body, _ := json.Marshal(map[string]any{"loaderData": map[string]any{"search_(keyword)/page": map[string]any{"query": hongguoManySeasonQuery, "isSuccess": true, "totalCount": 233, "searchList": rows}}})
-	results["page"] = "<script>window._ROUTER_DATA=" + string(body) + "</script>"
+	body, _ := json.Marshal(map[string]any{"pageNum": 1, "hasMore": true, "totalCount": 233, "searchList": rows})
+	results["page"] = string(body)
 	return results
 }
 
@@ -81,7 +81,7 @@ func hongguoManySeasonTransport(t *testing.T, fixtures map[string]string, before
 			t.Error("search fetched an unrelated host", request.URL.Host)
 		}
 		query := request.URL.Query().Get("query")
-		if request.URL.Path == "/search/"+hongguoManySeasonQuery {
+		if request.URL.Path == "/api/search/result" {
 			query = "page"
 		} else if request.URL.Path != "/incent_resource/suggestion" {
 			t.Error("search fetched something other than text search data", request.URL.Path)

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"sort"
@@ -288,15 +289,28 @@ func hongguoTitleSearchRank(title, query string) int {
 }
 
 func (downloader *Downloader) fetchHongguoSearchPage(ctx context.Context, keyword string) (hongguoSearchEntry, error) {
-	pageURL := hongguoBaseURL + "/search/" + url.PathEscape(keyword)
+	pageURL := hongguoBaseURL + "/api/search/result?" + url.Values{"query": {keyword}, "page": {"1"}}.Encode()
 	body, err := downloader.fetchProviderText(ctx, pageURL, hongguoBaseURL+"/")
 	if err != nil {
 		return hongguoSearchEntry{}, err
 	}
-	page := routerLoaderMap(parseRouterData(body), "search_(keyword)/page", "search_")
+	var page map[string]any
+	decoder := json.NewDecoder(strings.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&page); err != nil || page == nil {
+		return hongguoSearchEntry{}, errors.New("红果搜索响应格式异常")
+	}
 	rows, valid := page["searchList"].([]any)
-	if page["isSuccess"] != true || !valid || mapString(page, "query") != keyword {
+	code, query := mapString(page, "code"), mapString(page, "query")
+	if !valid || code != "" && code != "0" || query != "" && query != keyword {
 		return hongguoSearchEntry{}, errors.New("红果搜索未返回有效结果")
+	}
+	if _, exists := page["pageNum"]; exists && mapString(page, "pageNum") != "1" {
+		return hongguoSearchEntry{}, errors.New("红果搜索页码不匹配")
+	}
+	hasMore, moreOK := page["hasMore"].(bool)
+	if _, exists := page["hasMore"]; exists && !moreOK {
+		return hongguoSearchEntry{}, errors.New("红果搜索分页格式异常")
 	}
 	entry := hongguoSearchEntry{Dramas: make([]Drama, 0, len(rows))}
 	seen := make(map[string]bool, len(rows))
@@ -315,7 +329,8 @@ func (downloader *Downloader) fetchHongguoSearchPage(ctx context.Context, keywor
 	}
 	entry.Total, _ = strconv.Atoi(mapString(page, "totalCount"))
 
-	entry.Limited = entry.Total > len(entry.Dramas)
+	totalPages, _ := strconv.Atoi(mapString(page, "totalPages"))
+	entry.Limited = hasMore || totalPages > 1 || entry.Total > len(entry.Dramas)
 	if entry.Total < len(entry.Dramas) {
 		entry.Total = len(entry.Dramas)
 	}
