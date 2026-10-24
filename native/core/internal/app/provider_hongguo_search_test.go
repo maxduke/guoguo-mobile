@@ -9,15 +9,15 @@ import (
 	"time"
 )
 
-const searchSortFixture = `<script>window._ROUTER_DATA={"loaderData":{"search_layout":null,"search_(keyword)/page":{"query":"测试","isSuccess":true,"totalCount":30,"searchList":[
+const searchSortFixture = `{"pageNum":1,"hasMore":true,"totalCount":30,"searchList":[
 {"video_data":{"series_id":"7000000000000000001","series_title":"测试甲","create_time":"1787626382","hot_score_data":{"score":20019,"text":"2万热度"}}},
 {"video_data":{"series_id":"7000000000000000002","series_title":"测试乙","create_time":"1786502463","hot_score_data":{"score":0,"text":"0热度"}}},
 {"video_data":{"series_id":"7000000000000000003","series_title":"测试丙","create_time":"1788610261","score":"9.9"}}
-]}}}</script>`
+]}`
 
 func TestHongguoSearchSortMetadata(t *testing.T) {
 	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
-		if request.URL.Host != "hongguoduanju.com" || request.URL.Path != "/search/测试" {
+		if request.URL.Host != "hongguoduanju.com" || request.URL.Path != "/api/search/result" || request.URL.Query().Get("query") != "测试" || request.URL.Query().Get("page") != "1" {
 			t.Fatalf("unexpected request: %s", request.URL.Path)
 		}
 		return rankingHTTPResponse(request, http.StatusOK, searchSortFixture), nil
@@ -37,6 +37,45 @@ func TestHongguoSearchSortMetadata(t *testing.T) {
 		if drama.Views != "" || drama.OnlineDate != "" {
 			t.Errorf("heat and create_time must not be relabeled as plays or a release date")
 		}
+	}
+}
+
+func TestHongguoJSONSearchResponseValidation(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		body    string
+		valid   bool
+		limited bool
+	}{
+		{"empty result", `{"pageNum":1,"totalPages":0,"hasMore":false,"totalCount":"0","searchList":[]}`, true, false},
+		{"more results without count", `{"pageNum":1,"hasMore":true,"searchList":[]}`, true, true},
+		{"more pages without flag", `{"pageNum":1,"totalPages":2,"searchList":[]}`, true, true},
+		{"client rendered HTML", `<html>search app</html>`, false, false},
+		{"obsolete router data", `<script>_ROUTER_DATA={"loaderData":{"search_page":{"searchList":[]}}}</script>`, false, false},
+		{"verification required", `{"code":"search_verification_required"}`, false, false},
+		{"business failure", `{"code":110001,"searchList":[]}`, false, false},
+		{"missing results", `{}`, false, false},
+		{"null results", `{"searchList":null}`, false, false},
+		{"wrong page", `{"pageNum":2,"searchList":[]}`, false, false},
+		{"wrong query", `{"query":"其他剧","searchList":[]}`, false, false},
+		{"invalid pagination", `{"hasMore":"true","searchList":[]}`, false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			const keyword = "大佬 &/+?中"
+			d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
+				if request.Method != http.MethodGet || request.URL.Path != "/api/search/result" || request.URL.Query().Get("query") != keyword || request.URL.Query().Get("page") != "1" {
+					t.Error("JSON search changed the keyword or requested the obsolete HTML page")
+				}
+				if request.Header.Get("X-Gorgon") != "" || request.Header.Get("X-Medusa") != "" {
+					t.Error("public JSON search must not acquire app signatures")
+				}
+				return rankingHTTPResponse(request, http.StatusOK, test.body), nil
+			})
+			result, err := d.fetchHongguoSearchPage(context.Background(), keyword)
+			if (err == nil) != test.valid || err == nil && result.Limited != test.limited {
+				t.Fatalf("unexpected search validation: limited=%v err=%v", result.Limited, err)
+			}
+		})
 	}
 }
 

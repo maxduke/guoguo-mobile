@@ -91,3 +91,41 @@ recommendations and 71 episodes for series `7691530085832068121`. One episode
 passed the HTTP 206 / 1024-byte range check, full CENC decryption and MP4
 preparation, and full decoding with Ubuntu FFmpeg 6.1.1. This host sample does
 not establish iPhone / iPad playback or ongoing upstream availability.
+
+## October 24 Hongguo protocol repair
+
+Playback request separation is adapted from
+[chewu1590/hongguoTV `43b970bf77f5c3ae3e06075a210b49a71c3d9e1a`](https://github.com/chewu1590/hongguoTV/commit/43b970bf77f5c3ae3e06075a210b49a71c3d9e1a).
+The current player endpoint is `/novel/player/multi_video_model/v1/`:
+the previous `preload` endpoint returned an empty body even without signatures.
+Playback sends no signing headers and uses independent client-lifetime numeric
+device/install/CDID values, outside the persisted catalog state. Exact episode
+identity, model formats, compatible quality selection and CENC handling remain
+the mobile implementation.
+
+Signed catalog and detail requests require the full current protocol. Gorgon,
+Helios, Medusa, branch-0 ticket selection and the protocol-specific cipher are
+adapted from `Signer.kt`, `AesV3.kt` and `VendorConstants.kt` at
+[tsukiyo-zero/hongguoTV `e41a74722cc339c3aa40936a325f184d176b1564`](https://github.com/tsukiyo-zero/hongguoTV/tree/e41a74722cc339c3aa40936a325f184d176b1564).
+Their algorithm provenance is drpys
+`22261adfa31435e3b3ef5a730b8a2a75bcaf1715`, GPL-3.0-only; the license is retained
+in [licenses/hongguoTV-GPL-3.0.txt](licenses/hongguoTV-GPL-3.0.txt).
+The local signer binds the existing client's device ID and current request
+version; upstream's shared metadata identity is not copied.
+
+The first 12 `testdata/hongguo_signing.json` cases are the independent upstream
+Node oracle fixtures (`signing.json` blob
+`d9fc3da9d35f5a3a4cb0e5098985698c73986aa8`). Two additional cases generated with
+the same oracle (`server/vendor/hongguo.cjs` blob
+`405b4ac1f75d0c2a9f2856a84288a7df39404dfd`) cover the local version and distinct
+device IDs. All 14 compare exact hash, Gorgon, Helios and Medusa outputs.
+
+Public website search is selectively adapted from
+[tsukiyo-zero/hongguoTV `2e9b7daf5be227551a95adc4c77398935acf9a77`](https://github.com/tsukiyo-zero/hongguoTV/commit/2e9b7daf5be227551a95adc4c77398935acf9a77),
+using `/api/search/result` rather than HTML router data. Existing name matching,
+season completion, cancellation, caching and mobile continuation remain local.
+
+Host regression and real search/recommendation/detail/media sampling passed;
+one 71-episode series also passed full-episode CENC preparation and decoding.
+The [review and validation record](../../docs/hongguo-upstream-review-2026-10-24.md)
+records the adoption decisions and CDN/device acceptance limits.
