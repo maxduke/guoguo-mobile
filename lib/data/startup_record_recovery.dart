@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import '../domain/models.dart';
@@ -16,15 +15,13 @@ class StartupRecordRecovery {
 
   Future<File> preserve() => storage.preserveRecords();
 
-  Future<void> restore(RecordBackup backup) async {
-    // Validate and detach before entering the file queue. Recovery creates only
-    // the current records format; catalog cache and downloads keep their files.
-    final validated = decodeRecordBackup(jsonEncode(backup.toJson()));
-    await storage.replaceRecordsPreserving({
-      'version': 1,
-      'records': validated.toJson(),
-    });
-  }
+  Future<void> restore(RecordBackup backup) => storage
+      .replaceRecordsPreservingFuture(
+        validateRecordBackup(
+          backup,
+        ).then((validated) => {'version': 1, 'records': validated.toJson()}),
+      )
+      .then((_) {});
 
   Future<void> startFresh() => restore(RecordBackup([], []));
 }

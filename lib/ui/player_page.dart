@@ -32,6 +32,8 @@ import '../platform/playback_failure.dart';
 import '../platform/playback_recovery.dart';
 import '../platform/playback_lifecycle.dart';
 import '../platform/playback_seek.dart';
+import 'player_remote_controls.dart';
+import 'television_scope.dart';
 import '../platform/network_policy.dart';
 import '../platform/media_preparer.dart';
 import '../platform/casting.dart';
@@ -147,6 +149,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   int get _generation => _session.generation;
   bool _controls = false, _locked = false, _fill = false;
   bool _accessibleNavigation = false;
+  bool _television = false;
+  final _playFocus = FocusNode(debugLabel: 'player-remote-play');
   bool _loading = true;
   bool? _screenAwake = false;
   bool get _foreground => _lifecycle.foreground;
@@ -280,6 +284,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _television = TelevisionScope.of(context);
     final accessible = MediaQuery.accessibleNavigationOf(context);
     if (accessible == _accessibleNavigation) return;
     _accessibleNavigation = accessible;
@@ -1408,8 +1413,21 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   void _showControls() {
+    final wasHidden = !_controls;
     setState(() => _controls = true);
     _armHide();
+    if (wasHidden && _television) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted &&
+            _controls &&
+            _foreground &&
+            !_modal &&
+            !_locked &&
+            _playFocus.canRequestFocus) {
+          _playFocus.requestFocus();
+        }
+      });
+    }
   }
 
   void _tap() {
@@ -1899,6 +1917,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         preparing:
             _active?.preparer.streaming == true && !_active!.preparer.complete,
         onPlay: _togglePlay,
+        playFocusNode: _television ? _playFocus : null,
         previousLabel: index > 0
             ? '上一集 · 第 ${widget.episodes[index - 1].number} 集'
             : '上一集',
@@ -1952,262 +1971,294 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: Colors.black,
-    body: AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.light,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          IgnorePointer(
-            child: PlayerViewport(playerKey: _playerKey, controller: _player),
-          ),
-          if (_airplay?.blocksLocal == true)
-            const Positioned.fill(child: ColoredBox(color: Colors.black)),
-          Semantics(
-            container: true,
-            explicitChildNodes: true,
-            label: '视频画面',
-            hint: _locked ? null : '显示播放控件',
-            button: !_locked,
-            onTap: _locked ? null : _showControls,
-            child: PlayerGestures(
-              mediaIdentity: _generation,
-              onTap: _tap,
-              enabled:
-                  !_localBlocked && !_locked && !_loading && _active != null,
-              position: () =>
-                  (_active == null
-                      ? null
-                      : _player
-                            .videoPlayerController
-                            ?.value
-                            .position
-                            .inMilliseconds
-                            .toDouble()) ??
-                  0,
-              duration: () =>
-                  (_active == null
-                      ? null
-                      : _player
-                            .videoPlayerController
-                            ?.value
-                            .duration
-                            ?.inMilliseconds
-                            .toDouble()) ??
-                  0,
-              onBoost: (boost) {
-                if (mounted && _active != null) {
-                  unawaited(_player.setSpeed(boost ? 2 : _speed));
-                }
-              },
-              onScrub: (value) {
-                _gestureScrubbing = value;
-                _armHide();
-              },
-              onSeek: (value) {
-                if (_active != null) {
-                  unawaited(_seek(Duration(milliseconds: value.round())));
-                }
-              },
-              child: EpisodePager(
-                controller: _pages,
-                count: widget.episodes.length,
-                onChanged: _pageChanged,
-                builder: _page,
-                locked: _locked || _localBlocked,
+  Widget build(BuildContext context) => PlayerRemoteControls(
+    enabled:
+        TelevisionScope.of(context) &&
+        _foreground &&
+        !_modal &&
+        !_locked &&
+        !_localBlocked,
+    controlsVisible: _controls,
+    playing: _player.videoPlayerController?.value.isPlaying == true,
+    onShowControls: _showControls,
+    onPlayPause: () => unawaited(_togglePlay()),
+    onSeekBy: (offset) {
+      final value = _player.videoPlayerController?.value;
+      if (value == null || _loading) return;
+      final milliseconds = (value.position + offset).inMilliseconds.clamp(
+        0,
+        value.duration?.inMilliseconds ?? 0,
+      );
+      unawaited(_seek(Duration(milliseconds: milliseconds)));
+    },
+    onPrevious: _index > 0 ? () => _goTo(_index - 1) : null,
+    onNext: _index + 1 < widget.episodes.length
+        ? () => _goTo(_index + 1)
+        : null,
+    child: Scaffold(
+      backgroundColor: Colors.black,
+      body: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle.light,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            IgnorePointer(
+              child: PlayerViewport(playerKey: _playerKey, controller: _player),
+            ),
+            if (_airplay?.blocksLocal == true)
+              const Positioned.fill(child: ColoredBox(color: Colors.black)),
+            Semantics(
+              container: true,
+              explicitChildNodes: true,
+              label: '视频画面',
+              hint: _locked ? null : '显示播放控件',
+              button: !_locked,
+              onTap: _locked ? null : _showControls,
+              child: PlayerGestures(
+                mediaIdentity: _generation,
+                onTap: _tap,
+                enabled:
+                    !_localBlocked && !_locked && !_loading && _active != null,
+                position: () =>
+                    (_active == null
+                        ? null
+                        : _player
+                              .videoPlayerController
+                              ?.value
+                              .position
+                              .inMilliseconds
+                              .toDouble()) ??
+                    0,
+                duration: () =>
+                    (_active == null
+                        ? null
+                        : _player
+                              .videoPlayerController
+                              ?.value
+                              .duration
+                              ?.inMilliseconds
+                              .toDouble()) ??
+                    0,
+                onBoost: (boost) {
+                  if (mounted && _active != null) {
+                    unawaited(_player.setSpeed(boost ? 2 : _speed));
+                  }
+                },
+                onScrub: (value) {
+                  _gestureScrubbing = value;
+                  _armHide();
+                },
+                onSeek: (value) {
+                  if (_active != null) {
+                    unawaited(_seek(Duration(milliseconds: value.round())));
+                  }
+                },
+                child: EpisodePager(
+                  controller: _pages,
+                  count: widget.episodes.length,
+                  onChanged: _pageChanged,
+                  builder: _page,
+                  locked: _locked || _localBlocked,
+                ),
               ),
             ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: math.max(
-              28,
-              math.max(
-                MediaQuery.systemGestureInsetsOf(context).bottom,
-                MediaQuery.viewPaddingOf(context).bottom,
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: math.max(
+                28,
+                math.max(
+                  MediaQuery.systemGestureInsetsOf(context).bottom,
+                  MediaQuery.viewPaddingOf(context).bottom,
+                ),
+              ),
+              child: const AbsorbPointer(
+                key: Key('playerHomeGestureGuard'),
+                child: SizedBox.expand(),
               ),
             ),
-            child: const AbsorbPointer(
-              key: Key('playerHomeGestureGuard'),
-              child: SizedBox.expand(),
-            ),
-          ),
-          if (_casting.blocksLocal)
-            SafeArea(
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: FilledButton.icon(
-                    key: const Key('reopenCastControls'),
-                    onPressed: _cast,
-                    icon: const Icon(Icons.cast_connected),
-                    label: const Text('打开投屏控制'),
+            if (_casting.blocksLocal)
+              SafeArea(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: FilledButton.icon(
+                      key: const Key('reopenCastControls'),
+                      onPressed: _cast,
+                      icon: const Icon(Icons.cast_connected),
+                      label: const Text('打开投屏控制'),
+                    ),
+                  ),
+                ),
+              ),
+            if (_error?.kind == PlaybackFailureKind.airPlayReturn &&
+                _airPlayReturnPending)
+              PlayerNotice(
+                message: _error!.message,
+                action: FilledButton(
+                  onPressed: _airPlayReturning ? null : _returnFromAirPlay,
+                  child: Text(_airPlayReturning ? '正在返回手机…' : '重试返回手机'),
+                ),
+              )
+            else if (_airplay?.routed == true && _airplay?.engaged != true)
+              PlayerNotice(
+                message: 'AirPlay 仍连接电视，手机播放已暂停',
+                action: _airPlayRouteButton(),
+              ),
+            if (_casting.error != null && !_casting.blocksLocal)
+              SafeArea(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      _casting.error!,
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ),
+              ),
+            if (_locked)
+              SafeArea(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: IconButton.filledTonal(
+                    tooltip: '解锁手势',
+                    onPressed: () {
+                      setState(() => _locked = false);
+                      _showControls();
+                    },
+                    icon: const Icon(Icons.lock_open),
+                  ),
+                ),
+              ),
+            IgnorePointer(
+              ignoring: !(_controls || _loading || _error != null) || _locked,
+              child: ExcludeFocus(
+                excluding:
+                    !(_controls || _loading || _error != null) || _locked,
+                child: ExcludeSemantics(
+                  excluding:
+                      !(_controls || _loading || _error != null) || _locked,
+                  child: AnimatedOpacity(
+                    alwaysIncludeSemantics: true,
+                    opacity:
+                        (_controls || _loading || _error != null) && !_locked
+                        ? 1
+                        : 0,
+                    duration: const Duration(milliseconds: 180),
+                    child: Column(
+                      children: [
+                        DecoratedBox(
+                          key: const Key('playerTopChrome'),
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [Colors.black87, Colors.transparent],
+                            ),
+                          ),
+                          child: SafeArea(
+                            bottom: false,
+                            child: Row(
+                              children: [
+                                IconButton(
+                                  tooltip: '返回',
+                                  onPressed: () => Navigator.maybePop(context),
+                                  icon: const Icon(
+                                    Icons.arrow_back,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                Expanded(
+                                  child: Text(
+                                    '${widget.drama.title} · 第 ${widget.episodes[_index].number} 集',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                ),
+                                Semantics(
+                                  value: _casting.blocksLocal
+                                      ? _casting.deviceName ?? '正在投屏'
+                                      : _airplay?.routed == true
+                                      ? 'AirPlay 已连接'
+                                      : null,
+                                  child: IconButton(
+                                    key: const Key('playerCastingButton'),
+                                    tooltip: '投屏',
+                                    constraints: const BoxConstraints(
+                                      minWidth: 48,
+                                      minHeight: 48,
+                                    ),
+                                    onPressed:
+                                        _foreground &&
+                                            !_modal &&
+                                            !_castOpening &&
+                                            !_airPlayOpening &&
+                                            !_airPlayReturning &&
+                                            !_choosingAirPlayRoute
+                                        ? _showCasting
+                                        : null,
+                                    icon: Icon(
+                                      _casting.blocksLocal ||
+                                              _airplay?.routed == true
+                                          ? Icons.cast_connected
+                                          : Icons.cast,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: '更多播放设置',
+                                  onPressed: _showMore,
+                                  icon: const Icon(
+                                    Icons.more_horiz,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        DecoratedBox(
+                          key: const Key('playerBottomChrome'),
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [Colors.transparent, Colors.black87],
+                            ),
+                          ),
+                          child: SafeArea(
+                            top: false,
+                            minimum: const EdgeInsets.only(bottom: 4),
+                            // The TV owns transport while casting. Remove the phone
+                            // controls instead of disabling its Slider beneath the
+                            // modal route (its overlay retains stale semantics).
+                            child: _casting.blocksLocal
+                                ? const SizedBox.shrink()
+                                : _transport(),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          if (_error?.kind == PlaybackFailureKind.airPlayReturn &&
-              _airPlayReturnPending)
-            PlayerNotice(
-              message: _error!.message,
-              action: FilledButton(
-                onPressed: _airPlayReturning ? null : _returnFromAirPlay,
-                child: Text(_airPlayReturning ? '正在返回手机…' : '重试返回手机'),
-              ),
-            )
-          else if (_airplay?.routed == true && _airplay?.engaged != true)
-            PlayerNotice(
-              message: 'AirPlay 仍连接电视，手机播放已暂停',
-              action: _airPlayRouteButton(),
-            ),
-          if (_casting.error != null && !_casting.blocksLocal)
-            SafeArea(
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text(
-                    _casting.error!,
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                ),
-              ),
-            ),
-          if (_locked)
-            SafeArea(
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: IconButton.filledTonal(
-                  tooltip: '解锁手势',
-                  onPressed: () {
-                    setState(() => _locked = false);
-                    _showControls();
-                  },
-                  icon: const Icon(Icons.lock_open),
-                ),
-              ),
-            ),
-          IgnorePointer(
-            ignoring: !(_controls || _loading || _error != null) || _locked,
-            child: ExcludeSemantics(
-              excluding: !(_controls || _loading || _error != null) || _locked,
-              child: AnimatedOpacity(
-                alwaysIncludeSemantics: true,
-                opacity: (_controls || _loading || _error != null) && !_locked
-                    ? 1
-                    : 0,
-                duration: const Duration(milliseconds: 180),
-                child: Column(
-                  children: [
-                    DecoratedBox(
-                      key: const Key('playerTopChrome'),
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [Colors.black87, Colors.transparent],
-                        ),
-                      ),
-                      child: SafeArea(
-                        bottom: false,
-                        child: Row(
-                          children: [
-                            IconButton(
-                              tooltip: '返回',
-                              onPressed: () => Navigator.maybePop(context),
-                              icon: const Icon(
-                                Icons.arrow_back,
-                                color: Colors.white,
-                              ),
-                            ),
-                            Expanded(
-                              child: Text(
-                                '${widget.drama.title} · 第 ${widget.episodes[_index].number} 集',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 15,
-                                ),
-                              ),
-                            ),
-                            Semantics(
-                              value: _casting.blocksLocal
-                                  ? _casting.deviceName ?? '正在投屏'
-                                  : _airplay?.routed == true
-                                  ? 'AirPlay 已连接'
-                                  : null,
-                              child: IconButton(
-                                key: const Key('playerCastingButton'),
-                                tooltip: '投屏',
-                                constraints: const BoxConstraints(
-                                  minWidth: 48,
-                                  minHeight: 48,
-                                ),
-                                onPressed:
-                                    _foreground &&
-                                        !_modal &&
-                                        !_castOpening &&
-                                        !_airPlayOpening &&
-                                        !_airPlayReturning &&
-                                        !_choosingAirPlayRoute
-                                    ? _showCasting
-                                    : null,
-                                icon: Icon(
-                                  _casting.blocksLocal ||
-                                          _airplay?.routed == true
-                                      ? Icons.cast_connected
-                                      : Icons.cast,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: '更多播放设置',
-                              onPressed: _showMore,
-                              icon: const Icon(
-                                Icons.more_horiz,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const Spacer(),
-                    DecoratedBox(
-                      key: const Key('playerBottomChrome'),
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [Colors.transparent, Colors.black87],
-                        ),
-                      ),
-                      child: SafeArea(
-                        top: false,
-                        minimum: const EdgeInsets.only(bottom: 4),
-                        // The TV owns transport while casting. Remove the phone
-                        // controls instead of disabling its Slider beneath the
-                        // modal route (its overlay retains stale semantics).
-                        child: _casting.blocksLocal
-                            ? const SizedBox.shrink()
-                            : _transport(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     ),
   );
   @override
   void dispose() {
+    _playFocus.dispose();
     _setScreenAwake(false);
     _finishAttempt(PlaybackResult.cancelled);
     _session.invalidate();

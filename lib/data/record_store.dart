@@ -338,23 +338,25 @@ class RecordStore extends ChangeNotifier {
     await save();
   });
 
-  String exportBackup() => const JsonEncoder.withIndent('  ').convert(
-    RecordBackup(
-      _favorites.values.toList(),
-      _history.values.toList(),
-      seasonReminders: _seasonReminders.values.toList(),
-    ).toJson(),
+  RecordBackup _backup() => RecordBackup(
+    _favorites.values.toList(),
+    _history.values.toList(),
+    seasonReminders: _seasonReminders.values.toList(),
   );
+
+  String exportBackup() => utf8.decode(encodeRecordBackup(_backup()));
+
+  Future<Uint8List> exportBackupBytes() => encodeRecordBackupBytes(_backup());
 
   RecordBackup inspectBackup(String raw) => decodeRecordBackup(raw);
 
-  Future<void> importBackup(RecordBackup backup) async {
-    // Detach and validate the caller's collections before waiting in the queue.
-    final incoming = RecordBackup.fromJson(
-      Map<String, dynamic>.from(jsonDecode(jsonEncode(backup.toJson())) as Map),
-    );
-    await _change((save) async {
-      final candidate = _mergedBackup(incoming);
+  Future<void> importBackup(RecordBackup backup) {
+    final incoming = validateRecordBackup(backup);
+    // Reserve the record transaction immediately. A later edit must not
+    // overtake this import while its background validation is completing.
+    incoming.ignore();
+    return _change((save) async {
+      final candidate = _mergedBackup(await incoming);
       if (candidate.favorites.length > RecordBackup.maxRecords ||
           candidate.history.length > RecordBackup.maxRecords ||
           candidate.seasonReminders.length > RecordBackup.maxSeasonReminders) {

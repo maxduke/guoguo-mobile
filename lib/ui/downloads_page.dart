@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../data/app_store.dart';
 import '../data/download_store.dart';
@@ -8,6 +9,7 @@ import '../domain/episode_queue.dart';
 import '../domain/models.dart';
 import 'components.dart';
 import 'player_page.dart';
+import 'active_listenable_builder.dart';
 
 enum _TaskFilter {
   all('全部'),
@@ -127,7 +129,9 @@ class _DownloadsPageState extends State<DownloadsPage> {
     super.didChangeDependencies();
     final active = ModalRoute.of(context)?.isCurrent != false;
     if (_routeActive && !active) _cancelOpening();
+    final returning = !_routeActive && active;
     _routeActive = active;
+    if (returning) _downloadsChanged();
   }
 
   void _cancelOpening() {
@@ -136,7 +140,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
   }
 
   void _downloadsChanged() {
-    if (!mounted) return;
+    if (!mounted || !widget.active || !_routeActive) return;
     _expanded.retainAll(widget.downloads.entries.map((e) => e.drama.key));
     if (_selected.isNotEmpty) {
       _selected.retainAll(
@@ -148,6 +152,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
   @override
   void didUpdateWidget(DownloadsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!oldWidget.active && widget.active) _downloadsChanged();
     if (oldWidget.downloads != widget.downloads) {
       oldWidget.downloads.removeListener(_downloadsChanged);
       widget.downloads.addListener(_downloadsChanged);
@@ -369,6 +374,70 @@ class _DownloadsPageState extends State<DownloadsPage> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<void> _recoverManifest({bool exportOnly = false}) async {
+    if (!_interactive || _locked) return;
+    final owner = widget.downloads;
+    bool current() => _interactive && identical(owner, widget.downloads);
+    final recovery = owner.manifestRecovery;
+    if (recovery == null) return;
+    setState(() => _busy = true);
+    try {
+      if (exportOnly) {
+        final file = await recovery.preserve();
+        if (!mounted || !current()) return;
+        final box = context.findRenderObject() as RenderBox?;
+        await SharePlus.instance.share(
+          ShareParams(
+            files: [XFile(file.path, mimeType: 'application/json')],
+            subject: '果果原下载记录',
+            sharePositionOrigin: box == null
+                ? const Rect.fromLTWH(0, 0, 1, 1)
+                : box.localToGlobal(Offset.zero) & box.size,
+          ),
+        );
+        return;
+      }
+      final preview = await recovery.inspect();
+      if (!mounted || !current()) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('修复下载记录'),
+          scrollable: true,
+          content: Text(
+            '可恢复 ${preview.entries.length} 条下载，${preview.rejected} 条记录无法识别。\n\n'
+            '会先保留原下载记录，再恢复可识别条目。现有视频和未识别目录均保留；未完成的可识别任务会恢复下载，无法识别的记录不会出现在下载列表。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('保留原件并修复'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !current()) return;
+      await recovery.restore(preview);
+      if (!current()) return;
+      await owner.initialize();
+      if (current()) {
+        _playNotice(
+          owner.initializationError == null
+              ? '下载记录已修复，原文件副本和视频已保留'
+              : '记录已修复，下载组件仍需重试初始化',
+        );
+      }
+    } catch (_) {
+      if (current()) _playNotice('下载记录恢复未完成，原记录和视频已保留，请检查设备空间后重试');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   ({DownloadEntry? entry, String label}) _localPlayback(_DownloadGroup group) {
     final saved = group.entries.where((e) => e.complete).toList();
     if (saved.isEmpty) return (entry: null, label: '本地播放');
@@ -581,14 +650,15 @@ class _DownloadsPageState extends State<DownloadsPage> {
     child: _downloadList(context),
   );
 
-  Widget _downloadList(BuildContext context) => ListenableBuilder(
+  Widget _downloadList(BuildContext context) => ActiveListenableBuilder(
+    active: widget.active && _routeActive,
     listenable: Listenable.merge([
       widget.downloads,
       widget.store.preferences,
       widget.store.records,
       widget.store.records.progress,
     ]),
-    builder: (context, _) {
+    builder: (context) {
       final view = _view();
       final entries = view.entries;
       final groups = view.groups;
@@ -765,6 +835,27 @@ class _DownloadsPageState extends State<DownloadsPage> {
                         icon: const Icon(Icons.refresh_rounded),
                         label: const Text('重试下载恢复'),
                       ),
+                    ),
+                  if (widget.downloads.manifestRecovery != null)
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        TextButton(
+                          onPressed: _locked ? null : () => _recoverManifest(),
+                          child: const Text('修复下载记录'),
+                        ),
+                        TextButton(
+                          onPressed: _locked
+                              ? null
+                              : () => _recoverManifest(exportOnly: true),
+                          child: const Text('导出原下载记录'),
+                        ),
+                      ],
+                    ),
+                  if (widget.downloads.recoveryNotice != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Text(widget.downloads.recoveryNotice!),
                     ),
                   if (widget.downloads.error != null)
                     Padding(

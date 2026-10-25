@@ -1,0 +1,91 @@
+{
+  "baseline": {
+    "version": "0.19.10+50",
+    "commit": "01506ab6f2cd4fd618b8e87adccdbd543f5e295c"
+  },
+  "environment": {
+    "platform": "linux-x64",
+    "harness": "Flutter test",
+    "flutter": "3.47.4",
+    "dart": "3.13.3",
+    "device": false
+  },
+  "notes": [
+    "Synthetic valid large backup: 30000 Hongguo favorites, 500 ASCII description bytes per record, no history.",
+    "The first combined run completed both data probes; its initial hidden-page harness was interrupted and corrected. Separate data and hidden-page runs then completed successfully.",
+    "Observed behaviors are reproduced defects or optimization candidates, not fixes or device performance guarantees."
+  ],
+  "observations": [
+    {
+      "log": "guoguo-v01910-review-probes.log",
+      "probe": "backup_roundtrip",
+      "records": 30000,
+      "inputBytes": 19897867,
+      "outputBytes": 23077891,
+      "importLimitBytes": 20971520,
+      "reimportAccepted": false,
+      "exportUs": 345766,
+      "eventLoopGapUs": 348111
+    },
+    {
+      "log": "guoguo-v01910-review-probes.log",
+      "probe": "manifest_partial_damage",
+      "savedFileExists": true,
+      "manifestLoaded": false,
+      "entriesAvailable": 0,
+      "initializationFailed": true,
+      "localFileAvailable": false,
+      "readsAfterRetry": 2
+    },
+    {
+      "log": "guoguo-v01910-review-data.log",
+      "probe": "backup_roundtrip",
+      "records": 30000,
+      "inputBytes": 19897867,
+      "outputBytes": 23077891,
+      "importLimitBytes": 20971520,
+      "reimportAccepted": false,
+      "exportUs": 361665,
+      "eventLoopGapUs": 363293
+    },
+    {
+      "log": "guoguo-v01910-review-data.log",
+      "probe": "manifest_partial_damage",
+      "savedFileExists": true,
+      "manifestLoaded": false,
+      "entriesAvailable": 0,
+      "initializationFailed": true,
+      "localFileAvailable": false,
+      "readsAfterRetry": 2
+    },
+    {
+      "log": "guoguo-v01910-review-hidden-final.log",
+      "probe": "hidden_download_scan",
+      "entries": 200,
+      "entryReadsAfterOneWatchProgress": 200,
+      "pageActive": false
+    }
+  ],
+  "guanguo": {
+    "oldImplementation": {
+      "catalogItems": 30,
+      "catalogElapsedMs": 213,
+      "detailEmpty": true,
+      "episodeCount": 0
+    },
+    "currentH5": {
+      "probe": "guanguo_h5_same_id",
+      "httpStatus": 200,
+      "code": 200,
+      "identityMatches": true,
+      "episodeCount": 81,
+      "titlePresent": true,
+      "playEnvelopePresent": true,
+      "playKeyPresent": true
+    }
+  },
+  "sourceWorkflow": {
+    "state": "disabled_manually",
+    "verifiedVia": "GitHub CLI read-only GET"
+  }
+}

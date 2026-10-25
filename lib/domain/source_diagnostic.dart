@@ -30,6 +30,7 @@ class SourceDiagnostic {
     'suggestions',
     'detail',
     'chapters',
+    'cover',
   };
   static const results = {'success', 'partial', 'failed', 'cancelled'};
   static const requestResults = {...results, 'not_requested'};
@@ -46,6 +47,7 @@ class SourceDiagnostic {
     'other',
   };
   static const stages = {
+    'image_decode',
     'unknown',
     'complete',
     'request',
@@ -106,7 +108,10 @@ class SourceDiagnostic {
     );
   }
 
-  SourceDiagnostic withValidation({required bool valid}) => SourceDiagnostic(
+  SourceDiagnostic withValidation({
+    required bool valid,
+    String? failureStage,
+  }) => SourceDiagnostic(
     source: source,
     method: method,
     at: at,
@@ -122,7 +127,7 @@ class SourceDiagnostic {
     validation: valid ? 'passed' : 'failed',
     result: valid ? result : 'failed',
     failure: valid ? failure : 'other',
-    stage: valid ? stage : 'response',
+    stage: valid ? stage : failureStage ?? 'response',
   );
 
   Map<String, dynamic> toJson() => {
@@ -153,6 +158,7 @@ class SourceDiagnostic {
     'search' => '搜索',
     'suggestions' => '搜索联想',
     'detail' => '详情',
+    'cover' => '封面',
     _ => '分集',
   };
   String get resultLabel => _resultLabel(result);
@@ -179,6 +185,7 @@ class SourceDiagnostic {
     'connection' => '网络连接中断',
     'cancelled' => '操作已取消',
     'other' => switch (stage) {
+      'image_decode' => '封面图片无法解码',
       'response' => '返回内容无法处理',
       _ => '请求未完成',
     },

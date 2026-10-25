@@ -15,6 +15,8 @@ type Downloader struct {
 	yeguo                  *yeguoAPIClient
 	dsdCatalog             dsdCatalogState
 	maoguoCatalog          maoguoCatalogCache
+	guanguoOnce            sync.Once
+	guanguoDeviceID        string
 	huangguoAIRoutes       []string
 	huangguoAIRouteChecked bool
 	huangdouDetails        map[string]huangdouDetailEntry

@@ -50,7 +50,7 @@ func (f *fixture) Call(raw string) (string, error) {
 
 func TestCheckColdRefreshCacheEmptySearchAndNoMedia(t *testing.T) {
 	f := &fixture{}
-	result := Check(context.Background(), f, Capability{Source: "huangguo", Search: true, SearchScope: "huangguoai"}, "secret query")
+	result := Check(context.Background(), f, Capability{Source: "huangguo", Search: true, SearchScope: "huangguoai"}, "secret query", false)
 	if len(result.Steps) != 11 {
 		t.Fatalf("steps: %+v", result.Steps)
 	}
@@ -95,7 +95,7 @@ func TestCheckInvalidContentAndUnobservedRefresh(t *testing.T) {
 					test.patch(value)
 				}
 			}}
-			result := Check(context.Background(), f, Capability{Source: "huangju", Search: true}, "query")
+			result := Check(context.Background(), f, Capability{Source: "huangju", Search: true}, "query", false)
 			found := false
 			for _, step := range result.Steps {
 				if step.Reason == test.want && step.Status == "failed" {
@@ -118,7 +118,7 @@ func (failingClient) Call(raw string) (string, error) {
 	return "", errors.New("https://secret/path?token=secret")
 }
 func TestCheckFailureLookupBudgetAndLocalSearch(t *testing.T) {
-	result := Check(context.Background(), failingClient{}, Capability{Source: "huangdou", SearchScope: "local"}, "query")
+	result := Check(context.Background(), failingClient{}, Capability{Source: "huangdou", SearchScope: "local"}, "query", false)
 	for _, step := range result.Steps {
 		if step.Status == "failed" && step.Reason != "dns" {
 			t.Fatalf("diagnostic lookup failed: %+v", step)
@@ -130,7 +130,7 @@ func TestCheckFailureLookupBudgetAndLocalSearch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	f := &fixture{}
-	result = Check(ctx, f, Capability{Source: "huangju", Categories: true, Search: true}, "query")
+	result = Check(ctx, f, Capability{Source: "huangju", Categories: true, Search: true}, "query", false)
 	if len(f.requests) != 0 {
 		t.Fatal("request after budget exhausted")
 	}

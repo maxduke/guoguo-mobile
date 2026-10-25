@@ -26,6 +26,8 @@ type Step struct {
 	NetworkAttempts *int   `json:"networkAttempts"`
 	CacheHits       int    `json:"cacheHits"`
 	HTTPStatus      int    `json:"httpStatus"`
+	MediaBytes      int    `json:"mediaBytes,omitempty"`
+	MediaKind       string `json:"mediaKind,omitempty"`
 }
 type Result struct {
 	Source      string `json:"source"`
@@ -40,12 +42,12 @@ type diagnostic struct {
 	Failure         string `json:"failure"`
 }
 type response struct {
-	Items      json.RawMessage       `json:"items"`
-	Item       row                   `json:"item"`
-	Chapters   []struct{ ID string } `json:"chapters"`
-	Diagnostic diagnostic            `json:"_diagnostic"`
-	Warning    string                `json:"warning"`
-	Stale      bool                  `json:"stale"`
+	Items      json.RawMessage   `json:"items"`
+	Item       row               `json:"item"`
+	Chapters   []json.RawMessage `json:"chapters"`
+	Diagnostic diagnostic        `json:"_diagnostic"`
+	Warning    string            `json:"warning"`
+	Stale      bool              `json:"stale"`
 }
 
 var serial atomic.Uint64
@@ -138,7 +140,7 @@ func checkRows(step *Step, value response, source string, ranking, allowEmpty bo
 
 // Check uses a fresh client per source. Search emptiness is a valid result; an
 // empty default directory or malformed identities cannot count as availability.
-func Check(ctx context.Context, client Client, capability Capability, query string) Result {
+func Check(ctx context.Context, client Client, capability Capability, query string, includeMedia bool) Result {
 	source := capability.Source
 	result := Result{Source: source, SearchScope: capability.SearchScope, Steps: []Step{}}
 	if capability.Categories {
@@ -214,16 +216,27 @@ func Check(ctx context.Context, client Client, capability Capability, query stri
 				step.Status, step.Reason = "failed", "no_episodes"
 			}
 			for _, chapter := range chapters.Chapters {
-				if chapter.ID == "" || seen[chapter.ID] {
+				var identity struct{ ID string }
+				if json.Unmarshal(chapter, &identity) != nil || identity.ID == "" || seen[identity.ID] {
 					step.Status, step.Reason = "failed", "invalid_chapters"
 				}
-				seen[chapter.ID] = true
+				seen[identity.ID] = true
 			}
 		}
 		result.Steps = append(result.Steps, step)
+		if includeMedia {
+			if step.Status == "passed" && len(chapters.Chapters) > 0 {
+				result.Steps = append(result.Steps, probeMedia(ctx, client, source, items[0].ID, chapters.Chapters[0]))
+			} else {
+				result.Steps = append(result.Steps, Step{Operation: "media_sample", Status: "skipped", Reason: "no_episodes"})
+			}
+		}
 	} else {
 		for _, operation := range []string{"detail", "chapters"} {
 			result.Steps = append(result.Steps, Step{Operation: operation, Status: "skipped", Reason: "no_catalog_sample"})
+		}
+		if includeMedia {
+			result.Steps = append(result.Steps, Step{Operation: "media_sample", Status: "skipped", Reason: "no_catalog_sample"})
 		}
 	}
 	return result

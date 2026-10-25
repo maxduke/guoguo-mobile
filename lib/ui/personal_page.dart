@@ -4,6 +4,7 @@ import '../data/download_store.dart';
 import '../domain/models.dart';
 import '../domain/watch_resume.dart';
 import 'components.dart';
+import 'active_listenable_builder.dart';
 import 'continue_watching_card.dart';
 import 'detail_page.dart';
 
@@ -103,15 +104,15 @@ class _PersonalPageState extends State<PersonalPage> {
     onPopInvokedWithResult: (didPop, _) {
       if (!didPop && widget.active) _changeView(history: false);
     },
-    child: ListenableBuilder(
+    child: ActiveListenableBuilder(
+      active: widget.active,
       listenable: Listenable.merge([
         store,
         store.catalog,
         store.records,
         store.records.progress,
       ]),
-      builder: (context, _) =>
-          _content(MediaQuery.sizeOf(context).width >= 900),
+      builder: (context) => _content(MediaQuery.sizeOf(context).width >= 900),
     ),
   );
 

@@ -10,6 +10,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../data/app_store.dart';
 import '../data/library_exchange.dart';
 import '../data/download_store.dart';
+import '../platform/cover_probe.dart';
 import '../domain/user_input_exception.dart';
 import 'components.dart';
 import 'playback_diagnostics_page.dart';
@@ -57,7 +58,9 @@ class _SettingsPageState extends State<SettingsPage> {
     final directory = await getTemporaryDirectory();
     if (!context.mounted || ModalRoute.of(context)?.isCurrent == false) return;
     final file = File('${directory.path}/guoguo-records.json');
-    await file.writeAsString(store.records.exportBackup(), flush: true);
+    final bytes = await store.records.exportBackupBytes();
+    if (!context.mounted || ModalRoute.of(context)?.isCurrent == false) return;
+    await file.writeAsBytes(bytes, flush: true);
     if (!context.mounted || ModalRoute.of(context)?.isCurrent == false) return;
     final box = context.findRenderObject() as RenderBox?;
     final origin = box == null
@@ -388,6 +391,13 @@ class _SettingsPageState extends State<SettingsPage> {
                     MaterialPageRoute<void>(
                       builder: (_) => SourceDiagnosticsPage(
                         diagnostics: store.sourceDiagnostics,
+                        coverProbe: store.catalog.library.isEmpty
+                            ? null
+                            : () => probeCover(
+                                store.provider,
+                                store.sourceDiagnostics,
+                                store.catalog.library.first,
+                              ),
                       ),
                     ),
                   ),

@@ -16,6 +16,7 @@ class AppStartup extends ChangeNotifier {
     required Stream<bool> offlineChanges,
     Future<bool> Function()? checkWifi,
     Stream<bool>? wifiChanges,
+    this.television = false,
   }) : _initializeCore = initializeCore,
        _checkOffline = checkOffline,
        _offlineChanges = offlineChanges,
@@ -23,6 +24,7 @@ class AppStartup extends ChangeNotifier {
        _wifiChanges = wifiChanges;
 
   final AppStore store;
+  final bool television;
   final DownloadStore downloads;
   final Future<void> Function() _initializeCore;
   final Future<bool> Function() _checkOffline;

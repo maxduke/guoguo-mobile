@@ -173,6 +173,8 @@ func (d *Downloader) resolveDuanjuMedia(ctx context.Context, task Task) (provide
 	switch source {
 	case sourceHeguo:
 		return d.resolveHeguoMedia(ctx, task)
+	case sourceGuanguo:
+		return d.resolveGuanguoMedia(ctx, task)
 	case sourceNiuguo:
 		return d.resolveNiuguoMedia(ctx, task)
 	}

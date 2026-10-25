@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:background_downloader/background_downloader.dart';
 import 'package:flutter/material.dart';
@@ -74,6 +75,24 @@ class _Downloads extends DownloadStore {
     entry.status = TaskStatus.enqueued;
     notifyListeners();
   }
+}
+
+class _CountedEntries extends ListBase<DownloadEntry> {
+  _CountedEntries(this.rows);
+  final List<DownloadEntry> rows;
+  int reads = 0;
+  @override
+  int get length => rows.length;
+  @override
+  set length(int value) => rows.length = value;
+  @override
+  DownloadEntry operator [](int index) {
+    reads++;
+    return rows[index];
+  }
+
+  @override
+  void operator []=(int index, DownloadEntry value) => rows[index] = value;
 }
 
 class _Routes extends NavigatorObserver {
@@ -172,6 +191,47 @@ IconButton _play(WidgetTester tester, int number) => tester.widget<IconButton>(
 );
 
 void main() {
+  testWidgets('hidden downloads skip scans and refresh once on return', (
+    tester,
+  ) async {
+    final app = AppStore(storage: MemoryStorage(), provider: NoNetwork());
+    final rows = _CountedEntries(List.generate(200, (i) => _entry(i + 1)));
+    final downloads = _Downloads(app)..entries = rows;
+    Widget page(bool active) => MaterialApp(
+      home: Scaffold(
+        body: Offstage(
+          offstage: !active,
+          child: DownloadsPage(
+            store: app,
+            downloads: downloads,
+            onOpen: (_) {},
+            active: active,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpWidget(page(false));
+    await tester.pumpAndSettle();
+    rows.reads = 0;
+    rows.rows.add(_entry(201));
+    downloads.notifyListeners();
+    app.records.progress.notifyListeners();
+    await tester.pump();
+    expect(rows.reads, 0);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    await tester.pumpWidget(page(true));
+    await tester.pumpAndSettle();
+    expect(find.text('已下载 201 集'), findsOneWidget);
+    expect(rows.reads, greaterThan(0));
+    rows.reads = 0;
+    app.records.progress.notifyListeners();
+    await tester.pump();
+    expect(rows.reads, greaterThan(0));
+    await tester.pumpWidget(const SizedBox());
+    downloads.dispose();
+    app.dispose();
+  });
+
   testWidgets(
     'mixed downloads and new dramas stay visible with episodes collapsed',
     (tester) async {

@@ -4,7 +4,7 @@ const forest = Color(0xFF235849);
 const cream = Color(0xFFF7F5EF);
 const amber = Color(0xFFBD8A44);
 
-ThemeData guoguoTheme(Brightness brightness) {
+ThemeData guoguoTheme(Brightness brightness, {bool television = false}) {
   final dark = brightness == Brightness.dark;
   final scheme = ColorScheme.fromSeed(seedColor: forest, brightness: brightness)
       .copyWith(
@@ -20,28 +20,34 @@ ThemeData guoguoTheme(Brightness brightness) {
     colorScheme: scheme,
     scaffoldBackgroundColor: scheme.surface,
     fontFamily: 'sans-serif',
+    focusColor: scheme.primary.withValues(alpha: television ? .28 : .12),
     appBarTheme: AppBarTheme(
       backgroundColor: scheme.surface,
       foregroundColor: scheme.onSurface,
       elevation: 0,
       scrolledUnderElevation: 0,
       centerTitle: false,
+      toolbarHeight: television ? 72 : null,
     ),
-    textTheme: const TextTheme(
-      headlineLarge: TextStyle(
+    textTheme: TextTheme(
+      headlineLarge: const TextStyle(
         fontSize: 34,
         fontWeight: FontWeight.w700,
         letterSpacing: -1,
       ),
-      headlineMedium: TextStyle(
+      headlineMedium: const TextStyle(
         fontSize: 28,
         fontWeight: FontWeight.w700,
         letterSpacing: -.6,
       ),
-      titleLarge: TextStyle(fontSize: 21, fontWeight: FontWeight.w700),
-      titleMedium: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-      bodyMedium: TextStyle(fontSize: 14, height: 1.5),
-    ),
+      titleLarge: const TextStyle(fontSize: 21, fontWeight: FontWeight.w700),
+      titleMedium: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+      bodyMedium: const TextStyle(fontSize: 14, height: 1.5),
+      bodySmall: television ? const TextStyle(fontSize: 14) : null,
+      labelLarge: television
+          ? const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)
+          : null,
+    ).apply(fontSizeFactor: television ? 1.15 : 1),
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: scheme.surface,
       indicatorColor: scheme.primary.withValues(alpha: .13),
@@ -65,11 +71,34 @@ ThemeData guoguoTheme(Brightness brightness) {
       ),
     ),
     filledButtonTheme: FilledButtonThemeData(
-      style: FilledButton.styleFrom(
-        minimumSize: const Size(48, 48),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
+      style:
+          FilledButton.styleFrom(
+            minimumSize: Size(television ? 56 : 48, television ? 56 : 48),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ).copyWith(
+            side: WidgetStateProperty.resolveWith(
+              (states) => television && states.contains(WidgetState.focused)
+                  ? BorderSide(color: scheme.onSurface, width: 3)
+                  : BorderSide.none,
+            ),
+          ),
     ),
+    iconButtonTheme: television
+        ? IconButtonThemeData(
+            style: ButtonStyle(
+              minimumSize: WidgetStatePropertyAll(
+                Size(television ? 56 : 48, television ? 56 : 48),
+              ),
+              side: WidgetStateProperty.resolveWith(
+                (states) => television && states.contains(WidgetState.focused)
+                    ? BorderSide(color: scheme.primary, width: 3)
+                    : BorderSide.none,
+              ),
+            ),
+          )
+        : const IconButtonThemeData(),
     chipTheme: ChipThemeData(
       side: BorderSide.none,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),

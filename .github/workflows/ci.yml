@@ -18,7 +18,7 @@ jobs:
   checks:
     name: Flutter and core checks
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Validate version and release tooling
@@ -40,11 +40,14 @@ jobs:
       - run: flutter pub get
       - run: dart format --output=none --set-exit-if-changed lib test packages/guoguo_core/lib
       - run: flutter analyze
-      - name: Install media regression tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Install media and UI regression tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk
       - run: flutter test --concurrency=2
         env:
           GUOGUO_FFMPEG: ffmpeg
+          GUOGUO_PREVIEW_FONT: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+          GUOGUO_ICON_FONT: ${{ env.FLUTTER_ROOT }}/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf
+          GUOGUO_PERF_OUTPUT: ${{ runner.temp }}/guoguo-performance.json
       - run: go test ./...
         working-directory: native/core
   ios:
@@ -72,3 +75,24 @@ jobs:
         run: |
           echo '::warning::The build and package verification passed, but the optional development download could not be stored. See the upload step for the cause.'
           echo 'The optional development IPA download is unavailable. The build and package verification passed; Release publishes its verified package directly.' >> "$GITHUB_STEP_SUMMARY"
+  android:
+    name: Android phone and TV build
+    if: ${{ !inputs.checks-only }}
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/build-android
+      - uses: actions/upload-artifact@v4
+        id: android-artifact
+        continue-on-error: true
+        with:
+          name: Guoguo-Android-test
+          path: build/android-package/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Report unavailable development APK
+        if: steps.android-artifact.outcome == 'failure'
+        run: echo 'Android package verification passed, but the optional test APK download could not be stored.' >> "$GITHUB_STEP_SUMMARY"

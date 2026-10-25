@@ -14,6 +14,7 @@ import 'package:guoguo_mobile/domain/discovery.dart';
 import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/ui/home_page.dart';
 import 'package:guoguo_mobile/ui/theme.dart';
+import 'package:guoguo_mobile/ui/television_scope.dart';
 
 import 'widget_test.dart' show NoNetwork;
 
@@ -58,6 +59,7 @@ void main() {
       ('small-large-text', const Size(320, 640), 2.0),
       ('landscape-notices', const Size(740, 320), 2.0),
       ('tablet', const Size(1024, 768), 1.0),
+      ('television', const Size(1280, 720), 1.0),
       ('split-window', const Size(500, 768), 1.0),
     ]) {
       for (final brightness in Brightness.values) {
@@ -102,12 +104,18 @@ void main() {
             key: key,
             child: MaterialApp(
               debugShowCheckedModeBanner: false,
-              theme: guoguoTheme(brightness),
-              builder: (context, child) => MediaQuery(
-                data: MediaQuery.of(
-                  context,
-                ).copyWith(textScaler: TextScaler.linear(sample.$3)),
-                child: child!,
+              theme: guoguoTheme(
+                brightness,
+                television: sample.$1 == 'television',
+              ),
+              builder: (context, child) => TelevisionScope(
+                enabled: sample.$1 == 'television',
+                child: MediaQuery(
+                  data: MediaQuery.of(
+                    context,
+                  ).copyWith(textScaler: TextScaler.linear(sample.$3)),
+                  child: child!,
+                ),
               ),
               home: HomePage(
                 store: store,

@@ -17,9 +17,10 @@ import (
 func main() {
 	sources := flag.String("sources", "", "comma-separated source IDs; default: all declared sources")
 	query := flag.String("query", "长生", "search sample; excluded from the report")
+	includeMedia := flag.Bool("media", false, "also resolve one episode and probe manifests, keys and its first media bytes")
 	output := flag.String("output", "", "write the report to this file instead of stdout")
 	flag.Parse()
-	report, err := run(*sources, *query)
+	report, err := run(*sources, *query, *includeMedia)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "source check initialization failed")
 		os.Exit(1)
@@ -58,7 +59,7 @@ func newClient() (*mobile.Client, func(), error) {
 	return client, func() { client.Close(); os.RemoveAll(dir) }, nil
 }
 
-func run(selection, query string) (report, error) {
+func run(selection, query string, includeMedia bool) (report, error) {
 	result := report{Format: "guoguo.source-check", Version: 1, At: time.Now().UTC(), Environment: "host"}
 	if os.Getenv("GITHUB_ACTIONS") == "true" {
 		result.Environment = "github-actions"
@@ -118,7 +119,7 @@ func run(selection, query string) (report, error) {
 				return
 			}
 			defer cleanup()
-			result.Sources[index] = sourcecheck.Check(ctx, client, capability, query)
+			result.Sources[index] = sourcecheck.Check(ctx, client, capability, query, includeMedia)
 		})
 	}
 	group.Wait()

@@ -55,11 +55,13 @@ func (downloader *Downloader) fetchCoverImage(ctx context.Context, remoteURL str
 		request.Header.Set("Referer", referer)
 		return nil
 	}
+	traceNetwork(ctx)
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, err
 	}
 	defer response.Body.Close()
+	traceUpdate(ctx, func(value *mobileDiagnostic) { value.HTTPStatus = response.StatusCode })
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("封面上游 HTTP %d", response.StatusCode)
 	}

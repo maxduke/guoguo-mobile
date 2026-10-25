@@ -20,6 +20,7 @@ class PlayerTransport extends StatefulWidget {
     required this.onScrub,
     required this.onSeek,
     this.mediaIdentity,
+    this.playFocusNode,
   });
   final double duration, position, speed;
   final bool playing, enabled, preparing;
@@ -29,6 +30,7 @@ class PlayerTransport extends StatefulWidget {
   final ValueChanged<double> onSpeed, onSeek;
   final ValueChanged<bool> onScrub;
   final Object? mediaIdentity;
+  final FocusNode? playFocusNode;
   @override
   State<PlayerTransport> createState() => _PlayerTransportState();
 }
@@ -168,6 +170,7 @@ class _PlayerTransportState extends State<PlayerTransport>
                 ),
                 IconButton(
                   tooltip: widget.playing ? '暂停' : '播放',
+                  focusNode: widget.playFocusNode,
                   onPressed: _enabled ? widget.onPlay : null,
                   style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
                   color: Colors.white,

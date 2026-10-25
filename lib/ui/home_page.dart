@@ -15,6 +15,7 @@ import 'personal_page.dart';
 import 'continue_watching_card.dart';
 import 'downloads_page.dart';
 import 'settings_page.dart';
+import 'television_scope.dart';
 import 'rankings_page.dart';
 import 'recommendations_page.dart';
 
@@ -160,7 +161,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Widget build(BuildContext context) => LayoutBuilder(builder: _buildLayout);
 
   Widget _buildLayout(BuildContext context, BoxConstraints bounds) {
-    final wide = bounds.maxWidth >= 900 && bounds.maxHeight >= 480;
+    final television = TelevisionScope.of(context);
+    final wide =
+        television || bounds.maxWidth >= 900 && bounds.maxHeight >= 480;
     return Scaffold(
       appBar: AppBar(
         title: const Text('果果'),
@@ -185,7 +188,46 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       body: LayoutBuilder(
         builder: (context, bodyBounds) => Row(
           children: [
-            if (wide)
+            if (television)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 24,
+                ),
+                child: SizedBox(
+                  width: 128,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      for (var i = 0; i < _destinations.length; i++)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: SizedBox(
+                            width: double.infinity,
+                            child: FilledButton.tonalIcon(
+                              autofocus: i == _tab,
+                              onPressed: () => _selectTab(i),
+                              icon: Icon(_destinations[i].icon),
+                              label: Text(_destinations[i].label),
+                              style: ButtonStyle(
+                                backgroundColor: WidgetStatePropertyAll(
+                                  i == _tab
+                                      ? Theme.of(
+                                          context,
+                                        ).colorScheme.primaryContainer
+                                      : Theme.of(
+                                          context,
+                                        ).colorScheme.surfaceContainerLow,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              )
+            else if (wide)
               NavigationRail(
                 selectedIndex: _tab,
                 onDestinationSelected: _selectTab,
@@ -292,49 +334,58 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         child: IndexedStack(
           index: _tab,
           children: [
-            ListenableBuilder(
-              listenable: Listenable.merge([
-                store.catalog,
-                store,
-                if (widget.startup != null) widget.startup!,
-              ]),
-              builder: (context, _) => DiscoveryPage(
-                store: store,
-                source: store.catalog.source,
-                active: _tab == 0 && _routeActive,
-                ready: widget.startup == null || widget.startup!.coreReady,
-                autoLoad: widget.autoLoad || widget.startup != null,
-                onOpen: _open,
-                onSearch: _openSearch,
-                onLibrary: _openLibrary,
-                onMore: _openFeed,
-                continuation: ListenableBuilder(
-                  listenable: Listenable.merge([
-                    store.records,
-                    store.records.progress,
-                  ]),
-                  builder: (context, _) {
-                    final recent = store.records.continuable;
-                    return recent.isEmpty
-                        ? const SizedBox.shrink()
-                        : Padding(
-                            padding: const EdgeInsets.only(top: 16),
-                            child: _continueCard(recent.first),
-                          );
-                  },
+            ExcludeFocus(
+              excluding: _tab != 0 || !_routeActive,
+              child: ListenableBuilder(
+                listenable: Listenable.merge([
+                  store.catalog,
+                  store,
+                  if (widget.startup != null) widget.startup!,
+                ]),
+                builder: (context, _) => DiscoveryPage(
+                  store: store,
+                  source: store.catalog.source,
+                  active: _tab == 0 && _routeActive,
+                  ready: widget.startup == null || widget.startup!.coreReady,
+                  autoLoad: widget.autoLoad || widget.startup != null,
+                  onOpen: _open,
+                  onSearch: _openSearch,
+                  onLibrary: _openLibrary,
+                  onMore: _openFeed,
+                  continuation: ListenableBuilder(
+                    listenable: Listenable.merge([
+                      store.records,
+                      store.records.progress,
+                    ]),
+                    builder: (context, _) {
+                      final recent = store.records.continuable;
+                      return recent.isEmpty
+                          ? const SizedBox.shrink()
+                          : Padding(
+                              padding: const EdgeInsets.only(top: 16),
+                              child: _continueCard(recent.first),
+                            );
+                    },
+                  ),
                 ),
               ),
             ),
-            PersonalPage(
-              store: store,
-              downloads: widget.downloads,
-              active: _tab == 1 && _routeActive,
+            ExcludeFocus(
+              excluding: _tab != 1 || !_routeActive,
+              child: PersonalPage(
+                store: store,
+                downloads: widget.downloads,
+                active: _tab == 1 && _routeActive,
+              ),
             ),
-            DownloadsPage(
-              store: store,
-              downloads: widget.downloads,
-              onOpen: _open,
-              active: _tab == 2,
+            ExcludeFocus(
+              excluding: _tab != 2 || !_routeActive,
+              child: DownloadsPage(
+                store: store,
+                downloads: widget.downloads,
+                onOpen: _open,
+                active: _tab == 2,
+              ),
             ),
           ],
         ),

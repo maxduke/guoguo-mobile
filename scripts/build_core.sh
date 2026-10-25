@@ -20,7 +20,7 @@ case "$platform" in
   android)
     mkdir -p "$root/packages/guoguo_core/android/libs"
     artifact="$root/packages/guoguo_core/android/libs/guoguo.aar"
-    gomobile bind -ldflags "$ldflags" -target=android/arm64,android/amd64 -androidapi=24 -o "$root/packages/guoguo_core/android/libs/guoguo.aar" ./mobile
+    gomobile bind -ldflags "$ldflags" -target=android/arm,android/arm64,android/amd64 -androidapi=24 -o "$root/packages/guoguo_core/android/libs/guoguo.aar" ./mobile
     ;;
   *) echo 'Usage: scripts/build_core.sh ios|android' >&2; exit 2 ;;
 esac

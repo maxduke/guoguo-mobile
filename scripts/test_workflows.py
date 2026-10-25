@@ -58,7 +58,7 @@ class WorkflowTest(unittest.TestCase):
         self.assertNotIn('actions/upload-artifact', self.release)
         self.assertNotIn('gh run ', self.release)
         self.assertNotIn('run-id:', self.release)
-        self.assertNotIn('always()', publish)
+        self.assertIn("if: always() && vars.ANDROID_RELEASE_ENABLED == 'true'", publish)
         self.assertNotIn('continue-on-error:', self.release)
 
     def test_tag_builds_are_not_cancelled_by_regular_ci(self):
@@ -77,6 +77,19 @@ class WorkflowTest(unittest.TestCase):
         self.assertNotIn('contents: write', self.ci)
         self.assertNotIn('contents: write', job(self.release, 'checks'))
         self.assertNotIn('gh release ', self.ci)
+
+    def test_android_builds_are_required_and_only_download_storage_is_optional(self):
+        android = job(self.ci, 'android')
+        self.assertIn('needs: checks', android)
+        build, upload = android.split('      - uses: actions/upload-artifact@v4\n')
+        self.assertIn('uses: ./.github/actions/build-android', build)
+        self.assertNotIn('continue-on-error:', build)
+        self.assertIn('continue-on-error: true', upload)
+        release = job(self.release, 'release')
+        self.assertLess(release.index('uses: ./.github/actions/build-android'), release.index('gh release upload'))
+        self.assertIn('mode: release', release)
+        self.assertIn('secrets.ANDROID_KEYSTORE_BASE64', release)
+        self.assertIn('vars.ANDROID_CERTIFICATE_SHA256', release)
 
 
 if __name__ == '__main__':
