@@ -4,7 +4,7 @@
 
 ## 安装与遥控器
 
-正式版本标签的 Release 构建同时提供 iOS IPA 与固定签名的 Android APK。APK 名为 `Guoguo-版本+构建号-android.apk`，使用 `SHA256SUMS-android` 校验；`build-info-android.json` 记录源码提交、Go 核心摘要、签名证书指纹及架构。首个提供此能力的版本为 v0.20.1；v0.20.0 标签的首次发布因签名恢复脚本错误失败，未生成公开 Release。
+正式版本标签的 Release 构建同时提供 iOS IPA 与固定签名的 Android APK。APK 名为 `Guoguo-版本+构建号-android.apk`，使用 `SHA256SUMS-android` 校验；`build-info-android.json` 记录源码提交、Go 核心摘要、签名证书指纹及架构。首个提供此能力的版本为 v0.20.2；v0.20.0／v0.20.1 的发布分别因签名恢复脚本错误、重复 Go 缓存恢复阻塞而未公开，保留原标签。
 
 CI 的 `Guoguo-Android-test` 为开发测试包，应用 ID 为 `com.maxduke.guoguo_mobile.dev`，可与正式版并存，数据分别保存。测试包使用临时调试签名，不保证不同构建之间覆盖安装；正式包固定签名。CI 上传额度不足时摘要会说明附件不可用，构建和包校验仍必须成功。
 
