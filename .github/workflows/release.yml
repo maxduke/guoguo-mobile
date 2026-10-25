@@ -33,8 +33,9 @@ jobs:
           import base64, os
           from pathlib import Path
           path = Path(os.environ['RUNNER_TEMP']) / 'guoguo-release.jks'
-          with path.open('wb', opener=lambda p, flags: os.open(p, flags, 0o600)) as output:
-              output.write(base64.b64decode(os.environ['ANDROID_KEYSTORE_BASE64'], validate=True))
+          payload = base64.b64decode(os.environ['ANDROID_KEYSTORE_BASE64'], validate=True)
+          with open(path, 'xb', opener=lambda p, flags: os.open(p, flags, 0o600)) as output:
+              output.write(payload)
           with open(os.environ['GITHUB_ENV'], 'a') as output:
               output.write(f'GUOGUO_ANDROID_KEYSTORE={path}\n')
           PY
