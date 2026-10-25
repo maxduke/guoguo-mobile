@@ -22,6 +22,8 @@ runs:
     - uses: actions/setup-go@v5
       with:
         go-version: '1.27.1'
+        # Release shares a runner with iOS, which already restored this cache.
+        cache: ${{ inputs.mode != 'release' }}
         cache-dependency-path: native/core/go.sum
     - name: Prepare Android native toolchain
       shell: bash
