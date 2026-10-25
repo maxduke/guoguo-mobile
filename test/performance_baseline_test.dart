@@ -371,18 +371,21 @@ void main() {
     Future<void> closeCache() async {
       if (cacheDisposed) return;
       cacheDisposed = true;
-      // Drain reads started by posters before closing their store. Their
-      // cleanup timer must not outlive this widget measurement.
-      await coverCache.getFileFromCache('performance-final-drain');
-      await coverCache.dispose();
+      await tester.pumpWidget(const SizedBox());
+      await tester.runAsync(
+        () => coverCache.getFileFromCache('performance-final-drain'),
+      );
+      // dispose() only closes the database. Run the store's pending cleanup
+      // after I/O callbacks have returned to the test clock, before closing it.
+      await tester.pump();
+      await tester.pump(coverCache.store.cleanupRunMinInterval);
+      await tester.runAsync(coverCache.dispose);
     }
 
-    addTearDown(
-      () => tester.runAsync(() async {
-        await closeCache();
-        await temporary!.delete(recursive: true);
-      }),
-    );
+    addTearDown(() async {
+      await closeCache();
+      await tester.runAsync(() => temporary!.delete(recursive: true));
+    });
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -470,7 +473,7 @@ void main() {
       app.dispose();
     }
     _report['render'] = results;
-    await tester.runAsync(closeCache);
+    await closeCache();
     await tester.runAsync(() => _write(output!));
   }, skip: output == null);
 }

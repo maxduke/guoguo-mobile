@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'television_scope.dart';
 
 /// Only the controls rebuild for position updates, never the video/page tree.
 class PlayerTransport extends StatefulWidget {
@@ -101,6 +102,32 @@ class _PlayerTransportState extends State<PlayerTransport>
     return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
   }
 
+  Widget _televisionButton(
+    String label,
+    String tooltip,
+    IconData icon,
+    VoidCallback? onPressed, {
+    FocusNode? focusNode,
+  }) => Tooltip(
+    message: tooltip,
+    child: FilledButton.tonalIcon(
+      focusNode: focusNode,
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(120, 64),
+        foregroundColor: Colors.white,
+        disabledForegroundColor: Colors.white38,
+        backgroundColor: const Color(0xFF345D55),
+        textStyle: Theme.of(
+          context,
+        ).textTheme.labelLarge?.copyWith(fontSize: 18),
+        iconSize: 30,
+      ),
+      icon: Icon(icon),
+      label: Text(label),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -147,46 +174,76 @@ class _PlayerTransportState extends State<PlayerTransport>
             alignment: Alignment.centerLeft,
             child: Text(
               '${_time(_preview ?? widget.position)} / ${widget.preparing ? '已准备 ' : ''}${_time(widget.duration)}',
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: TelevisionScope.of(context) ? 18 : 12,
+              ),
             ),
           ),
         ),
         Wrap(
           alignment: WrapAlignment.spaceBetween,
           crossAxisAlignment: WrapCrossAlignment.center,
-          runSpacing: 4,
-          spacing: 4,
+          runSpacing: TelevisionScope.of(context) ? 12 : 4,
+          spacing: TelevisionScope.of(context) ? 16 : 4,
           children: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  tooltip: widget.previousLabel,
-                  onPressed: _foreground ? widget.onPrevious : null,
-                  style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
-                  color: Colors.white,
-                  disabledColor: Colors.white38,
-                  icon: const Icon(Icons.skip_previous),
-                ),
-                IconButton(
-                  tooltip: widget.playing ? '暂停' : '播放',
-                  focusNode: widget.playFocusNode,
-                  onPressed: _enabled ? widget.onPlay : null,
-                  style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
-                  color: Colors.white,
-                  disabledColor: Colors.white38,
-                  icon: Icon(widget.playing ? Icons.pause : Icons.play_arrow),
-                ),
-                IconButton(
-                  tooltip: widget.nextLabel,
-                  onPressed: _foreground ? widget.onNext : null,
-                  style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
-                  color: Colors.white,
-                  disabledColor: Colors.white38,
-                  icon: const Icon(Icons.skip_next),
-                ),
-              ],
-            ),
+            if (TelevisionScope.of(context)) ...[
+              _televisionButton(
+                '上一集',
+                widget.previousLabel,
+                Icons.skip_previous,
+                _foreground ? widget.onPrevious : null,
+              ),
+              _televisionButton(
+                widget.playing ? '暂停' : '播放',
+                widget.playing ? '暂停' : '播放',
+                widget.playing ? Icons.pause : Icons.play_arrow,
+                _enabled ? widget.onPlay : null,
+                focusNode: widget.playFocusNode,
+              ),
+              _televisionButton(
+                '下一集',
+                widget.nextLabel,
+                Icons.skip_next,
+                _foreground ? widget.onNext : null,
+              ),
+            ] else
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: widget.previousLabel,
+                    onPressed: _foreground ? widget.onPrevious : null,
+                    style: IconButton.styleFrom(
+                      minimumSize: const Size(48, 48),
+                    ),
+                    color: Colors.white,
+                    disabledColor: Colors.white38,
+                    icon: const Icon(Icons.skip_previous),
+                  ),
+                  IconButton(
+                    tooltip: widget.playing ? '暂停' : '播放',
+                    focusNode: widget.playFocusNode,
+                    onPressed: _enabled ? widget.onPlay : null,
+                    style: IconButton.styleFrom(
+                      minimumSize: const Size(48, 48),
+                    ),
+                    color: Colors.white,
+                    disabledColor: Colors.white38,
+                    icon: Icon(widget.playing ? Icons.pause : Icons.play_arrow),
+                  ),
+                  IconButton(
+                    tooltip: widget.nextLabel,
+                    onPressed: _foreground ? widget.onNext : null,
+                    style: IconButton.styleFrom(
+                      minimumSize: const Size(48, 48),
+                    ),
+                    color: Colors.white,
+                    disabledColor: Colors.white38,
+                    icon: const Icon(Icons.skip_next),
+                  ),
+                ],
+              ),
             PopupMenuButton<double>(
               tooltip: '播放倍速',
               enabled: _enabled,
@@ -206,7 +263,10 @@ class _PlayerTransportState extends State<PlayerTransport>
                   PopupMenuItem(value: speed, child: Text('$speed 倍速')),
               ],
               child: ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                constraints: BoxConstraints(
+                  minWidth: TelevisionScope.of(context) ? 96 : 48,
+                  minHeight: TelevisionScope.of(context) ? 64 : 48,
+                ),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: Center(
@@ -215,6 +275,7 @@ class _PlayerTransportState extends State<PlayerTransport>
                       '${widget.speed}x',
                       style: TextStyle(
                         color: _enabled ? Colors.white : Colors.white38,
+                        fontSize: TelevisionScope.of(context) ? 18 : null,
                       ),
                     ),
                   ),
@@ -223,7 +284,9 @@ class _PlayerTransportState extends State<PlayerTransport>
             ),
             TextButton(
               style: TextButton.styleFrom(
-                minimumSize: const Size(48, 48),
+                minimumSize: TelevisionScope.of(context)
+                    ? const Size(120, 64)
+                    : const Size(48, 48),
                 foregroundColor: const Color(0xFF9DCDB0),
                 disabledForegroundColor: Colors.white38,
               ),

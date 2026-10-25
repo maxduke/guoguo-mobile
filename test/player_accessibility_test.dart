@@ -13,6 +13,8 @@ import 'package:guoguo_mobile/ui/episode_pager.dart';
 import 'package:guoguo_mobile/ui/player_page.dart';
 import 'package:guoguo_mobile/ui/player_sheets.dart';
 import 'package:guoguo_mobile/ui/player_transport.dart';
+import 'package:guoguo_mobile/ui/television_scope.dart';
+import 'package:guoguo_mobile/ui/theme.dart';
 
 import 'player_cast_handoff_test.dart' show NativeCastPlayer, LocalDownloads;
 import 'widget_test.dart' show NoNetwork;
@@ -33,6 +35,7 @@ Future<_Fixture> _mount(
   WidgetTester tester, {
   bool accessible = false,
   bool downloaded = true,
+  bool television = false,
   double textScale = 1,
   Size size = const Size(390, 844),
   Brightness brightness = Brightness.dark,
@@ -61,7 +64,11 @@ Future<_Fixture> _mount(
       key: previewKey,
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(brightness: brightness, fontFamily: 'sans-serif'),
+        theme: television
+            ? guoguoTheme(brightness, television: true)
+            : ThemeData(brightness: brightness, fontFamily: 'sans-serif'),
+        builder: (context, child) =>
+            television ? TelevisionScope(enabled: true, child: child!) : child!,
         home: ValueListenableBuilder<bool>(
           valueListenable: navigation,
           builder: (context, enabled, child) => MediaQuery(
@@ -381,7 +388,7 @@ void main() {
   );
 
   final font = Platform.environment['GUOGUO_PREVIEW_FONT'];
-  testWidgets('capture CJK player phone, landscape and tablet controls', (
+  testWidgets('capture CJK player phone, landscape, tablet and TV controls', (
     tester,
   ) async {
     await tester.runAsync(() async {
@@ -405,12 +412,15 @@ void main() {
       (const Size(320, 640), 2.0, 'small-large-text'),
       (const Size(640, 320), 2.0, 'landscape-large-text'),
       (const Size(1024, 768), 1.0, 'tablet'),
+      (const Size(1280, 720), 1.0, 'television'),
+      (const Size(960, 540), 1.5, 'television-large-text'),
     ]) {
       for (final brightness in Brightness.values) {
         final key = GlobalKey();
         final fixture = await _mount(
           tester,
           accessible: true,
+          television: sample.$3.startsWith('television'),
           size: sample.$1,
           textScale: sample.$2,
           brightness: brightness,
