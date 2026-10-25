@@ -1,5 +1,12 @@
 from pathlib import Path
+import base64
+import os
 import re
+import stat
+import subprocess
+import sys
+import tempfile
+import textwrap
 import unittest
 
 
@@ -90,6 +97,37 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn('mode: release', release)
         self.assertIn('secrets.ANDROID_KEYSTORE_BASE64', release)
         self.assertIn('vars.ANDROID_CERTIFICATE_SHA256', release)
+
+    def test_android_signing_helper_restores_private_file_without_overwriting(self):
+        match = re.search(r"^          python3 - <<'PY'\n(.*?)^          PY\n", self.release, re.M | re.S)
+        self.assertIsNotNone(match)
+        code = textwrap.dedent(match.group(1))
+        fixture = b'fixture-keystore-bytes'
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            keystore = directory / 'guoguo-release.jks'
+            environment_file = directory / 'environment'
+
+            def restore(payload):
+                return subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, env={
+                    **os.environ,
+                    'ANDROID_KEYSTORE_BASE64': payload,
+                    'RUNNER_TEMP': temporary,
+                    'GITHUB_ENV': str(environment_file),
+                })
+
+            invalid = restore('invalid base64!')
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertFalse(keystore.exists())
+            payload = base64.b64encode(fixture).decode()
+            restored = restore(payload)
+            self.assertEqual(restored.returncode, 0, restored.stderr)
+            self.assertEqual(keystore.read_bytes(), fixture)
+            self.assertEqual(stat.S_IMODE(keystore.stat().st_mode), 0o600)
+            self.assertEqual(environment_file.read_text(), f'GUOGUO_ANDROID_KEYSTORE={keystore}\n')
+            keystore.write_bytes(b'keep-existing-file')
+            self.assertNotEqual(restore(payload).returncode, 0)
+            self.assertEqual(keystore.read_bytes(), b'keep-existing-file')
 
 
 if __name__ == '__main__':
