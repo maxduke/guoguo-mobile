@@ -1,10 +1,19 @@
 import struct
 import unittest
 
-from android_package import check_identity, elf_16k
+from android_package import build_origin, check_identity, elf_16k
 
 
 class AndroidPackageTest(unittest.TestCase):
+    def test_local_package_does_not_claim_a_validation_run_built_it(self):
+        environment = {'GITHUB_REPOSITORY': 'owner/repo', 'GITHUB_RUN_ID': '123'}
+        self.assertEqual(build_origin(environment), {'buildEnvironment': 'local', 'run_url': ''})
+        environment['GITHUB_ACTIONS'] = 'true'
+        self.assertEqual(build_origin(environment)['run_url'], 'https://github.com/owner/repo/actions/runs/123')
+        environment.pop('GITHUB_RUN_ID')
+        with self.assertRaises(ValueError):
+            build_origin(environment)
+
     def test_identity_rejects_wrong_version_unsigned_or_wrong_fixed_signer(self):
         manifest = 'android.intent.category.LEANBACK_LAUNCHER android:banner'
         badging = "package: name='com.maxduke.guoguo_mobile' versionCode='51' versionName='0.20.0'\nsdkVersion:'24'"

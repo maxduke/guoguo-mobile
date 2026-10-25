@@ -92,6 +92,16 @@ def run(tool, *arguments):
     return subprocess.run([str(tool), *map(str, arguments)], check=True, capture_output=True, text=True).stdout
 
 
+def build_origin(environment):
+    if environment.get('GITHUB_ACTIONS') != 'true':
+        return {'buildEnvironment': 'local', 'run_url': ''}
+    server = environment.get('GITHUB_SERVER_URL', 'https://github.com')
+    repository, run_id = environment.get('GITHUB_REPOSITORY', ''), environment.get('GITHUB_RUN_ID', '')
+    if not re.fullmatch(r'[^/\s]+/[^/\s]+', repository) or not run_id.isdecimal():
+        raise ValueError('GitHub build origin is incomplete')
+    return {'buildEnvironment': 'github-actions', 'run_url': f'{server}/{repository}/actions/runs/{run_id}'}
+
+
 def package(apk, tools, mode, root=ROOT, tag=None):
     name, build = validate(root, tag)
     commit = os.environ.get('GITHUB_SHA', '')
@@ -118,7 +128,7 @@ def package(apk, tools, mode, root=ROOT, tag=None):
         'mode': mode, 'applicationId': application_id, 'certificateSha256': fingerprint,
         'coreSourceDigest': digest, 'abis': abis, 'minSdk': 24,
         'television': True, 'elf16k': True,
-        'run_url': f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}",
+        **build_origin(os.environ),
     }, indent=2) + '\n')
     checksums = []
     for path in (target, info):
