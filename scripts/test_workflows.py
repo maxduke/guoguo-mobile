@@ -88,10 +88,14 @@ class WorkflowTest(unittest.TestCase):
     def test_android_builds_are_required_and_only_download_storage_is_optional(self):
         android = job(self.ci, 'android')
         self.assertIn('needs: checks', android)
-        build, upload = android.split('      - uses: actions/upload-artifact@v4\n')
+        build, upload = android.split('      - uses: actions/upload-artifact@v4\n', 1)
         self.assertIn('uses: ./.github/actions/build-android', build)
         self.assertNotIn('continue-on-error:', build)
         self.assertIn('continue-on-error: true', upload)
+        for abi in ('armeabi-v7a', 'arm64-v8a', 'x86_64'):
+            self.assertIn(f'name: Guoguo-Android-test-{abi}\n', upload)
+            self.assertIn(f'build/android-package/*-android-{abi}-test.apk\n', upload)
+            self.assertIn(f'build/android-package/SHA256SUMS-android-{abi}\n', upload)
         release = job(self.release, 'release')
         self.assertLess(release.index('uses: ./.github/actions/build-android'), release.index('gh release upload'))
         self.assertIn('mode: release', release)

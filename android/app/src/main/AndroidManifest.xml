@@ -5,7 +5,7 @@
     <uses-feature android:name="android.software.leanback" android:required="false"/>
     <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
     <application
-        android:label="果果"
+        android:label="${appLabel}"
         android:usesCleartextTraffic="true"
         android:name="${applicationName}"
         android:banner="@drawable/tv_banner"
