@@ -38,7 +38,7 @@ type mobileTrace struct {
 
 func diagnosticMethod(method string) bool {
 	switch method {
-	case "catalog", "categories", "ranking", "boards", "recommendations", "search", "suggestions", "detail", "chapters":
+	case "catalog", "categories", "ranking", "boards", "recommendations", "search", "suggestions", "detail", "chapters", "cover":
 		return true
 	}
 	return false
@@ -55,7 +55,7 @@ func diagnosticSource(request mobileRequest) string {
 	} else if request.ID != "" {
 		if provider, _, valid := splitProviderDramaID(request.ID); valid {
 			source = provider
-		} else if rankingSourceID.MatchString(request.ID) {
+		} else if rankingSourceID.MatchString(request.ID) && !(request.Method == "cover" && source != "") {
 			source = sourceHuangdou
 		}
 	}

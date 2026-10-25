@@ -367,9 +367,19 @@ void main() {
     await tester.runAsync(
       () => coverCache.getFileFromCache('performance-initialization'),
     );
+    var cacheDisposed = false;
+    Future<void> closeCache() async {
+      if (cacheDisposed) return;
+      cacheDisposed = true;
+      // Drain reads started by posters before closing their store. Their
+      // cleanup timer must not outlive this widget measurement.
+      await coverCache.getFileFromCache('performance-final-drain');
+      await coverCache.dispose();
+    }
+
     addTearDown(
       () => tester.runAsync(() async {
-        await coverCache.dispose();
+        await closeCache();
         await temporary!.delete(recursive: true);
       }),
     );
@@ -460,6 +470,7 @@ void main() {
       app.dispose();
     }
     _report['render'] = results;
+    await tester.runAsync(closeCache);
     await tester.runAsync(() => _write(output!));
   }, skip: output == null);
 }

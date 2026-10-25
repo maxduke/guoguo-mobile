@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   source-check:
-    name: Advisory source text checks
+    name: Advisory source and media checks
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -21,7 +21,7 @@ jobs:
           cache-dependency-path: native/core/go.sum
       - name: Check declared sources with fresh caches
         working-directory: native/core
-        run: go run ./cmd/sourcecheck -output source-check.json
+        run: go run ./cmd/sourcecheck -media -output source-check.json
       - name: Summarize advisory results
         run: |
           python3 - <<'PY'
@@ -29,7 +29,7 @@ jobs:
           from collections import Counter
           from pathlib import Path
           report = json.loads(Path('native/core/source-check.json').read_text())
-          lines = ['## Source text checks', '', 'Network results are advisory; inspect failures and skipped steps in the JSON artifact.', '',
+          lines = ['## Source and media sample checks', '', 'Host samples are advisory. A media step reads manifests, required keys and the first media bytes; it does not decode a full episode or prove device playback.', '',
                    '| Source | Passed | Partial | Failed | Skipped |', '| --- | --- | --- | --- | --- |']
           for source in report['sources']:
               counts = Counter(step['status'] for step in source['steps'])
@@ -38,8 +38,13 @@ jobs:
               output.write('\n'.join(lines) + '\n')
           PY
       - uses: actions/upload-artifact@v4
+        id: report-artifact
+        continue-on-error: true
         with:
           name: Source-check-report
           path: native/core/source-check.json
           if-no-files-found: error
           retention-days: 7
+      - name: Report unavailable download
+        if: steps.report-artifact.outcome == 'failure'
+        run: echo 'The advisory summary above remains available; the JSON attachment could not be stored.' >> "$GITHUB_STEP_SUMMARY"

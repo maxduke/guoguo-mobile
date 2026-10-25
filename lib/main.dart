@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -14,9 +15,11 @@ import 'data/startup_record_recovery.dart';
 import 'platform/provider_client.dart';
 import 'platform/playback_temporary_files.dart';
 import 'platform/network_policy.dart';
+import 'platform/device_profile.dart';
 import 'ui/home_page.dart';
 import 'ui/theme.dart';
 import 'ui/record_recovery_page.dart';
+import 'ui/television_scope.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -191,6 +194,7 @@ Future<AppStartup> _loadStartup() async {
   final downloads = DownloadStore(store, waitForProvider: () => provider.ready);
   final connectivity = Connectivity();
   return AppStartup(
+    television: await isAndroidTelevision(),
     store: store,
     downloads: downloads,
     initializeCore: () => provider.initialize('${directory.path}/providers'),
@@ -210,11 +214,14 @@ class GuoguoApp extends StatelessWidget {
     required this.downloads,
     this.autoLoad = true,
     this.startup,
+    this.television,
   });
   final AppStore store;
   final DownloadStore downloads;
   final bool autoLoad;
   final AppStartup? startup;
+  final bool? television;
+  bool get _television => television ?? startup?.television ?? false;
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: store.preferences.theme,
@@ -227,12 +234,25 @@ class GuoguoApp extends StatelessWidget {
     builder: (context, child) => MaterialApp(
       title: '果果',
       debugShowCheckedModeBanner: false,
-      theme: guoguoTheme(Brightness.light),
-      darkTheme: guoguoTheme(Brightness.dark),
+      theme: guoguoTheme(Brightness.light, television: _television),
+      darkTheme: guoguoTheme(Brightness.dark, television: _television),
       themeMode: store.preferences.themeMode,
       locale: const Locale('zh', 'CN'),
       supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
+      builder: (context, page) => TelevisionScope(
+        enabled: _television,
+        child: Shortcuts(
+          shortcuts: _television
+              ? const {
+                  SingleActivator(LogicalKeyboardKey.select): ActivateIntent(),
+                  SingleActivator(LogicalKeyboardKey.gameButtonA):
+                      ActivateIntent(),
+                }
+              : const {},
+          child: FocusTraversalGroup(child: page!),
+        ),
+      ),
       home: child,
     ),
   );

@@ -3,9 +3,33 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../data/source_diagnostics.dart';
 
-class SourceDiagnosticsPage extends StatelessWidget {
-  const SourceDiagnosticsPage({super.key, required this.diagnostics});
+class SourceDiagnosticsPage extends StatefulWidget {
+  const SourceDiagnosticsPage({
+    super.key,
+    required this.diagnostics,
+    this.coverProbe,
+  });
   final SourceDiagnostics diagnostics;
+  final Future<void> Function()? coverProbe;
+  @override
+  State<SourceDiagnosticsPage> createState() => _SourceDiagnosticsPageState();
+}
+
+class _SourceDiagnosticsPageState extends State<SourceDiagnosticsPage> {
+  SourceDiagnostics get diagnostics => widget.diagnostics;
+  bool _checking = false;
+  Future<void> _probeCover() async {
+    if (_checking || widget.coverProbe == null) return;
+    setState(() => _checking = true);
+    try {
+      await widget.coverProbe!();
+    } catch (_) {
+      // The observed provider records safe request failure fields.
+    } finally {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: diagnostics,
@@ -48,6 +72,14 @@ class SourceDiagnosticsPage extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: [
           const Text('刷新或搜索出现问题后，可复制这些记录用于反馈。'),
+          if (widget.coverProbe != null)
+            OutlinedButton.icon(
+              onPressed: _checking ? null : _probeCover,
+              icon: const Icon(Icons.image_search_outlined),
+              label: Text(_checking ? '正在检测封面…' : '检测当前站源首张封面'),
+            ),
+          if (widget.coverProbe == null)
+            const Text('打开当前站源的剧库并取得作品后，可在这里检测封面。'),
           const SizedBox(height: 12),
           const Text('保留本次运行最近 64 条记录。联网尝试包含连接失败，不能代表站点已收到请求；未知表示没有取得该项统计。'),
           const SizedBox(height: 16),

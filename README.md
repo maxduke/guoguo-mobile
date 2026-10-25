@@ -1,14 +1,18 @@
 # 果果
 
-暖白与墨绿的 Flutter 短剧应用。以 iPhone、iPad 为当前交付重点，Android 工程保留。
+暖白与墨绿的 Flutter 短剧应用，支持 iPhone、iPad、Android 手机与 Android TV／电视盒子。
 
-> 开发版本。源码已接入十九站目录、原生播放与下载/投屏路径；具体 iOS 安装包和验证结果以 GitHub Actions 及 [实现状态](docs/implementation-status.md) 为准，源码接入不等于真机验收通过。
+> 开发版本。源码已接入十九站目录、原生播放与下载/投屏路径；具体安装包和验证结果以 GitHub Actions、Release 及 [实现状态](docs/implementation-status.md) 为准，源码接入不等于真机验收通过。
 
 ## 界面预览
 
 以下为当前导航的布局示例（2026-10-09），使用示例内容，不是站源实测截图。
 
 <img src="screenshots/phone-light.png" width="260" alt="手机浅色界面" /> <img src="screenshots/tablet-dark.png" width="560" alt="平板深色界面" />
+
+Android TV 界面布局示例（2026-10-25，合成内容，主机渲染）：
+
+<img src="screenshots/television-light.png" width="820" alt="电视侧栏和遥控器焦点布局示例" />
 
 ## 当前开发约定
 
@@ -41,7 +45,7 @@ IPA 未签名，不能直接点击安装。签名工具、账号与证书均由�
 1. 更新 `pubspec.yaml` 中的版本和递增构建号，新增 `releases/v版本.md` 更新说明。
 2. 提交并推送源码，等待常规 CI 检查通过后合并到 `main`。
 3. 对需要发布的提交创建并推送版本标签，例如 `git tag v0.3.0`、`git push origin v0.3.0`。
-4. 标签触发 `Release`，先执行与普通 CI 相同的源码检查，再在同一个 macOS 任务中构建 iOS 包，核对版本、提交及 SHA-256 校验和，直接上传本次构建的文件。全部附件上传完成前保持草稿状态，发布不依赖 Actions 中转产物或历史 main CI 包。
+4. 标签触发 `Release`，先执行与普通 CI 相同的源码检查，再在同一个 macOS 任务中构建 iOS 包及已启用签名配置的 Android APK，核对版本、提交、签名及校验和，直接上传本次构建的文件。全部附件上传完成前保持草稿状态，发布不依赖 Actions 中转产物或历史 main CI 包。
 
 构建或上传失败可重跑失败的发布任务；它会重新构建并校验同一标签的安装包，再继续上传草稿附件，不会回退到其他运行或提交的安装包。新流程仅对包含新工作流的提交生效，旧提交上的 tag 仍使用当时的工作流。
 
@@ -68,7 +72,7 @@ flutter build ios --release --no-codesign
 
 `prepare_ios_player.py` 校验锁定的播放器源码并生成仅供 CocoaPods 使用的 iOS 修复副本，依赖缓存保持原样；Podfile 也会在安装依赖时准备该副本。当前 iOS 构建使用 CocoaPods，保持 Swift Package Manager 关闭。
 
-Android 暂未完成验收。配置 Android SDK/NDK 后可使用 `scripts/build_core.sh android` 构建桥接库。
+Android 的构建、安装、固定签名与遥控器使用见 [Android／TV 说明](docs/android-tv.md)。同一 APK 包含三种架构；正式包与开发测试包分开安装，具体设备的播放与后台行为仍需验收。
 
 ## 检查
 
@@ -107,6 +111,7 @@ go run ./cmd/probe -source huangguo
 - [状态职责与页面更新边界](docs/app-state.md)
 - [性能基线与取舍](docs/performance-baseline.md)
 - [iPhone / iPad 真机验收](docs/ios-device-checklist.md)
+- [Android 手机／电视使用与构建](docs/android-tv.md)
 - [历史规划与实施记录](docs/archive/README.md)
 - [架构决策](docs/adr/0001-standalone-mobile-app.md)
 - [领域术语](CONTEXT.md)

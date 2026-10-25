@@ -13,143 +13,10 @@ import '../platform/provider_client.dart';
 import 'app_store.dart';
 import 'storage.dart';
 import 'download_driver.dart';
-
-String downloadFailure(TaskRecord record) => switch (record.exception) {
-  TaskFileSystemException() => '视频文件写入失败，请检查设备剩余空间后重试',
-  TaskConnectionException() => '网络连接中断或超时，请检查网络后重试',
-  TaskResumeException() => '断点已失效，请重试；已完成分片会保留',
-  TaskHttpException(:final httpResponseCode) =>
-    '资源请求失败（HTTP $httpResponseCode），请重试更新资源',
-  TaskUrlException() => '资源地址无效，请重试更新资源',
-  _ => record.status == TaskStatus.notFound ? '资源已失效，请重试更新资源' : '资源下载失败，请重试',
-};
-
-enum DownloadPhase {
-  queued('排队中'),
-  downloading('下载中'),
-  paused('已暂停'),
-  retrying('等待自动重试'),
-  failed('下载失败'),
-  waitingProcessing('等待整理'),
-  processing('正在整理视频'),
-  complete('已完成');
-
-  const DownloadPhase(this.label);
-  final String label;
-}
-
-String formatDownloadBytes(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-  if (bytes < 1024 * 1024 * 1024) {
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
-  return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
-}
-
-class DownloadEntry {
-  DownloadEntry({
-    required this.id,
-    required this.drama,
-    required this.episode,
-    required this.index,
-    required this.directory,
-    required this.input,
-    required this.contentKey,
-    required this.process,
-    required this.tasks,
-    this.ready = false,
-    this.userPaused = false,
-    this.failure,
-    this.refreshOnResume = false,
-    Map<String, String>? assetIdentities,
-  }) : assetIdentities = assetIdentities ?? {};
-  final String id, directory, input, contentKey;
-  final Drama drama;
-  final Episode episode;
-  final int index;
-  final bool process;
-  final List<DownloadTask> tasks;
-  final Map<String, String> assetIdentities;
-  bool refreshOnResume;
-  bool ready, userPaused, processing = false;
-  TaskStatus status = TaskStatus.enqueued;
-  double progress = 0;
-  int downloadedBytes = 0;
-  int? totalBytes;
-  bool awaitingProcessing = false;
-  String? failure;
-  bool get complete => ready;
-  String get output => '$directory/${process ? 'video.mp4' : input}';
-  DownloadPhase get phase {
-    if (ready) return DownloadPhase.complete;
-    if (processing) return DownloadPhase.processing;
-    if (failure != null) return DownloadPhase.failed;
-    if (userPaused) return DownloadPhase.paused;
-    if (awaitingProcessing) return DownloadPhase.waitingProcessing;
-    return switch (status) {
-      TaskStatus.running => DownloadPhase.downloading,
-      TaskStatus.paused => DownloadPhase.paused,
-      TaskStatus.waitingToRetry => DownloadPhase.retrying,
-      TaskStatus.failed ||
-      TaskStatus.canceled ||
-      TaskStatus.notFound => DownloadPhase.failed,
-      _ => DownloadPhase.queued,
-    };
-  }
-
-  String get label => failure ?? phase.label;
-  bool get canPause =>
-      !processing &&
-      !ready &&
-      {
-        DownloadPhase.queued,
-        DownloadPhase.downloading,
-        DownloadPhase.retrying,
-        DownloadPhase.waitingProcessing,
-      }.contains(phase);
-  bool get canResume => phase == DownloadPhase.paused;
-  bool get canRetry => phase == DownloadPhase.failed;
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'drama': drama.toJson(),
-    'episode': episode.raw,
-    'index': index,
-    'directory': directory,
-    'input': input,
-    'contentKey': contentKey,
-    'process': process,
-    'assetIdentities': assetIdentities,
-    'refreshOnResume': refreshOnResume,
-    'tasks': tasks.map((t) => t.toJson()).toList(),
-    'ready': ready,
-    'userPaused': userPaused,
-    'failure': failure,
-  };
-  factory DownloadEntry.fromJson(Map<String, dynamic> json) => DownloadEntry(
-    id: json['id'] as String,
-    drama: Drama.fromJson(Map<String, dynamic>.from(json['drama'] as Map)),
-    episode: Episode.fromJson(
-      Map<String, dynamic>.from(json['episode'] as Map),
-      json['index'] as int,
-    ),
-    index: json['index'] as int,
-    directory: json['directory'] as String,
-    input: json['input'] as String,
-    contentKey: json['contentKey'] as String,
-    process: json['process'] == true,
-    assetIdentities: Map<String, String>.from(
-      json['assetIdentities'] as Map? ?? {},
-    ),
-    refreshOnResume: json['refreshOnResume'] == true,
-    tasks: (json['tasks'] as List)
-        .map((t) => DownloadTask.fromJson(Map<String, dynamic>.from(t as Map)))
-        .toList(),
-    ready: json['ready'] == true,
-    userPaused: json['userPaused'] == true,
-    failure: json['failure'] as String?,
-  );
-}
+import 'download_entry.dart';
+import 'download_manifest_recovery.dart';
+import 'download_task_updates.dart';
+export 'download_entry.dart';
 
 class _DownloadSubmission {
   final drained = Completer<void>();
@@ -183,6 +50,9 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   String? get error => _manifestError ?? initializationError ?? _error;
   set error(String? value) => _error = value;
   Timer? _refreshTimer;
+  final _taskUpdates = DownloadTaskUpdates();
+  final _taskOwners = <String, DownloadEntry>{};
+  final _taskDefinitions = <String, DownloadTask>{};
   bool _verifyFiles = false;
   final Set<String> _removing = {};
   final Map<String, _DownloadSubmission> _submissions = {};
@@ -194,6 +64,18 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
   MediaPreparer? _processor;
   final Set<String> _enqueuing = {};
   final Map<String, int> bytesByEntry = {};
+  Set<String> _protectedDirectories = {};
+  bool _preserveUnknownDirectories = false;
+  String? get recoveryNotice => !_preserveUnknownDirectories
+      ? null
+      : '下载记录已修复，${_protectedDirectories.isEmpty ? '未识别的视频文件' : '${_protectedDirectories.length} 个未识别的目录'}会继续保留，不自动清理';
+  DownloadManifestRecovery? get manifestRecovery =>
+      !manifestLoaded &&
+          initializationError != null &&
+          _storage is FileStorage &&
+          _root != null
+      ? DownloadManifestRecovery(_storage! as FileStorage, _root!)
+      : null;
   Future<void>? _usageRefresh;
   bool _usageAgain = false;
   bool get measuringUsage => _usageRefresh != null;
@@ -226,6 +108,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     final state = await _storage!.read();
     if (_disposed) return;
     if (state != null) {
+      final retained = protectedDownloadDirectories(state);
       final loaded = (state['jobs'] as List)
           .map(
             (v) => DownloadEntry.fromJson(Map<String, dynamic>.from(v as Map)),
@@ -237,6 +120,8 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         json['directory'] = '${_root!.path}/${entry.id}';
         return DownloadEntry.fromJson(json);
       }).toList();
+      _protectedDirectories = retained;
+      _preserveUnknownDirectories = state['preserveUnknownDirectories'] == true;
     }
     manifestLoaded = true;
     notifyListeners();
@@ -267,13 +152,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       _foreground =
           WidgetsBinding.instance.lifecycleState == null ||
           WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
-      _subscription = driver.updates.listen((_) {
-        if (_disposed) return;
-        _refreshTimer ??= Timer(const Duration(milliseconds: 300), () {
-          _refreshTimer = null;
-          unawaited(reload(verifyFiles: false));
-        });
-      });
+      _subscription = driver.updates.listen(_queueTaskUpdate);
       await cleanupOrphans();
       if (_disposed) return;
       await restorePendingTasks();
@@ -350,6 +229,9 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       await target.write({
         'version': 1,
         'jobs': entries.map((e) => e.toJson()).toList(),
+        if (_protectedDirectories.isNotEmpty)
+          'protectedDirectories': _protectedDirectories.toList(),
+        if (_preserveUnknownDirectories) 'preserveUnknownDirectories': true,
       });
       _setManifestError(null);
     } catch (_) {
@@ -381,6 +263,91 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  void _indexTasks(DownloadEntry entry) {
+    for (final task in entry.tasks) {
+      _taskOwners[task.taskId] = entry;
+      _taskDefinitions[task.taskId] = task;
+    }
+  }
+
+  void _forgetTasks(DownloadEntry entry) {
+    for (final task in entry.tasks) {
+      _taskOwners.remove(task.taskId);
+      _taskDefinitions.remove(task.taskId);
+      _taskUpdates.resetTask(task.taskId);
+    }
+  }
+
+  void _queueTaskUpdate(TaskUpdate update) {
+    if (_disposed || !initialized || update.task.group != group) return;
+    final owner = _taskOwners[update.task.taskId];
+    final task = _taskDefinitions[update.task.taskId];
+    if (owner == null ||
+        task == null ||
+        owner.ready ||
+        _removing.contains(owner.id) ||
+        task.url != update.task.url) {
+      return;
+    }
+    _taskUpdates.add(update);
+    _scheduleTaskUpdates();
+  }
+
+  void _scheduleTaskUpdates() {
+    if (_disposed || !_taskUpdates.hasPending) return;
+    _refreshTimer ??= Timer(const Duration(milliseconds: 300), () {
+      _refreshTimer = null;
+      unawaited(_applyTaskUpdates());
+    });
+  }
+
+  Future<void> _applyTaskUpdates() async {
+    if (_disposed || !_taskUpdates.hasPending) return;
+    if (_loading) {
+      _scheduleTaskUpdates();
+      return;
+    }
+    _loading = true;
+    var changed = false, save = false;
+    try {
+      final affected = _taskUpdates
+          .apply()
+          .map((id) => _taskOwners[id])
+          .whereType<DownloadEntry>()
+          .toSet();
+      for (final entry in affected) {
+        if (entry.ready || _removing.contains(entry.id)) continue;
+        final previous = entry.failure;
+        updateDownloadEntry(entry, _taskUpdates.records);
+        save = save || previous != entry.failure;
+        changed = true;
+      }
+      if (save) await _save();
+      if (!_disposed && !_finalizing && _foreground) {
+        final ready = affected
+            .where(
+              (e) =>
+                  !e.ready &&
+                  !e.userPaused &&
+                  e.failure == null &&
+                  !_removing.contains(e.id) &&
+                  e.awaitingProcessing,
+            )
+            .firstOrNull;
+        if (ready != null) unawaited(_finalize(ready));
+      }
+    } catch (_) {
+      error = '下载状态更新暂未完成，请下拉刷新重试';
+    } finally {
+      _loading = false;
+      if (!_disposed) {
+        if (changed) notifyListeners();
+        if (_reloadAgain) unawaited(reload(verifyFiles: false));
+        _scheduleTaskUpdates();
+      }
+    }
+  }
+
   Future<void> reload({bool verifyFiles = true}) async {
     _verifyFiles = _verifyFiles || verifyFiles;
     if (_disposed ||
@@ -401,8 +368,15 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         final checkFiles = _verifyFiles;
         _verifyFiles = false;
         checkedFiles = checkedFiles || checkFiles;
-        final records = {for (final r in await driver.records()) r.taskId: r};
+        final snapshot = await driver.records();
         if (_disposed) return;
+        _taskOwners.clear();
+        _taskDefinitions.clear();
+        for (final entry in entries) {
+          _indexTasks(entry);
+        }
+        _taskUpdates.replace(snapshot, _taskOwners.keys.toSet());
+        final records = _taskUpdates.records;
         for (final entry in entries.toList()) {
           if (_removing.contains(entry.id)) continue;
           if (entry.ready) {
@@ -419,67 +393,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
             _invalidateOutput(entry);
             continue;
           }
-          final parts = entry.tasks.map((t) => records[t.taskId]).toList();
-          double partProgress(TaskRecord? part) =>
-              part?.status == TaskStatus.complete
-              ? 1
-              : (part?.progress ?? 0).clamp(0, 1);
-          entry.totalBytes =
-              parts.isNotEmpty &&
-                  parts.every((p) => p != null && p.expectedFileSize > 0)
-              ? parts.fold<int>(0, (total, p) => total + p!.expectedFileSize)
-              : null;
-          entry.downloadedBytes = parts.fold<int>(
-            0,
-            (total, p) =>
-                total +
-                (p != null && p.expectedFileSize > 0
-                    ? (p.expectedFileSize * partProgress(p)).round()
-                    : 0),
-          );
-          entry.progress = parts.isEmpty
-              ? 0
-              : parts.fold<double>(0, (total, p) => total + partProgress(p)) /
-                    parts.length;
-          if (entry.totalBytes != null) {
-            entry.progress = entry.downloadedBytes / entry.totalBytes!;
-          }
-          entry.awaitingProcessing =
-              parts.isNotEmpty &&
-              parts.every((p) => p?.status == TaskStatus.complete);
-          if (entry.failure != null) {
-            entry.status = TaskStatus.failed;
-            continue;
-          }
-          if (entry.userPaused) {
-            entry.status = TaskStatus.paused;
-          } else if (parts.any(
-            (p) =>
-                p?.status == TaskStatus.failed ||
-                p?.status == TaskStatus.notFound ||
-                p?.status == TaskStatus.canceled,
-          )) {
-            entry.status = TaskStatus.failed;
-            entry.failure = downloadFailure(
-              parts.whereType<TaskRecord>().firstWhere(
-                (p) =>
-                    p.status == TaskStatus.failed ||
-                    p.status == TaskStatus.notFound ||
-                    p.status == TaskStatus.canceled,
-              ),
-            );
-          } else if (parts.isNotEmpty &&
-              parts.every((p) => p?.status == TaskStatus.complete)) {
-            entry.status = TaskStatus.running;
-          } else if (parts.any((p) => p?.status == TaskStatus.running)) {
-            entry.status = TaskStatus.running;
-          } else if (parts.any((p) => p?.status == TaskStatus.waitingToRetry)) {
-            entry.status = TaskStatus.waitingToRetry;
-          } else if (parts.any((p) => p?.status == TaskStatus.paused)) {
-            entry.status = TaskStatus.paused;
-          } else {
-            entry.status = TaskStatus.enqueued;
-          }
+          updateDownloadEntry(entry, records);
         }
         if (checkFiles) await refreshUsage();
         if (_disposed) return;
@@ -647,11 +561,13 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       submission = _DownloadSubmission();
       _submissions[id] = submission;
       entries.add(entry);
+      _indexTasks(entry);
       try {
         await _save();
         registered = true;
       } catch (_) {
         entries.remove(entry);
+        _forgetTasks(entry);
         rethrow;
       }
       if (!_disposed) notifyListeners();
@@ -805,7 +721,9 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
       final name = item.uri.pathSegments.where((s) => s.isNotEmpty).last;
       if (item is Directory &&
           RegExp(r'^\d+$').hasMatch(name) &&
-          !known.contains(name)) {
+          !known.contains(name) &&
+          !_preserveUnknownDirectories &&
+          !_protectedDirectories.contains(name)) {
         await item.delete(recursive: true);
       }
     }
@@ -898,6 +816,12 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         entry.refreshOnResume = plan.refreshOnResume;
         entry.failure = null;
         entry.userPaused = false;
+        for (final task in entry.tasks) {
+          if (!complete.contains(task.taskId)) {
+            _taskUpdates.resetTask(task.taskId);
+          }
+        }
+        _indexTasks(entry);
         await _save();
         for (final task in entry.tasks.where(
           (t) => !complete.contains(t.taskId),
@@ -957,10 +881,12 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         await driver.deleteRecord(task.taskId);
       }
       entries.remove(entry);
+      _forgetTasks(entry);
       try {
         await _save();
       } catch (_) {
         entries.add(entry);
+        _indexTasks(entry);
         entry.ready = false;
         entry.failure = '文件已清理，但记录保存失败，请重试删除';
         entry.status = TaskStatus.failed;
@@ -988,7 +914,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// Explicit refreshes scan saved files; progress events only read task records.
+  /// Explicit refreshes scan saved files; progress events use cached task records.
   Future<void> refreshUsage() {
     if (_disposed) return Future.value();
     if (_usageRefresh != null) {

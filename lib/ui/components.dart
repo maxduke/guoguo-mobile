@@ -6,6 +6,7 @@ import '../domain/models.dart';
 import '../domain/user_input_exception.dart';
 import '../data/cover_cache.dart';
 import '../platform/provider_client.dart';
+import 'television_scope.dart';
 
 class Poster extends StatelessWidget {
   const Poster(this.drama, {super.key, this.radius = 16});
@@ -112,16 +113,18 @@ class DramaCard extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: onTap,
-                borderRadius: BorderRadius.circular(16),
-                child: Semantics(
-                  label: '${drama.title}，打开详情',
-                  button: true,
-                  excludeSemantics: true,
-                  child: Poster(drama),
+            TelevisionFocusOutline(
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: onTap,
+                  borderRadius: BorderRadius.circular(16),
+                  child: Semantics(
+                    label: '${drama.title}，打开详情',
+                    button: true,
+                    excludeSemantics: true,
+                    child: Poster(drama),
+                  ),
                 ),
               ),
             ),

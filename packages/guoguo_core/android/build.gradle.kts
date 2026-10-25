@@ -25,6 +25,17 @@ plugins {
     id("com.android.library")
 }
 
+// Android libraries cannot bundle a direct local AAR dependency. The generated
+// gomobile archive owns only its Java bridge and JNI libraries; include both in
+// this plugin so the consuming app receives the complete native core.
+val coreAar = layout.projectDirectory.file("libs/guoguo.aar")
+val coreOutput = layout.buildDirectory.dir("generated/guoguo-core")
+val unpackCore = tasks.register<Sync>("unpackGuoguoCore") {
+    from(zipTree(coreAar))
+    include("classes.jar", "jni/**", "proguard.txt")
+    into(coreOutput)
+}
+
 android {
     namespace = "com.maxduke.guoguo_core"
 
@@ -38,6 +49,7 @@ android {
     sourceSets {
         getByName("main") {
             java.srcDirs("src/main/kotlin")
+            jniLibs.srcDir(coreOutput.get().dir("jni").asFile)
         }
         getByName("test") {
             java.srcDirs("src/test/kotlin")
@@ -46,6 +58,7 @@ android {
 
     defaultConfig {
         minSdk = 24
+        consumerProguardFiles(coreOutput.get().file("proguard.txt").asFile)
     }
 
     testOptions {
@@ -72,7 +85,12 @@ kotlin {
 }
 
 dependencies {
-    implementation(files("libs/guoguo.aar"))
+    implementation(files(coreOutput.map { it.file("classes.jar") }).builtBy(unpackCore))
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.mockito:mockito-core:5.0.0")
+}
+
+tasks.named("preBuild") { dependsOn(unpackCore) }
+tasks.matching { it.name.endsWith("ConsumerProguardFiles") }.configureEach {
+    dependsOn(unpackCore)
 }

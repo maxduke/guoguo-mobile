@@ -1,0 +1,46 @@
+name: Build and verify Android phone and TV package
+description: Build the embedded core and APK, verifying signing, identity, ABIs and native alignment.
+inputs:
+  mode:
+    description: debug or release; release requires GUOGUO_ANDROID_* signing variables.
+    default: debug
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: android-actions/setup-android@v3
+    - uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.47.4'
+        channel: stable
+        cache: true
+    - uses: actions/setup-go@v5
+      with:
+        go-version: '1.27.1'
+        cache-dependency-path: native/core/go.sum
+    - name: Prepare Android native toolchain
+      shell: bash
+      run: sdkmanager 'ndk;28.2.13676358' 'build-tools;36.0.0'
+    - run: scripts/setup_core.sh
+      shell: bash
+    - run: |
+        export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+        scripts/build_core.sh android
+      shell: bash
+    - run: python3 scripts/prepare_player.py
+      shell: bash
+    - run: flutter pub get
+      shell: bash
+    - name: Build and verify APK
+      shell: bash
+      env:
+        ANDROID_BUILD_MODE: ${{ inputs.mode }}
+      run: |
+        set -euo pipefail
+        case "$ANDROID_BUILD_MODE" in debug|release) ;; *) exit 2 ;; esac
+        flutter build apk "--$ANDROID_BUILD_MODE" --no-pub
+        python3 scripts/core_identity.py verify --artifact packages/guoguo_core/android/libs/guoguo.aar --manifest packages/guoguo_core/android/libs/guoguo.aar.manifest.json --platform android
+        python3 scripts/android_package.py --apk "build/app/outputs/flutter-apk/app-$ANDROID_BUILD_MODE.apk" --mode "$ANDROID_BUILD_MODE" --build-tools "$ANDROID_HOME/build-tools/36.0.0"

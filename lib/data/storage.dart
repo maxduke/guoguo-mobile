@@ -134,6 +134,10 @@ class AppFileStorage implements PartitionedStorage {
   Future<File> replaceRecordsPreserving(Map<String, dynamic> value) =>
       _records.replacePreserving(_recordsPart(value));
 
+  Future<File> replaceRecordsPreservingFuture(
+    Future<Map<String, dynamic>> value,
+  ) => _records.replacePreservingFuture(value.then(_recordsPart));
+
   @override
   Future<void> write(Map<String, dynamic> value) async {
     // Detach both parts at invocation, before awaiting either write.
@@ -186,8 +190,15 @@ class FileStorage implements LocalStorage {
 
   Future<File> replacePreserving(Map<String, dynamic> value) {
     final detached = _detachJson(value);
+    return replacePreservingFuture(
+      Future.value(detached as Map<String, dynamic>),
+    );
+  }
+
+  Future<File> replacePreservingFuture(Future<Map<String, dynamic>> value) {
+    value.ignore();
     return _serialized(() async {
-      final snapshot = await _encode(detached);
+      final snapshot = await _encode(await value);
       final original = await _preserve();
       await _commit(snapshot);
       return original;

@@ -26,6 +26,8 @@ type MobileClient struct {
 	diagnostics      map[string]mobileDiagnostic
 	diagnosticOrder  []string
 	closed           bool
+	lifetime         context.Context
+	cancelLifetime   context.CancelFunc
 	catalogReads     map[string]*mobileCatalogRead
 	canceledCatalogs map[string]mobileCatalogCancellation
 	covers           coverImageCache
@@ -112,7 +114,17 @@ func (c *MobileClient) Call(raw string) (result string, callErr error) {
 	if request.TimeoutMS > 0 {
 		timeout = time.Duration(max(100, request.TimeoutMS)) * time.Millisecond
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return "", errors.New("站源客户端已关闭")
+	}
+	if c.lifetime == nil {
+		c.lifetime, c.cancelLifetime = context.WithCancel(context.Background())
+	}
+	parent := c.lifetime
+	c.mu.Unlock()
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	var value any
 	var trace *mobileTrace
@@ -409,6 +421,9 @@ func (c *MobileClient) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closed = true
+	if c.cancelLifetime != nil {
+		c.cancelLifetime()
+	}
 	for id, read := range c.catalogReads {
 		read.cancel()
 		delete(c.catalogReads, id)

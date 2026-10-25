@@ -580,7 +580,7 @@ func TestDuanjuMobileResolverRejectsMismatchedChapter(t *testing.T) {
 
 func TestDuanjuGuanguoEmptyDetailIsReportedAsUpstream(t *testing.T) {
 	d, server := duanjuFixtureDownloader(t, func(writer http.ResponseWriter, request *http.Request) {
-		if !strings.Contains(request.URL.Path, "shortVideoDetail") {
+		if !strings.Contains(request.URL.Path, "/drama/play/h5/detail") {
 			writer.WriteHeader(http.StatusNotFound)
 			return
 		}
