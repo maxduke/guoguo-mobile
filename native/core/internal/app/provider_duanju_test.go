@@ -460,8 +460,8 @@ func TestDuanjuHeguoParsesNextDataWrappedResponses(t *testing.T) {
 	}
 }
 
-func TestDuanjuSearchSupportMatchesReferenceScripts(t *testing.T) {
-	supported := []string{sourceYaguo, sourceMaoguo, sourceFanguo, sourceGuanguo, sourceHeguo, sourceXingguo, sourceHuaguo, sourceNiuguo, sourcePiguo, sourceWuguo, sourceChaoguo, sourceMiguo, sourceShuangguo}
+func TestDuanjuSearchSupportMatchesAvailableCapabilities(t *testing.T) {
+	supported := []string{sourceYaguo, sourceMaoguo, sourceFanguo, sourceGuanguo, sourceHeguo, sourceXingguo, sourceHuaguo, sourceNiuguo, sourcePiguo, sourceWuguo, sourceChaoguo, sourceMiguo}
 	for _, source := range supported {
 		if !duanjuSupportsSearch(source) {
 			t.Fatalf("%s should support online search", source)
@@ -615,6 +615,12 @@ func TestDuanjuCleanTitleStripsLiveSeoSuffixes(t *testing.T) {
 
 func TestDuanjuSearchCoverageMatchesImplementedSources(t *testing.T) {
 	for _, spec := range duanjuProviderCatalog {
+		if spec.ID == sourceShuangguo {
+			if spec.Searcher || duanjuSupportsSearch(spec.ID) {
+				t.Fatal("verification-blocked search must not be advertised")
+			}
+			continue
+		}
 		if !spec.Searcher {
 			t.Fatalf("%s must advertise online search", spec.ID)
 		}

@@ -418,6 +418,10 @@ class _SourceSheetState extends State<_SourceSheet> {
                 if (source.rankings) '栏目入口',
               ].join(' · '),
             ),
+            if (source.defaultDisabledReason != null)
+              Text(
+                '${hidden ? '默认停用' : '兼容性提示'} · ${source.defaultDisabledReason}',
+              ),
             Text(
               retrieved == null
                   ? '尚无栏目获取记录'

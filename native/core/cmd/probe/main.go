@@ -17,6 +17,10 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	query := flag.String("query", "", "inspect source search")
 	genre := flag.String("genre", "", "inspect Hongguo recommendations: short_play, comic_series, ai_series")
 	source := flag.String("source", "hongguo", "source ID, including chaoguo, miguo and shuangguo")
@@ -29,7 +33,7 @@ func main() {
 	flag.Parse()
 	if (*query != "" && (*board != "" || *genre != "")) || (*genre != "" && (*source != "hongguo" || *board != "" || *pages != 1)) {
 		fmt.Fprintln(os.Stderr, "query cannot combine with board/genre; genre requires hongguo, one page and no board")
-		os.Exit(2)
+		return 2
 	}
 	dir, err := os.MkdirTemp("", "guoguo-probe-")
 	if err != nil {
@@ -55,7 +59,7 @@ func main() {
 	result, err := c.Call(string(request))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return 1
 	}
 	var rows struct {
 		Items        []json.RawMessage `json:"items"`
@@ -104,7 +108,7 @@ func main() {
 		raw, callErr := c.Call(string(request))
 		if callErr != nil {
 			fmt.Fprintln(os.Stderr, callErr)
-			os.Exit(1)
+			return 1
 		}
 		var next struct {
 			Items        []json.RawMessage `json:"items"`
@@ -143,7 +147,7 @@ func main() {
 			value, err := c.Call(string(request))
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
+				return 1
 			}
 			var result struct {
 				Data        string `json:"data"`
@@ -160,7 +164,7 @@ func main() {
 		}
 	}
 	if (!*detailProbe && !*mediaProbe && !*decodeProbe) || len(rows.Items) == 0 {
-		return
+		return 0
 	}
 	var drama struct {
 		ID string `json:"id"`
@@ -173,7 +177,7 @@ func main() {
 	detail, err := c.Call(string(request))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return 1
 	}
 	var chapters struct {
 		Chapters []json.RawMessage `json:"chapters"`
@@ -183,17 +187,17 @@ func main() {
 	}
 	if len(chapters.Chapters) == 0 {
 		fmt.Fprintln(os.Stderr, "no episodes")
-		os.Exit(1)
+		return 1
 	}
 	fmt.Printf("detail=passed episodes=%d\n", len(chapters.Chapters))
 	if !*mediaProbe && !*decodeProbe {
-		return
+		return 0
 	}
 	request, _ = json.Marshal(map[string]any{"method": "resolve", "id": drama.ID, "chapter": chapters.Chapters[0]})
 	resolved, err := c.Call(string(request))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return 1
 	}
 	var media struct {
 		URL        string            `json:"url"`
@@ -215,13 +219,13 @@ func main() {
 	response, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "media request failed (URL omitted)")
-		os.Exit(1)
+		return 1
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, 1024))
 	if err != nil || response.StatusCode >= 300 {
 		fmt.Fprintf(os.Stderr, "media fetch failed: HTTP %d\n", response.StatusCode)
-		os.Exit(1)
+		return 1
 	}
 	fmt.Printf("episodes=%d mediaHTTP=%d bytes=%d hls=%t encrypted=%t\n", len(chapters.Chapters), response.StatusCode, len(data), media.HLS, media.ContentKey != "")
 	if *decodeProbe {
@@ -246,12 +250,13 @@ func main() {
 		// Never echo arguments or native logs containing signed URLs and keys.
 		if err := exec.CommandContext(ctx, "ffmpeg", args...).Run(); err != nil {
 			fmt.Fprintln(os.Stderr, "media preparation failed (credentials omitted)")
-			os.Exit(1)
+			return 1
 		}
 		if err := exec.CommandContext(ctx, "ffmpeg", "-v", "error", "-xerror", "-i", output, "-f", "null", "-").Run(); err != nil {
 			fmt.Fprintln(os.Stderr, "prepared media decoding failed")
-			os.Exit(1)
+			return 1
 		}
 		fmt.Println("fullEpisodePreparation=passed fullEpisodeDecode=passed")
 	}
+	return 0
 }

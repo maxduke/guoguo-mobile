@@ -13,6 +13,48 @@ const yeguoDiscoveryPage = `<script type="module" src="/_nuxt/entry.js"></script
 const yeguoDiscoveryEntry = `import {config} from "./config.js";`
 const yeguoDiscoveryConfig = `const config = {version:"v0",mode:"CBC",padding:"Pkcs7",key:"0123456789abcdef",iv:"abcdef0123456789",sign_key:"fixture-sign"};`
 
+func TestYeguoDiscoveryFindsRuntimeBaseWithoutNuxtField(t *testing.T) {
+	var requests []string
+	d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {
+		requests = append(requests, r.URL.Path)
+		body := ""
+		switch r.URL.Path {
+		case "/":
+			body = `<script type="module" src="/_nuxt/entry.js"></script><script id="__NUXT_DATA__">[{"state":1},{}]</script>`
+		case "/_nuxt/entry.js":
+			body = "const __vite__mapDeps=[];import {config} from './config.js';import {a,b} from './client.js';import {x} from 'https://other.callawtj.cc/_nuxt/cross.js';"
+		case "/_nuxt/config.js":
+			body = yeguoDiscoveryConfig
+		case "/_nuxt/client.js":
+			body = "const runtime=()=>`https://www.yeguodj.com/api.php`;function request(e){return fetch(e,{baseURL:runtime(),method:'POST'})}"
+		default:
+			t.Errorf("discovery escaped its line: %s", r.URL.Path)
+		}
+		return rankingHTTPResponse(r, 200, body), nil
+	})
+	access, err := d.yeguoClient().discoverConfigurationAt(context.Background(), yeguoBaseURL)
+	if err != nil || access.base != "https://www.yeguodj.com/api.php" || len(access.key) != 16 {
+		t.Fatal("current runtime configuration was not discovered", err)
+	}
+	if !reflect.DeepEqual(requests, []string{"/", "/_nuxt/entry.js", "/_nuxt/config.js", "/_nuxt/client.js"}) {
+		t.Fatal("unexpected module discovery requests", requests)
+	}
+}
+
+func TestYeguoRuntimeBaseRequiresKnownAPIHostAndClientReference(t *testing.T) {
+	for _, script := range []string{
+		`const x=()=>"https://outside.example.org/api.php";fetch(a,{baseURL:x()})`,
+		`const x=()=>"https://www.yeguodj.com.evil.test/api.php";fetch(a,{baseURL:x()})`,
+		`const x=()=>"https://user@www.yeguodj.com/api.php";fetch(a,{baseURL:x()})`,
+		`const x=()=>"https://www.yeguodj.com/api.php";fetch(a,{baseURL:other()})`,
+		"const x=()=>`https://${host}/api.php`;fetch(a,{baseURL:x()})",
+	} {
+		if yeguoRuntimeAPIBase(script) != "" {
+			t.Error("invalid runtime base accepted")
+		}
+	}
+}
+
 func TestYeguoCurrentContentRoutesStayAllowlisted(t *testing.T) {
 	for _, site := range []string{
 		"https://analyze.callawtj.cc", "https://backup.fzchosdi.cc", "https://old.buxefaex.cc",

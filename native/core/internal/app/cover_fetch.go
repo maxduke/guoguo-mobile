@@ -39,7 +39,13 @@ func (downloader *Downloader) fetchCoverImage(ctx context.Context, remoteURL str
 	}
 	referer := downloader.coverReferer(ctx, remoteURL)
 	request.Header.Set("Referer", referer)
-	request.Header.Set("User-Agent", userAgent)
+	// DSD's pages and issued media share a desktop client identity. Artwork
+	// belongs to that same source session rather than the generic mobile client.
+	agent := userAgent
+	if source, _ := ctx.Value(coverSourceKey{}).(string); source == sourceDSD {
+		agent = dsdUserAgent
+	}
+	request.Header.Set("User-Agent", agent)
 	request.Header.Set("Accept", "image/webp,image/jpeg,image/png,image/gif,*/*;q=0.5")
 	client := *downloader.client
 	client.CheckRedirect = func(request *http.Request, via []*http.Request) error {

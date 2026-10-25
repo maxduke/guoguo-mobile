@@ -129,6 +129,11 @@ class AppFileStorage implements PartitionedStorage {
     cacheReadError = null;
   }
 
+  Future<File> preserveRecords() => _records.preserve();
+
+  Future<File> replaceRecordsPreserving(Map<String, dynamic> value) =>
+      _records.replacePreserving(_recordsPart(value));
+
   @override
   Future<void> write(Map<String, dynamic> value) async {
     // Detach both parts at invocation, before awaiting either write.
@@ -166,11 +171,48 @@ class FileStorage implements LocalStorage {
   Future<void> _writeCaptured(Map<String, dynamic> Function() capture) {
     return _serialized(() async {
       final snapshot = await _encode(capture());
-      await directory.create(recursive: true);
-      final temporary = File('${_file.path}.tmp');
-      await temporary.writeAsString(snapshot, flush: true);
-      await temporary.rename(_file.path);
+      await _commit(snapshot);
     });
+  }
+
+  Future<void> _commit(String snapshot) async {
+    await directory.create(recursive: true);
+    final temporary = File('${_file.path}.tmp');
+    await temporary.writeAsString(snapshot, flush: true);
+    await temporary.rename(_file.path);
+  }
+
+  Future<File> preserve() => _serialized(_preserve);
+
+  Future<File> replacePreserving(Map<String, dynamic> value) {
+    final detached = _detachJson(value);
+    return _serialized(() async {
+      final snapshot = await _encode(detached);
+      final original = await _preserve();
+      await _commit(snapshot);
+      return original;
+    });
+  }
+
+  Future<File> _preserve() async {
+    if (await FileSystemEntity.type(_file.path, followLinks: false) !=
+        FileSystemEntityType.file) {
+      throw const FileSystemException('无法保留原记录文件');
+    }
+    final archive = await Directory(
+      '${directory.path}/recovery',
+    ).create(recursive: true);
+    final destination = await archive.createTemp('records-');
+    final saved = await _file.copy(
+      '${destination.path}/guoguo-records-original.json',
+    );
+    final handle = await saved.open(mode: FileMode.append);
+    try {
+      await handle.flush();
+    } finally {
+      await handle.close();
+    }
+    return saved;
   }
 
   Future<T> _serialized<T>(Future<T> Function() operation) {

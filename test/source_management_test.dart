@@ -14,6 +14,10 @@ import 'package:guoguo_mobile/platform/provider_client.dart';
 import 'package:guoguo_mobile/ui/components.dart';
 import 'package:guoguo_mobile/ui/source_selector.dart';
 
+final defaultHidden = DramaSource.values
+    .where((source) => !source.enabledByDefault)
+    .toSet();
+
 class _Provider implements ProviderClient {
   final calls = <String>[];
   Map<String, dynamic>? catalog;
@@ -201,7 +205,10 @@ void main() {
       addTearDown(restored.dispose);
       await restored.load();
       expect(restored.preferences.favoriteSources, {DramaSource.wuguo});
-      expect(restored.preferences.hiddenSources, {DramaSource.wuguo});
+      expect(restored.preferences.hiddenSources, {
+        ...defaultHidden,
+        DramaSource.wuguo,
+      });
       expect(restored.records.favorites.keys, [drama.key]);
       expect(
         () => restored.preferences.favoriteSources.clear(),
@@ -224,6 +231,9 @@ void main() {
         },
         {'favoriteSources': false},
         {
+          'enabledSources': ['unknown'],
+        },
+        {
           'recentSources': List.filled(
             DramaSource.values.length + 1,
             'hongguo',
@@ -236,7 +246,7 @@ void main() {
         );
         expect(preferences.themeMode, ThemeMode.dark);
         expect(preferences.favoriteSources, {DramaSource.hongguo});
-        expect(preferences.hiddenSources, isEmpty);
+        expect(preferences.hiddenSources, defaultHidden);
       }
     },
   );
@@ -325,12 +335,53 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('恢复站源伍果'));
       await tester.pumpAndSettle();
-      expect(store.preferences.hiddenSources, isEmpty);
+      expect(store.preferences.hiddenSources, defaultHidden);
       await tester.tap(find.byTooltip('返回站源选择'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(ChoiceChip, '伍果'));
       await tester.pumpAndSettle();
       expect(choices, [DramaSource.wuguo]);
+      expect(provider.calls, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'default-disabled sources explain their status and manual enable persists',
+    (tester) async {
+      final provider = _Provider(), storage = _Storage();
+      final store = _store(provider: provider, storage: storage),
+          choices = <DramaSource?>[];
+      await _fixture(tester, [store]);
+      await tester.pumpWidget(_app(store, choices));
+      await _open(tester);
+      expect(find.widgetWithText(ChoiceChip, '帝果'), findsOneWidget);
+      for (final source in defaultHidden) {
+        expect(find.widgetWithText(ChoiceChip, source.label), findsNothing);
+      }
+      await tester.enterText(find.byType(TextField), '爽果');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('管理站源'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('默认停用 · ${DramaSource.shuangguo.defaultDisabledReason}'),
+        findsOneWidget,
+      );
+      expect(find.text('本地搜名 · 站源分类 · 栏目入口'), findsOneWidget);
+      await tester.tap(find.byTooltip('恢复站源爽果'));
+      await tester.pumpAndSettle();
+      expect(
+        store.preferences.hiddenSources,
+        isNot(contains(DramaSource.shuangguo)),
+      );
+      expect(storage.value!['enabledSources'], ['shuangguo']);
+      await tester.tap(find.byTooltip('返回站源选择'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ChoiceChip, '爽果'));
+      await tester.pumpAndSettle();
+      final restored = _store(storage: storage);
+      addTearDown(restored.dispose);
+      await restored.load();
+      expect(restored.catalog.source, DramaSource.shuangguo);
       expect(provider.calls, isEmpty);
     },
   );
@@ -505,11 +556,11 @@ void main() {
       await tester.pumpWidget(_app(store, [], scale: 2, keyboard: 300));
       await _open(tester);
       await tester.scrollUntilVisible(
-        find.text('已隐藏 1 个站源'),
+        find.text('已隐藏 ${defaultHidden.length} 个站源'),
         200,
         scrollable: find.byType(Scrollable).first,
       );
-      await tester.tap(find.text('已隐藏 1 个站源'));
+      await tester.tap(find.text('已隐藏 ${defaultHidden.length} 个站源'));
       await tester.pumpAndSettle();
       expect(find.text('站源管理').hitTestable(), findsOneWidget);
       expect(find.byTooltip('返回站源选择').hitTestable(), findsOneWidget);

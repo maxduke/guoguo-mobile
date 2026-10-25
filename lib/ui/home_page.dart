@@ -52,6 +52,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   int _tab = 0;
   bool _resuming = false;
   bool _routeActive = true;
+  bool _savingRecords = false;
   int _resumeGeneration = 0;
   void _cancelResume() {
     _resumeGeneration++;
@@ -59,6 +60,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   AppStore get store => widget.store;
+
+  Future<void> _retrySave() async {
+    if (_savingRecords) return;
+    setState(() => _savingRecords = true);
+    try {
+      await store.persist(cache: false);
+    } catch (_) {
+      // AppStore keeps the original intent and its save error available.
+    } finally {
+      if (mounted) setState(() => _savingRecords = false);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -252,7 +266,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             if (store.offline)
               const _Notice('当前离线 · 可以浏览缓存与观看已下载分集', Icons.wifi_off_rounded),
             if (store.persistenceError != null)
-              _Notice(store.persistenceError!, Icons.warning_amber_rounded),
+              _Notice(
+                _savingRecords ? '正在保存记录…' : store.persistenceError!,
+                Icons.warning_amber_rounded,
+                retryLabel: '重试保存',
+                onRetry: _savingRecords ? null : () => unawaited(_retrySave()),
+              ),
             if (store.cachePersistenceError != null)
               _Notice(
                 store.cachePersistenceError!,

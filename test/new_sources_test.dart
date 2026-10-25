@@ -57,6 +57,7 @@ void main() {
         final provider = SourceProvider();
         final storage = MemoryStorage();
         final store = AppStore(storage: storage, provider: provider);
+        await store.preferences.setSourceHidden(source, false);
         await store.catalog.selectSource(source);
         final catalog = store.catalog.refresh();
         expect(provider.calls.last, containsPair('source', source.name));
@@ -86,7 +87,7 @@ void main() {
   }
 
   testWidgets(
-    'nineteen sources remain accessible and new sources paginate online search',
+    'all source identities remain searchable and healthy sources paginate online search',
     (tester) async {
       tester.view.physicalSize = const Size(320, 740);
       tester.view.devicePixelRatio = 1;
@@ -112,7 +113,12 @@ void main() {
       expect(find.widgetWithText(ChoiceChip, '帝果'), findsOneWidget);
       final lastSource = find.widgetWithText(ChoiceChip, '伍果');
       expect(lastSource.hitTestable(), findsOneWidget);
+      for (final label in ['超果', '爽果']) {
+        expect(find.widgetWithText(ChoiceChip, label), findsNothing);
+      }
       for (final label in ['超果', '米果', '爽果']) {
+        await tester.enterText(find.byType(TextField), label);
+        await tester.pumpAndSettle();
         final choice = find.widgetWithText(ChoiceChip, label);
         expect(choice, findsOneWidget);
         await tester.ensureVisible(choice);

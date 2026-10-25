@@ -22,10 +22,15 @@ class PreferencesStore extends ChangeNotifier {
 
   final _favoriteSources = <DramaSource>{};
   final _hiddenSources = <DramaSource>{};
+  final _enabledSources = <DramaSource>{};
   final _recentSources = <DramaSource>[];
   static const maxRecentSources = 6;
   Set<DramaSource> get favoriteSources => Set.unmodifiable(_favoriteSources);
-  Set<DramaSource> get hiddenSources => Set.unmodifiable(_hiddenSources);
+  Set<DramaSource> get hiddenSources => Set.unmodifiable({
+    ..._hiddenSources,
+    for (final source in DramaSource.values)
+      if (!source.enabledByDefault && !_enabledSources.contains(source)) source,
+  });
   List<DramaSource> get recentSources => List.unmodifiable(_recentSources);
 
   void rememberSource(DramaSource source) {
@@ -45,10 +50,14 @@ class PreferencesStore extends ChangeNotifier {
   }
 
   Future<void> setSourceHidden(DramaSource source, bool hidden) async {
-    final changed = hidden
-        ? _hiddenSources.add(source)
-        : _hiddenSources.remove(source);
-    if (!changed) return;
+    if (hiddenSources.contains(source) == hidden) return;
+    if (hidden) {
+      _hiddenSources.add(source);
+      _enabledSources.remove(source);
+    } else {
+      _hiddenSources.remove(source);
+      if (!source.enabledByDefault) _enabledSources.add(source);
+    }
     notifyListeners();
     await _save();
   }
@@ -104,6 +113,7 @@ class PreferencesStore extends ChangeNotifier {
 
     final favorites = sources('favoriteSources');
     final hidden = sources('hiddenSources');
+    final enabled = sources('enabledSources');
     final recent = sources('recentSources').take(maxRecentSources).toList();
     _favoriteSources
       ..clear()
@@ -111,6 +121,9 @@ class PreferencesStore extends ChangeNotifier {
     _hiddenSources
       ..clear()
       ..addAll(hidden);
+    _enabledSources
+      ..clear()
+      ..addAll(enabled);
     _recentSources
       ..clear()
       ..addAll(recent);
@@ -142,6 +155,7 @@ class PreferencesStore extends ChangeNotifier {
     'playbackSpeed': playbackSpeed,
     'favoriteSources': _favoriteSources.map((source) => source.name).toList(),
     'hiddenSources': _hiddenSources.map((source) => source.name).toList(),
+    'enabledSources': _enabledSources.map((source) => source.name).toList(),
     'recentSources': _recentSources.map((source) => source.name).toList(),
   };
 

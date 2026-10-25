@@ -1,0 +1,460 @@
+{
+  "at": "2026-10-24T15:29:47.801695186Z",
+  "codeCommit": "635bd284e72c783720fbecb4cca2cbde571a87e8",
+  "environment": "host",
+  "format": "guoguo.source-media-audit",
+  "sources": [
+    {
+      "source": "hongguo",
+      "catalogItems": 53,
+      "catalogWarning": false,
+      "status": "passed",
+      "elapsedMs": 2848,
+      "samples": [
+        {
+          "dramaId": "hongguo:7700210389711080510",
+          "chapters": 20,
+          "status": "passed",
+          "media": [
+            {
+              "status": "passed",
+              "stage": "media",
+              "httpStatus": 206,
+              "bytes": 1024,
+              "kind": "mp4",
+              "encrypted": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "huangguo",
+      "catalogItems": 368,
+      "catalogWarning": true,
+      "status": "partial",
+      "elapsedMs": 9341,
+      "samples": [
+        {
+          "dramaId": "6ad1e7a5b1c16985d7caed81",
+          "branch": "cloudfront",
+          "chapters": 1,
+          "status": "passed",
+          "media": [
+            {
+              "status": "passed",
+              "stage": "segment",
+              "httpStatus": 206,
+              "bytes": 1024,
+              "kind": "opaque",
+              "encrypted": true,
+              "keyChecked": true
+            }
+          ]
+        },
+        {
+          "dramaId": "huangguoai:5860",
+          "branch": "huangguoai",
+          "chapters": 14,
+          "status": "passed",
+          "media": [
+            {
+              "status": "passed",
+              "stage": "segment",
+              "httpStatus": 206,
+              "bytes": 1024,
+              "kind": "opaque",
+              "encrypted": true,
+              "keyChecked": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "huangdou",
+      "catalogItems": 50,
+      "catalogWarning": false,
+      "status": "passed",
+      "elapsedMs": 5298,
+      "samples": [
+        {
+          "dramaId": "huangdou:0218b380848ec3bd",
+          "chapters": 5,
+          "status": "passed",
+          "media": [
+            {
+              "status": "passed",
+              "stage": "segment",
+              "httpStatus": 206,
+              "bytes": 1024,
+              "kind": "opaque",
+              "encrypted": true,
+              "keyChecked": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "huangju",
+      "catalogItems": 20,
+      "catalogWarning": false,
+      "status": "passed",
+      "elapsedMs": 2143,
+      "samples": [
+        {
+          "dramaId": "huangju:yanyu-1259-1640",
+          "chapters": 7,
+          "status": "passed",
+          "media": [
+            {
+              "status": "passed",
+              "stage": "segment",
+              "httpStatus": 206,
+              "bytes": 1024,
+              "kind": "mpegts"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "yeguo",
+      "catalogItems": 20,
+      "catalogWarning": false,
+      "status": "passed",
+      "elapsedMs": 6504,
+      "samples": [
+        {
+          "dramaId": "yeguo:3395",
+          "chapters": 7,
+          "status": "passed",
+          "media": [
+            {
+              "status": "passed",
+              "stage": "segment",
+              "httpStatus": 206,
+              "bytes": 1024,
+              "kind": "opaque",
+              "encrypted": true,
+              "keyChecked": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "dsd",
+      "catalogItems": 0,
+      "catalogWarning": false,
+      "status": "failed",
+      "reason": "connection",
+      "elapsedMs": 2079,
+      "samples": []
+    },
+    {
+      "source": "yaguo",
+      "catalogItems": 24,
+      "catalogWarning": false,
+      "status": "passed",
+      "elapsedMs": 1239,
+      "samples": [
+        {
+          "dramaId": "yaguo:51",
+          "chapters": 100,
+          "status": "passed",
+          "media": [
+            {
+              "status": "passed",
+              "stage": "media",
+              "httpStatus": 206,
+              "bytes": 1024,
+              "kind": "mp4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "maoguo",
+      "catalogItems": 66,
+      "catalogWarning": false,
+      "status": "passed",
+      "elapsedMs": 911,
+      "samples": [
+        {
+          "dramaId": "maoguo:21277",
+          "chapters": 33,
+          "status": "passed",
+          "media": [
+            {
+              "status": "passed",
+              "stage": "segment",
+              "httpStatus": 206,
+              "bytes": 1024,
+              "kind": "opaque",
+              "encrypted": true,
+              "keyChecked": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "fanguo",
+      "catalogItems": 10,
+      "catalogWarning": false,
+      "status": "passed",
+      "elapsedMs": 1501,
+      "samples": [
+        {
+          "dramaId": "fanguo:21696#jiuzhou",
+          "chapters": 60,
+          "status": "passed",
+          "media": [
+            {
+              "status": "passed",
+              "stage": "media",
+              "httpStatus": 206,
+              "bytes": 1024,
+              "kind": "mp4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "guanguo",
+      "catalogItems": 30,
+      "catalogWarning": false,
+      "status": "failed",
+      "reason": "samples_failed",
+      "elapsedMs": 1547,
+      "samples": [
+        {
+          "dramaId": "guanguo:110000042659853849",
+          "chapters": 0,
+          "status": "failed",
+          "reason": "empty_detail"
+        },
+        {
+          "dramaId": "guanguo:110000044555935694",
+          "chapters": 0,
+          "status": "failed",
+          "reason": "empty_detail"
+        },
+        {
+          "dramaId": "guanguo:110000046951321516",
+          "chapters": 0,
+          "status": "failed",
+          "reason": "empty_detail"
+        }
+      ]
+    },
+    {
+      "source": "heguo",
+      "catalogItems": 63,
+      "catalogWarning": false,
+      "status": "passed",
+      "elapsedMs": 1239,
+      "samples": [
+        {
+          "dramaId": "heguo:41000100525",
+          "chapters": 100,
+          "status": "passed",
+          "media": [
+            {
+              "status": "passed",
+              "stage": "media",
+              "httpStatus": 206,
+              "bytes": 1024,
+              "kind": "mp4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "xingguo",
+      "catalogItems": 44,
+      "catalogWarning": false,
+      "status": "passed",
+      "elapsedMs": 2171,
+      "samples": [
+        {
+          "dramaId": "xingguo:437823882657793",
+          "chapters": 80,
+          "status": "passed",
+          "media": [
+            {
+              "status": "passed",
+              "stage": "segment",
+              "httpStatus": 206,
+              "bytes": 1024,
+              "kind": "mpegts"
+            }
+          ],
+          "idSuffixOmitted": true
+        }
+      ]
+    },
+    {
+      "source": "huaguo",
+      "catalogItems": 36,
+      "catalogWarning": false,
+      "status": "passed",
+      "elapsedMs": 7194,
+      "samples": [
+        {
+          "dramaId": "huaguo:20523",
+          "chapters": 1,
+          "status": "passed",
+          "media": [
+            {
+              "status": "passed",
+              "stage": "segment",
+              "httpStatus": 206,
+              "bytes": 1024,
+              "kind": "mpegts"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "niuguo",
+      "catalogItems": 12,
+      "catalogWarning": false,
+      "status": "failed",
+      "reason": "samples_failed",
+      "elapsedMs": 60766,
+      "samples": [
+        {
+          "dramaId": "niuguo:583297",
+          "chapters": 70,
+          "status": "failed",
+          "reason": "timeout"
+        },
+        {
+          "dramaId": "niuguo:583296",
+          "chapters": 181,
+          "status": "failed",
+          "reason": "timeout"
+        },
+        {
+          "dramaId": "niuguo:583295",
+          "chapters": 112,
+          "status": "failed",
+          "reason": "timeout"
+        }
+      ]
+    },
+    {
+      "source": "piguo",
+      "catalogItems": 0,
+      "catalogWarning": false,
+      "status": "failed",
+      "reason": "verification",
+      "elapsedMs": 178,
+      "samples": []
+    },
+    {
+      "source": "wuguo",
+      "catalogItems": 10,
+      "catalogWarning": false,
+      "status": "passed",
+      "elapsedMs": 2539,
+      "samples": [
+        {
+          "dramaId": "wuguo:57329",
+          "chapters": 1,
+          "status": "passed",
+          "media": [
+            {
+              "status": "passed",
+              "stage": "segment",
+              "httpStatus": 206,
+              "bytes": 1024,
+              "kind": "mpegts"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "chaoguo",
+      "catalogItems": 30,
+      "catalogWarning": false,
+      "status": "failed",
+      "reason": "samples_failed",
+      "elapsedMs": 2620,
+      "samples": [
+        {
+          "dramaId": "chaoguo:ttarwbe2",
+          "chapters": 0,
+          "status": "failed",
+          "reason": "no_playable_episodes"
+        },
+        {
+          "dramaId": "chaoguo:1jsvz9qz",
+          "chapters": 0,
+          "status": "failed",
+          "reason": "no_playable_episodes"
+        },
+        {
+          "dramaId": "chaoguo:lzkf3zv9",
+          "chapters": 0,
+          "status": "failed",
+          "reason": "no_playable_episodes"
+        }
+      ]
+    },
+    {
+      "source": "miguo",
+      "catalogItems": 70,
+      "catalogWarning": false,
+      "status": "passed",
+      "elapsedMs": 3248,
+      "samples": [
+        {
+          "dramaId": "miguo:416251",
+          "chapters": 2,
+          "status": "passed",
+          "media": [
+            {
+              "status": "passed",
+              "stage": "segment",
+              "httpStatus": 206,
+              "bytes": 1024,
+              "kind": "mpegts"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "shuangguo",
+      "catalogItems": 24,
+      "catalogWarning": false,
+      "status": "passed",
+      "elapsedMs": 3950,
+      "samples": [
+        {
+          "dramaId": "shuangguo:49817",
+          "chapters": 1,
+          "status": "passed",
+          "media": [
+            {
+              "status": "passed",
+              "stage": "segment",
+              "httpStatus": 206,
+              "bytes": 1024,
+              "kind": "mpegts"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

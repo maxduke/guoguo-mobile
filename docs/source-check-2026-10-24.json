@@ -1,0 +1,1497 @@
+{
+  "format": "guoguo.source-check",
+  "version": 1,
+  "at": "2026-10-24T09:08:31.178508738Z",
+  "coreVersion": "development",
+  "environment": "host",
+  "sources": [
+    {
+      "source": "hongguo",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "catalog_cold",
+          "status": "passed",
+          "elapsedMs": 1628,
+          "items": 54,
+          "networkAttempts": 3,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 4,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "passed",
+          "elapsedMs": 294,
+          "items": 20,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_1",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 20,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "passed",
+          "elapsedMs": 2167,
+          "items": 18,
+          "networkAttempts": 2,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "detail",
+          "status": "passed",
+          "elapsedMs": 486,
+          "items": 0,
+          "networkAttempts": 2,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "chapters",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 25,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        }
+      ]
+    },
+    {
+      "source": "huangguo",
+      "searchScope": "huangguoai",
+      "steps": [
+        {
+          "operation": "catalog_cold",
+          "status": "partial",
+          "reason": "fallback_or_warning",
+          "elapsedMs": 6166,
+          "items": 368,
+          "networkAttempts": 19,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 3,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "passed",
+          "elapsedMs": 385,
+          "items": 20,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_1",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 20,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_2",
+          "status": "passed",
+          "elapsedMs": 565,
+          "items": 20,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_2",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 20,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_3",
+          "status": "passed",
+          "elapsedMs": 610,
+          "items": 20,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_3",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 20,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "passed",
+          "elapsedMs": 372,
+          "items": 10,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "detail",
+          "status": "passed",
+          "elapsedMs": 75,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "chapters",
+          "status": "passed",
+          "elapsedMs": 500,
+          "items": 1,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "source": "huangdou",
+      "searchScope": "local",
+      "steps": [
+        {
+          "operation": "catalog_cold",
+          "status": "passed",
+          "elapsedMs": 1624,
+          "items": 50,
+          "networkAttempts": 2,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 5,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "passed",
+          "elapsedMs": 67,
+          "items": 20,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_1",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 20,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "skipped",
+          "reason": "local_filter",
+          "elapsedMs": 0,
+          "items": 0,
+          "networkAttempts": null,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "detail",
+          "status": "passed",
+          "elapsedMs": 478,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "chapters",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 5,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        }
+      ]
+    },
+    {
+      "source": "huangju",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "categories",
+          "status": "passed",
+          "elapsedMs": 719,
+          "items": 378,
+          "networkAttempts": 2,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "catalog_cold",
+          "status": "passed",
+          "elapsedMs": 571,
+          "items": 20,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 2,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "passed",
+          "elapsedMs": 324,
+          "items": 20,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_1",
+          "status": "passed",
+          "elapsedMs": 2,
+          "items": 20,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "passed",
+          "elapsedMs": 509,
+          "items": 4,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "detail",
+          "status": "passed",
+          "elapsedMs": 500,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "chapters",
+          "status": "passed",
+          "elapsedMs": 488,
+          "items": 7,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "source": "yeguo",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "categories",
+          "status": "failed",
+          "reason": "other",
+          "elapsedMs": 3098,
+          "items": 0,
+          "networkAttempts": 6,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "catalog_cold",
+          "status": "failed",
+          "reason": "other",
+          "elapsedMs": 2750,
+          "items": 0,
+          "networkAttempts": 6,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 1,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "failed",
+          "reason": "other",
+          "elapsedMs": 3024,
+          "items": 0,
+          "networkAttempts": 6,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "search",
+          "status": "failed",
+          "reason": "other",
+          "elapsedMs": 2992,
+          "items": 0,
+          "networkAttempts": 6,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "detail",
+          "status": "skipped",
+          "reason": "no_catalog_sample",
+          "elapsedMs": 0,
+          "items": 0,
+          "networkAttempts": null,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "chapters",
+          "status": "skipped",
+          "reason": "no_catalog_sample",
+          "elapsedMs": 0,
+          "items": 0,
+          "networkAttempts": null,
+          "cacheHits": 0,
+          "httpStatus": 0
+        }
+      ]
+    },
+    {
+      "source": "dsd",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "categories",
+          "status": "failed",
+          "reason": "connection",
+          "elapsedMs": 2164,
+          "items": 0,
+          "networkAttempts": 2,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "catalog_cold",
+          "status": "failed",
+          "reason": "connection",
+          "elapsedMs": 2544,
+          "items": 0,
+          "networkAttempts": 2,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 1,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "failed",
+          "reason": "connection",
+          "elapsedMs": 2539,
+          "items": 0,
+          "networkAttempts": 2,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "failed",
+          "reason": "connection",
+          "elapsedMs": 2546,
+          "items": 0,
+          "networkAttempts": 2,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "detail",
+          "status": "skipped",
+          "reason": "no_catalog_sample",
+          "elapsedMs": 0,
+          "items": 0,
+          "networkAttempts": null,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "chapters",
+          "status": "skipped",
+          "reason": "no_catalog_sample",
+          "elapsedMs": 0,
+          "items": 0,
+          "networkAttempts": null,
+          "cacheHits": 0,
+          "httpStatus": 0
+        }
+      ]
+    },
+    {
+      "source": "yaguo",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "categories",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 3,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "catalog_cold",
+          "status": "passed",
+          "elapsedMs": 572,
+          "items": 24,
+          "networkAttempts": 2,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 2,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "passed",
+          "elapsedMs": 460,
+          "items": 50,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_1",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 50,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "passed",
+          "elapsedMs": 991,
+          "items": 17,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "detail",
+          "status": "passed",
+          "elapsedMs": 66,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "chapters",
+          "status": "passed",
+          "elapsedMs": 502,
+          "items": 100,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "source": "maoguo",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "categories",
+          "status": "passed",
+          "elapsedMs": 395,
+          "items": 150,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "catalog_cold",
+          "status": "passed",
+          "elapsedMs": 262,
+          "items": 66,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 1,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "passed",
+          "elapsedMs": 495,
+          "items": 66,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_1",
+          "status": "passed",
+          "elapsedMs": 1,
+          "items": 66,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "passed",
+          "elapsedMs": 465,
+          "items": 10,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "detail",
+          "status": "passed",
+          "elapsedMs": 662,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "chapters",
+          "status": "passed",
+          "elapsedMs": 271,
+          "items": 33,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "source": "fanguo",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "categories",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 8,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "catalog_cold",
+          "status": "passed",
+          "elapsedMs": 109,
+          "items": 10,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 3,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "passed",
+          "elapsedMs": 424,
+          "items": 10,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_1",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 10,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "passed",
+          "elapsedMs": 673,
+          "items": 10,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "detail",
+          "status": "passed",
+          "elapsedMs": 413,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "chapters",
+          "status": "passed",
+          "elapsedMs": 536,
+          "items": 90,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "source": "guanguo",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "categories",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 1,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "catalog_cold",
+          "status": "passed",
+          "elapsedMs": 234,
+          "items": 30,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 1,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "passed",
+          "elapsedMs": 354,
+          "items": 30,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_1",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 30,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "passed",
+          "elapsedMs": 497,
+          "items": 30,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "detail",
+          "status": "failed",
+          "reason": "other",
+          "elapsedMs": 445,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "chapters",
+          "status": "failed",
+          "reason": "other",
+          "elapsedMs": 502,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "source": "heguo",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "categories",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 11,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "catalog_cold",
+          "status": "passed",
+          "elapsedMs": 174,
+          "items": 63,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 3,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "passed",
+          "elapsedMs": 401,
+          "items": 10,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_1",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 10,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "passed",
+          "elapsedMs": 467,
+          "items": 10,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "detail",
+          "status": "passed",
+          "elapsedMs": 500,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "chapters",
+          "status": "passed",
+          "elapsedMs": 505,
+          "items": 100,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "source": "xingguo",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "categories",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 6,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "catalog_cold",
+          "status": "passed",
+          "elapsedMs": 1485,
+          "items": 44,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 1,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "passed",
+          "elapsedMs": 1436,
+          "items": 44,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_1",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 44,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "passed",
+          "elapsedMs": 114,
+          "items": 4,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "detail",
+          "status": "passed",
+          "elapsedMs": 982,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "chapters",
+          "status": "passed",
+          "elapsedMs": 543,
+          "items": 80,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "source": "huaguo",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "categories",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 2,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "catalog_cold",
+          "status": "passed",
+          "elapsedMs": 838,
+          "items": 36,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 1,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "passed",
+          "elapsedMs": 225,
+          "items": 36,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_1",
+          "status": "passed",
+          "elapsedMs": 3,
+          "items": 36,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "passed",
+          "elapsedMs": 5729,
+          "items": 36,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "detail",
+          "status": "passed",
+          "elapsedMs": 206,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "chapters",
+          "status": "passed",
+          "elapsedMs": 489,
+          "items": 1,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "source": "niuguo",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "categories",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 6,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "catalog_cold",
+          "status": "passed",
+          "elapsedMs": 195,
+          "items": 12,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 5,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "passed",
+          "elapsedMs": 381,
+          "items": 12,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_1",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 12,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "passed",
+          "elapsedMs": 553,
+          "items": 12,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "detail",
+          "status": "passed",
+          "elapsedMs": 447,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "chapters",
+          "status": "passed",
+          "elapsedMs": 506,
+          "items": 70,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "source": "piguo",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "categories",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 10,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "catalog_cold",
+          "status": "failed",
+          "reason": "verification",
+          "elapsedMs": 221,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 403
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 3,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "failed",
+          "reason": "verification",
+          "elapsedMs": 0,
+          "items": 0,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "failed",
+          "reason": "verification",
+          "elapsedMs": 0,
+          "items": 0,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "detail",
+          "status": "skipped",
+          "reason": "no_catalog_sample",
+          "elapsedMs": 0,
+          "items": 0,
+          "networkAttempts": null,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "chapters",
+          "status": "skipped",
+          "reason": "no_catalog_sample",
+          "elapsedMs": 0,
+          "items": 0,
+          "networkAttempts": null,
+          "cacheHits": 0,
+          "httpStatus": 0
+        }
+      ]
+    },
+    {
+      "source": "wuguo",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "categories",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 9,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "catalog_cold",
+          "status": "passed",
+          "elapsedMs": 2448,
+          "items": 10,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 5,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "passed",
+          "elapsedMs": 470,
+          "items": 10,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_1",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 10,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "passed",
+          "elapsedMs": 590,
+          "items": 10,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "detail",
+          "status": "passed",
+          "elapsedMs": 407,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "chapters",
+          "status": "passed",
+          "elapsedMs": 447,
+          "items": 1,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "source": "chaoguo",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "categories",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 17,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "catalog_cold",
+          "status": "passed",
+          "elapsedMs": 2224,
+          "items": 30,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 8,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "passed",
+          "elapsedMs": 1176,
+          "items": 50,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_1",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 50,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "passed",
+          "elapsedMs": 935,
+          "items": 2,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "detail",
+          "status": "passed",
+          "elapsedMs": 1499,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "chapters",
+          "status": "passed",
+          "elapsedMs": 1143,
+          "items": 43,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "source": "miguo",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "categories",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 7,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "catalog_cold",
+          "status": "passed",
+          "elapsedMs": 278,
+          "items": 71,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 6,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "passed",
+          "elapsedMs": 332,
+          "items": 71,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_1",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 71,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "passed",
+          "elapsedMs": 819,
+          "items": 16,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "detail",
+          "status": "passed",
+          "elapsedMs": 137,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "chapters",
+          "status": "passed",
+          "elapsedMs": 566,
+          "items": 2,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "source": "shuangguo",
+      "searchScope": "online",
+      "steps": [
+        {
+          "operation": "categories",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 9,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "catalog_cold",
+          "status": "passed",
+          "elapsedMs": 666,
+          "items": 24,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "boards",
+          "status": "passed",
+          "elapsedMs": 0,
+          "items": 8,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "ranking_refresh_1",
+          "status": "passed",
+          "elapsedMs": 303,
+          "items": 24,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "ranking_cached_1",
+          "status": "passed",
+          "elapsedMs": 1,
+          "items": 24,
+          "networkAttempts": 0,
+          "cacheHits": 1,
+          "httpStatus": 0
+        },
+        {
+          "operation": "search",
+          "status": "failed",
+          "reason": "verification",
+          "elapsedMs": 475,
+          "items": 0,
+          "networkAttempts": 1,
+          "cacheHits": 0,
+          "httpStatus": 200
+        },
+        {
+          "operation": "detail",
+          "status": "failed",
+          "reason": "verification",
+          "elapsedMs": 0,
+          "items": 0,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        },
+        {
+          "operation": "chapters",
+          "status": "failed",
+          "reason": "verification",
+          "elapsedMs": 0,
+          "items": 0,
+          "networkAttempts": 0,
+          "cacheHits": 0,
+          "httpStatus": 0
+        }
+      ]
+    }
+  ]
+}

@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -30,8 +29,9 @@ type MobileClient struct {
 	catalogReads     map[string]*mobileCatalogRead
 	canceledCatalogs map[string]mobileCatalogCancellation
 	covers           coverImageCache
-	catalogMu        sync.Mutex
+	catalogGates     map[string]chan struct{}
 	known            []Drama
+	hongguoState     *hongguoCatalogState
 	huangguo         map[string]mobileHuangguoCursor
 }
 
@@ -49,12 +49,14 @@ func NewMobileClient(directory string) (*MobileClient, error) {
 	cfg.Retries = 2
 	downloader := NewDownloader(cfg)
 	var known []Drama
+	var hongguoState *hongguoCatalogState
 	var huangguo map[string]mobileHuangguoCursor
 	if cache, err := readLibraryCache(directory); err == nil {
 		downloader.restoreHongguoCatalog(cache.HongguoApp)
+		hongguoState = cache.HongguoApp
 		known, huangguo = cache.Dramas, cache.Huangguo
 	}
-	return &MobileClient{downloader: downloader, proxies: make(map[string]*hlsProxy), known: known, huangguo: huangguo}, nil
+	return &MobileClient{downloader: downloader, proxies: make(map[string]*hlsProxy), known: known, hongguoState: hongguoState, huangguo: huangguo}, nil
 }
 
 type mobileRequest struct {
@@ -206,88 +208,11 @@ func (c *MobileClient) Call(raw string) (result string, callErr error) {
 			value = result
 			break
 		}
-		if request.Source == "huangguo" {
-			page := max(1, request.Page)
-			if request.Page < 0 || page > 200 {
-				return "", errors.New("页码超出范围")
-			}
-			c.catalogMu.Lock()
-			defer c.catalogMu.Unlock()
-			if page == 1 || c.huangguo == nil {
-				c.huangguo = map[string]mobileHuangguoCursor{}
-			}
-			rows, more, err := c.downloader.mobileHuangguoCatalog(context.WithValue(ctx, providerTextNoCacheKey{}, true), page, c.huangguo)
-			if saveErr := writeLibraryCache(c.downloader.cfg.dataDirectory(), libraryCache{HongguoApp: c.downloader.hongguoCatalogSnapshot(), Dramas: c.known, Huangguo: c.huangguo}); saveErr != nil {
-				err = errors.Join(err, saveErr)
-			}
-			warning := ""
-			if err != nil {
-				if len(rows) == 0 {
-					return "", publicError(err)
-				}
-				warning = publicError(err).Error()
-			}
-			value = map[string]any{"items": mobileDramas(rows), "hasMore": more && page < 200, "page": page, "warning": warning, "catalogScope": "page"}
-			break
-		}
-		c.catalogMu.Lock()
-		defer c.catalogMu.Unlock()
-		if request.Source != "hongguo" && request.Source != "huangdou" && request.Source != "huangguo" {
-			return "", errors.New("未知站源")
-		}
-		var rows []Drama
-		var err error
-		hasMore := false
-		if request.Page > 200 && request.Source != sourceHongguo {
-			return "", errors.New("页码超出范围")
-		}
-		if request.Source == sourceHongguo {
-			ctx = withKnownHongguoDramas(ctx, c.known)
-			if request.Page > 1 {
-				ctx = context.WithValue(ctx, libraryMoreKey{}, true)
-			}
-			rows, err = c.downloader.fetchHongguoDramas(ctx)
-			state := c.downloader.hongguoCatalogSnapshot()
-			byID := make(map[string]Drama, len(c.known)+len(rows))
-			for _, row := range c.known {
-				byID[row.ID] = row
-			}
-			for _, row := range rows {
-				byID[row.ID] = row
-			}
-			c.known = c.known[:0]
-			for _, row := range byID {
-				c.known = append(c.known, row)
-			}
-			hasMore = hongguoCatalogHasMore(state)
-			if saveErr := writeLibraryCache(c.downloader.cfg.dataDirectory(), libraryCache{HongguoApp: state, Dramas: c.known, Huangguo: c.huangguo}); saveErr != nil && err == nil {
-				err = saveErr
-			}
-		} else if request.Source == sourceHuangdou && request.Page > 1 {
-			client := newHuangdouAPIClient(c.downloader)
-			var decoded any
-			err = client.call(ctx, "/drama/list", map[string]any{"page": strconv.Itoa(request.Page), "page_size": "50"}, &decoded)
-			if err == nil {
-				for _, item := range huangdouList(decoded) {
-					if drama := huangdouDramaFromMap(item); drama.ID != "" {
-						rows = append(rows, drama)
-					}
-				}
-			}
-		} else {
-			rows, err = c.downloader.fetchAllDramas(ctx, request.Source)
-		}
-		if request.Source == sourceHuangdou {
-			hasMore = len(rows) > 0 && request.Page < 200
-		}
-		warning := ""
+		result, err := c.aggregateCatalog(ctx, request)
 		if err != nil {
-			if len(rows) == 0 {
-				return "", publicError(err)
-			}
-			warning = publicError(err).Error()
+			return "", err
 		}
-		value = map[string]any{"items": mobileDramas(rows), "warning": warning, "hasMore": hasMore, "catalogScope": "available"}
+		value = result
 	case "recommendations":
 		page, err := c.downloader.fetchHongguoRecommendations(ctx, request.Recommendation)
 		if err != nil {

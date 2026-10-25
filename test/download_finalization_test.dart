@@ -110,6 +110,45 @@ void main() {
     }
   }
 
+  for (final access in ['refresh', 'playback']) {
+    for (final invalid in ['empty', 'missing']) {
+      test('$access rejects a completed output that became $invalid', () async {
+        entry.ready = true;
+        final output = File(entry.output);
+        if (invalid == 'empty') {
+          await output.writeAsBytes([]);
+        } else {
+          await output.delete();
+        }
+        if (access == 'refresh') {
+          await downloads.reload();
+        } else {
+          expect(await downloads.localFile(entry.drama, entry.episode), isNull);
+        }
+        expect(entry.ready, isFalse);
+        expect(entry.canRetry, isTrue);
+        expect((storage.value!['jobs'] as List).single['ready'], isFalse);
+        expect(driver.submitted, isEmpty);
+      });
+    }
+  }
+
+  test(
+    'a failed save while invalidating output retains a retryable manifest error',
+    () async {
+      entry.ready = true;
+      await File(entry.output).writeAsBytes([]);
+      storage.fail = true;
+      expect(await downloads.localFile(entry.drama, entry.episode), isNull);
+      expect(entry.canRetry, isTrue);
+      expect(downloads.error, contains('下载记录保存失败'));
+      storage.fail = false;
+      await downloads.reload();
+      expect(downloads.error, isNull);
+      expect((storage.value!['jobs'] as List).single['ready'], isFalse);
+    },
+  );
+
   test(
     'manifest failure keeps the saved video complete and recoverable',
     () async {

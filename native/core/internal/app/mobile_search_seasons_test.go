@@ -37,6 +37,9 @@ func TestMobileSeasonPaginationCompletesGapsWithoutDelayingFirstPage(t *testing.
 		body := fixtures[query]
 		if r.URL.Path == "/api/search/result" {
 			body = fixtures["page"]
+			if r.URL.Query().Get("page") != "1" {
+				body = fmt.Sprintf(`{"pageNum":%s,"hasMore":false,"totalCount":233,"searchList":[]}`, r.URL.Query().Get("page"))
+			}
 		}
 		if body == "" {
 			body = `{"suggest_list":[]}`

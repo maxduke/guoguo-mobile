@@ -24,12 +24,21 @@ enum DramaSource {
   const DramaSource(this.label, this.subtitle);
   final String label;
   final String subtitle;
+  String? get defaultDisabledReason => switch (this) {
+    niuguo => '播放解析服务暂不可用',
+    piguo => '当前站点需要浏览器验证',
+    chaoguo => '站点播放已改为账户和点数模式',
+    shuangguo => '部分网络无法加载目录，播放兼容性待验证',
+    _ => null,
+  };
+  bool get enabledByDefault => defaultDisabledReason == null;
   bool get remoteCategories => switch (this) {
     hongguo || huangguo || huangdou => false,
     _ => true,
   };
   bool get onlineSearch =>
-      this == hongguo || this == huangguo || remoteCategories;
+      this != shuangguo &&
+      (this == hongguo || this == huangguo || remoteCategories);
   bool get rankings => true;
   static DramaSource parse(Object? value) => values.firstWhere(
     (source) => source.name == value,

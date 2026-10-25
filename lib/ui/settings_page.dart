@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -16,6 +15,7 @@ import 'components.dart';
 import 'playback_diagnostics_page.dart';
 import 'source_diagnostics_page.dart';
 import 'storage_page.dart';
+import 'record_backup_picker.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, required this.store, required this.downloads});
@@ -73,25 +73,11 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _import(BuildContext context) async {
-    final selected = await FilePicker.pickFile(
-      type: FileType.custom,
-      allowedExtensions: ['json'],
+    final backup = await pickRecordBackup(
+      isActive: () =>
+          context.mounted && ModalRoute.of(context)?.isCurrent != false,
     );
-    if (selected == null || !context.mounted) return;
-    final length = await selected.length();
-    if (length == null || length > 20 * 1024 * 1024) {
-      throw const UserInputException('备份文件超过 20 MB 或无法读取大小');
-    }
-    final bytes = await selected.readAsBytes();
-    if (!context.mounted) return;
-    final String raw;
-    try {
-      raw = utf8.decode(bytes);
-    } on FormatException {
-      throw const UserInputException('备份损坏或格式不兼容，原记录未修改');
-    }
-    final backup = store.records.inspectBackup(raw);
-    if (!context.mounted) return;
+    if (backup == null || !context.mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(

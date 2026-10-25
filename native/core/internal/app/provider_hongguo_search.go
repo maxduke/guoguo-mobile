@@ -23,11 +23,14 @@ const (
 )
 
 type hongguoSearchEntry struct {
-	Dramas    []Drama
-	Total     int
-	Limited   bool
-	Warning   string
-	ExpiresAt time.Time
+	Dramas       []Drama
+	Total        int
+	Limited      bool
+	Warning      string
+	ExpiresAt    time.Time
+	WebsitePage  int
+	WebsiteMore  bool
+	NamesPending bool
 }
 
 type hongguoSearchCall struct {
@@ -167,14 +170,14 @@ func (downloader *Downloader) fetchHongguoSearchResult(ctx context.Context, keyw
 	reportHongguoSearchProgress(ctx, hongguoSearchEntry{Dramas: mergeHongguoSearchDramas([]Drama{}, names), Limited: true})
 	pageCtx, cancel := context.WithTimeout(ctx, hongguoSearchPageTimeout)
 	defer cancel()
-	page, pageErr := downloader.fetchHongguoSearchPage(pageCtx, keyword)
+	page, pageErr := downloader.fetchHongguoSearchPage(pageCtx, keyword, 1)
 	if err := ctx.Err(); err != nil {
 		return hongguoSearchEntry{}, err
 	}
 	if pageErr != nil && namesErr != nil || len(page.Dramas)+len(names) == 0 && (pageErr != nil || namesErr != nil) {
 		return hongguoSearchEntry{}, errors.Join(pageErr, namesErr)
 	}
-	entry := hongguoSearchEntry{Dramas: make([]Drama, 0, len(page.Dramas)+len(names)), Total: page.Total, Limited: page.Limited}
+	entry := hongguoSearchEntry{Dramas: make([]Drama, 0, len(page.Dramas)+len(names)), Total: page.Total, Limited: page.Limited, WebsitePage: page.WebsitePage, WebsiteMore: page.WebsiteMore || pageErr != nil, NamesPending: namesErr != nil}
 	for _, batch := range [][]Drama{page.Dramas, names} {
 		entry.Dramas = mergeHongguoSearchDramas(entry.Dramas, batch)
 	}
@@ -288,8 +291,11 @@ func hongguoTitleSearchRank(title, query string) int {
 	}
 }
 
-func (downloader *Downloader) fetchHongguoSearchPage(ctx context.Context, keyword string) (hongguoSearchEntry, error) {
-	pageURL := hongguoBaseURL + "/api/search/result?" + url.Values{"query": {keyword}, "page": {"1"}}.Encode()
+func (downloader *Downloader) fetchHongguoSearchPage(ctx context.Context, keyword string, pageNumber int) (hongguoSearchEntry, error) {
+	if pageNumber < 1 || pageNumber > 200 {
+		return hongguoSearchEntry{}, errors.New("红果搜索页码超出范围")
+	}
+	pageURL := hongguoBaseURL + "/api/search/result?" + url.Values{"query": {keyword}, "page": {strconv.Itoa(pageNumber)}}.Encode()
 	body, err := downloader.fetchProviderText(ctx, pageURL, hongguoBaseURL+"/")
 	if err != nil {
 		return hongguoSearchEntry{}, err
@@ -305,7 +311,7 @@ func (downloader *Downloader) fetchHongguoSearchPage(ctx context.Context, keywor
 	if !valid || code != "" && code != "0" || query != "" && query != keyword {
 		return hongguoSearchEntry{}, errors.New("红果搜索未返回有效结果")
 	}
-	if _, exists := page["pageNum"]; exists && mapString(page, "pageNum") != "1" {
+	if _, exists := page["pageNum"]; exists && mapString(page, "pageNum") != strconv.Itoa(pageNumber) {
 		return hongguoSearchEntry{}, errors.New("红果搜索页码不匹配")
 	}
 	hasMore, moreOK := page["hasMore"].(bool)
@@ -330,7 +336,9 @@ func (downloader *Downloader) fetchHongguoSearchPage(ctx context.Context, keywor
 	entry.Total, _ = strconv.Atoi(mapString(page, "totalCount"))
 
 	totalPages, _ := strconv.Atoi(mapString(page, "totalPages"))
-	entry.Limited = hasMore || totalPages > 1 || entry.Total > len(entry.Dramas)
+	entry.WebsitePage = pageNumber
+	entry.WebsiteMore = hasMore || totalPages > pageNumber
+	entry.Limited = entry.WebsiteMore || entry.Total > len(entry.Dramas)
 	if entry.Total < len(entry.Dramas) {
 		entry.Total = len(entry.Dramas)
 	}

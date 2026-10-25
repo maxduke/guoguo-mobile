@@ -183,9 +183,9 @@ class CatalogSearchController extends ChangeNotifier {
       _notice = result.warning.isNotEmpty
           ? result.warning
           : result.continuation.isNotEmpty
-          ? '已显示当前结果，可加载更多查找其余季。'
+          ? '已显示当前结果，可加载更多作品与分季。'
           : result.limited
-          ? '已合并名称检索与官网结果；上游未提供完整分页，可用完整剧名继续查找。'
+          ? '已合并名称检索与官网结果；可用完整剧名继续查找。'
           : source == DramaSource.huangguo
           ? '在线检索范围：黄果 AI'
           : null;

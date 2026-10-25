@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"strings"
 	"time"
 )
 
@@ -108,6 +109,29 @@ func (cursor *mobileSeasonCursor) accept(probe mobileSeasonProbe, dramas []Drama
 	}
 }
 
+// Website pages can reveal a new series or a later known season. Preserve the
+// existing probe history while updating gaps and extension starting points.
+func (cursor *mobileSeasonCursor) mergeResults(dramas []Drama) {
+	cursor.entry.Dramas = mergeHongguoSearchDramas(cursor.entry.Dramas, dramas)
+	for _, series := range hongguoSearchSeriesGroups(cursor.query, cursor.entry.Dramas, true) {
+		found := false
+		for index := range cursor.groups {
+			group := &cursor.groups[index]
+			if group.series.key == series.key && group.series.unit == series.unit {
+				if series.maximum > group.series.maximum {
+					group.nextSeason, group.misses, group.done = series.maximum+1, 0, false
+				}
+				group.series = series
+				found = true
+				break
+			}
+		}
+		if !found {
+			cursor.groups = append(cursor.groups, mobileSeasonGroup{series: series, nextSeason: series.maximum + 1})
+		}
+	}
+}
+
 func (c *MobileClient) searchHongguoPage(ctx context.Context, request mobileRequest, read *mobileSearchRead) (map[string]any, error) {
 	query, err := hongguoSearchKeyword(request.Query)
 	if err != nil {
@@ -142,7 +166,36 @@ func (c *MobileClient) searchHongguoPage(ctx context.Context, request mobileRequ
 	if page > 1 {
 		probeCtx, cancel := context.WithTimeout(ctx, mobileSeasonPageTimeout)
 		defer cancel()
-		for used := 0; used < mobileSeasonPageQueries && cursor.requests < mobileSeasonQueryLimit; used++ {
+		cursor.entry.Warning = ""
+		used := 0
+		if cursor.entry.WebsiteMore {
+			used++
+			website, err := c.downloader.fetchHongguoSearchPage(probeCtx, query, cursor.entry.WebsitePage+1)
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				warning = "综合搜索续页暂未完成，已保留结果，可继续加载"
+			} else {
+				cursor.entry.WebsitePage, cursor.entry.WebsiteMore = website.WebsitePage, website.WebsiteMore
+				cursor.entry.Total = max(cursor.entry.Total, website.Total)
+				cursor.mergeResults(website.Dramas)
+			}
+		}
+		if cursor.entry.NamesPending {
+			used++
+			names, err := c.downloader.fetchHongguoSearchNames(probeCtx, query)
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				warning = strings.Trim(warning+"；名称检索暂未完成，已保留结果，可继续加载", "；")
+			} else {
+				cursor.entry.NamesPending = false
+				cursor.mergeResults(names)
+			}
+		}
+		for ; used < mobileSeasonPageQueries && cursor.requests < mobileSeasonQueryLimit; used++ {
 			probe, ok := cursor.nextProbe()
 			if !ok || len(cursor.entry.Dramas) >= mobileSeasonResultLimit {
 				break
@@ -153,7 +206,7 @@ func (c *MobileClient) searchHongguoPage(ctx context.Context, request mobileRequ
 					return nil, ctx.Err()
 				}
 				// Do not consume a failed probe; the next page can retry it.
-				warning = "分季续搜暂未完成，已保留结果，可继续查找"
+				warning = strings.Trim(warning+"；分季续搜暂未完成，已保留结果，可继续查找", "；")
 				break
 			}
 			cursor.accept(probe, names)
@@ -164,7 +217,7 @@ func (c *MobileClient) searchHongguoPage(ctx context.Context, request mobileRequ
 		return nil, err
 	}
 	_, pending := cursor.nextProbe()
-	more := pending && cursor.requests < mobileSeasonQueryLimit && len(cursor.entry.Dramas) < mobileSeasonResultLimit
+	more := (cursor.entry.WebsiteMore || cursor.entry.NamesPending || pending && cursor.requests < mobileSeasonQueryLimit) && page < 200 && len(cursor.entry.Dramas) < mobileSeasonResultLimit
 	limited := cursor.entry.Limited || pending || warning != ""
 	for _, group := range cursor.groups {
 		limited = limited || len(group.series.known) < group.series.maximum
@@ -173,8 +226,8 @@ func (c *MobileClient) searchHongguoPage(ctx context.Context, request mobileRequ
 		cursor.entry.Dramas = cursor.entry.Dramas[:mobileSeasonResultLimit]
 		limited = true
 	}
-	if pending && !more {
-		warning = "本次分季查找已达上限，可用完整剧名继续搜索"
+	if (pending || cursor.entry.WebsiteMore || cursor.entry.NamesPending) && !more {
+		warning = "本次查找已达上限，可用完整剧名继续搜索"
 	}
 	continuation := ""
 	if more {
