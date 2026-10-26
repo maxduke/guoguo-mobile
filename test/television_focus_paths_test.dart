@@ -9,9 +9,11 @@ import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/main.dart';
 import 'package:guoguo_mobile/ui/components.dart';
 import 'package:guoguo_mobile/ui/episode_grid.dart';
+import 'package:guoguo_mobile/ui/detail_page.dart';
 import 'package:guoguo_mobile/ui/search_page.dart';
 import 'package:guoguo_mobile/ui/television_grid.dart';
 import 'package:guoguo_mobile/ui/television_scope.dart';
+import 'package:guoguo_mobile/ui/theme.dart';
 import 'widget_test.dart' show NoNetwork;
 
 Future<void> _key(WidgetTester tester, LogicalKeyboardKey key) async {
@@ -27,6 +29,7 @@ void _screen(WidgetTester tester) {
 }
 
 Widget _app(Widget home) => MaterialApp(
+  theme: guoguoTheme(Brightness.light, television: true),
   builder: (_, child) => TelevisionScope(
     enabled: true,
     child: Shortcuts(
@@ -56,6 +59,48 @@ bool _textFocused(WidgetTester tester, String text) => tester
     .any((element) => Focus.of(element).hasPrimaryFocus);
 
 void main() {
+  testWidgets(
+    'TV detail toolbar Down enters episodes and restores the last tile',
+    (tester) async {
+      _screen(tester);
+      final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
+        ..offline = true;
+      final drama = _drama(70);
+      store.catalog.episodeCache[drama.key] = [
+        for (var i = 0; i < 70; i++)
+          Episode.fromJson({'id': 'episode-$i', 'currentEpisode': i + 1}, i),
+      ];
+      final downloads = DownloadStore(store);
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox());
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        _app(DetailPage(store: store, downloads: downloads, drama: drama)),
+      );
+      await tester.pumpAndSettle();
+      expect(_textFocused(tester, '开始观看'), true);
+      await _key(tester, LogicalKeyboardKey.arrowUp);
+      expect(_textFocused(tester, '1'), true);
+      await _key(tester, LogicalKeyboardKey.arrowUp);
+      expect(_textFocused(tester, '定位当前'), true);
+      await _key(tester, LogicalKeyboardKey.arrowDown);
+      expect(_textFocused(tester, '1'), true);
+      expect(find.text('1').hitTestable(), findsOneWidget);
+      await _key(tester, LogicalKeyboardKey.arrowRight);
+      expect(_textFocused(tester, '2'), true);
+      await _key(tester, LogicalKeyboardKey.arrowUp);
+      expect(_textFocused(tester, '定位当前'), true);
+      await _key(tester, LogicalKeyboardKey.arrowRight);
+      expect(_textFocused(tester, '跳集'), true);
+      await _key(tester, LogicalKeyboardKey.arrowDown);
+      expect(_textFocused(tester, '2'), true);
+      expect(find.text('2').hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('TV cards move by row and column and restore after a route', (
     tester,
   ) async {

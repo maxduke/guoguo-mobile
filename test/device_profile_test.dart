@@ -25,6 +25,8 @@ void main() {
           'applicationId': 'com.maxduke.guoguo_mobile.dev',
           'renderingPolicy': 'legacy-opengl',
           'television': true,
+          'displayWidth': 1920,
+          'displayHeight': 1080,
           'url': 'https://private.example/media?token=secret',
           'contentKey': 'secret',
         };
@@ -34,6 +36,8 @@ void main() {
       expect(info['build'], 55);
       expect(info['renderingPolicy'], 'legacy-opengl');
       expect(info['abis'], ['armeabi-v7a']);
+      expect(info['displayWidth'], 1920);
+      expect(info['displayHeight'], 1080);
       expect(info, isNot(contains('url')));
       expect(info, isNot(contains('contentKey')));
     },

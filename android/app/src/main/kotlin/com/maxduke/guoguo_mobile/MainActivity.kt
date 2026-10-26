@@ -29,6 +29,7 @@ class MainActivity : FlutterActivity() {
     @Suppress("DEPRECATION")
     private fun playbackDeviceInfo(): Map<String, Any> {
         val info = packageManager.getPackageInfo(packageName, 0)
+        val displayMode = runCatching { windowManager.defaultDisplay.mode }.getOrNull()
         return mapOf(
             "manufacturer" to Build.MANUFACTURER,
             "model" to Build.MODEL,
@@ -40,6 +41,8 @@ class MainActivity : FlutterActivity() {
             "build" to if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong(),
             "television" to isTelevisionDevice(),
             "renderingPolicy" to renderingPolicy,
+            "displayWidth" to (displayMode?.physicalWidth ?: 0),
+            "displayHeight" to (displayMode?.physicalHeight ?: 0),
         )
     }
 

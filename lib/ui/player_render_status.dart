@@ -20,6 +20,11 @@ class PlayerRenderStatus extends StatelessWidget {
     builder: (context, snapshot) {
       final device = snapshot.data ?? const <String, Object?>{};
       String yes(Object? value) => value == true ? '是' : '否';
+      String size(Object? width, Object? height) =>
+          width is num && height is num && width > 0 && height > 0
+          ? '$width × $height'
+          : '未取得';
+      final quality = playback['quality'];
       final rows = <String, String>{
         '应用': '${device['version'] ?? '未知'} (${device['build'] ?? '未知'})',
         '设备': '${device['manufacturer'] ?? '未知'} ${device['model'] ?? ''}',
@@ -36,6 +41,14 @@ class PlayerRenderStatus extends StatelessWidget {
         '播放器':
             '初始化：${yes(playback['initialized'])} · 播放中：${yes(playback['playing'])}',
         '画面尺寸': '${playback['width'] ?? 0} × ${playback['height'] ?? 0}（播放器报告）',
+        '源清晰度': quality is int && quality > 0 ? '${quality}P（站源档位）' : '站源未提供档位',
+        '应用画布': size(playback['viewWidth'], playback['viewHeight']),
+        '屏幕输出': size(device['displayWidth'], device['displayHeight']),
+        '缩放方式': switch (playback['fit']) {
+          'cover' => '等比例铺满（裁切边缘）',
+          'contain' => '显示完整画面（等比例）',
+          _ => '未取得',
+        },
         '界面状态':
             '电视：${yes(playback['uiTelevision'])} · 封面：${playback['coverVisible'] == true ? '显示' : '隐藏'}',
       };
@@ -45,7 +58,7 @@ class PlayerRenderStatus extends StatelessWidget {
         children: [
           Text('设备与画面状态', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 12),
-          const Text('有声音但没有画面时，可拍下此页用于排查。以下是打开面板时的状态。'),
+          const Text('画质或显示异常时，可查看以下信息。这是打开面板时的状态快照。'),
           if (snapshot.connectionState != ConnectionState.done)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 12),
@@ -72,7 +85,7 @@ class PlayerRenderStatus extends StatelessWidget {
               ),
             ),
           const SizedBox(height: 12),
-          const Text('初始化和尺寸信息不能证明电视已显示视频。不包含播放地址、密钥或异常原文。'),
+          const Text('站源档位不等于实际画质，尺寸由播放器报告。初始化信息不能证明电视已显示视频。不包含播放地址、密钥或异常原文。'),
           const SizedBox(height: 16),
           FilledButton.icon(
             onPressed: () => perform(context, () async {

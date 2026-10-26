@@ -1751,9 +1751,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     );
     if (!mounted) return;
     if (requested == PlayerMenuAction.related) await _showRelated();
-    if (requested == PlayerMenuAction.diagnostics) {
+    if (requested == PlayerMenuAction.diagnostics && mounted) {
       final controller = _player.videoPlayerController;
       final value = controller?.value;
+      final viewSize = View.of(context).physicalSize;
       await _sheet(
         PlayerRenderStatus(
           deviceInfo: playbackDeviceInfo(),
@@ -1775,6 +1776,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             'positionMs': value?.position.inMilliseconds ?? 0,
             'durationMs': value?.duration?.inMilliseconds ?? 0,
             'quality': _active?.media?.quality ?? 0,
+            'viewWidth': viewSize.width.round(),
+            'viewHeight': viewSize.height.round(),
+            'fit': _fill ? 'cover' : 'contain',
           },
         ),
       );

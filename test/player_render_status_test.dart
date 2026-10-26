@@ -14,6 +14,10 @@ const playback = <String, Object?>{
   'playing': true,
   'width': 1080,
   'height': 1920,
+  'quality': 1080,
+  'viewWidth': 1280,
+  'viewHeight': 720,
+  'fit': 'contain',
   'uiTelevision': true,
   'coverVisible': false,
 };
@@ -26,6 +30,8 @@ const device = <String, Object?>{
   'build': 55,
   'abis': ['armeabi-v7a'],
   'renderingPolicy': 'legacy-opengl',
+  'displayWidth': 1920,
+  'displayHeight': 1080,
 };
 
 Future<void> mount(
@@ -85,15 +91,23 @@ void main() {
       await mount(tester, Future.value(device));
       expect(find.textContaining('Fixture TV 9'), findsOneWidget);
       expect(find.textContaining('旧版 OpenGL（TV 兼容）'), findsOneWidget);
+      await tester.ensureVisible(find.textContaining('源清晰度：1080P（站源档位）'));
+      expect(find.textContaining('源清晰度：1080P（站源档位）'), findsOneWidget);
+      await tester.ensureVisible(find.text('应用画布：1280 × 720'));
+      expect(find.text('应用画布：1280 × 720'), findsOneWidget);
+      await tester.ensureVisible(find.text('屏幕输出：1920 × 1080'));
+      expect(find.text('屏幕输出：1920 × 1080'), findsOneWidget);
       await tester.ensureVisible(find.textContaining('封面：隐藏'));
       expect(find.textContaining('封面：隐藏'), findsOneWidget);
-      await tester.ensureVisible(find.text('复制状态'));
+      await tester.scrollUntilVisible(find.text('复制状态'), 160);
       await tester.tap(find.text('复制状态'));
       await tester.pump();
       final result = jsonDecode(copied!) as Map;
       expect(result['device']['apiLevel'], 29);
       expect(result['playback']['coverVisible'], false);
       expect(result['playback']['playing'], true);
+      expect(result['playback']['viewWidth'], 1280);
+      expect(result['device']['displayWidth'], 1920);
       await tester.pumpWidget(const SizedBox());
       expect(tester.takeException(), isNull);
     },
@@ -112,7 +126,7 @@ void main() {
       Focus.of(tester.element(find.textContaining('应用：'))).hasPrimaryFocus,
       true,
     );
-    for (var i = 0; i < 9; i++) {
+    for (var i = 0; i < 13; i++) {
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
       await tester.pumpAndSettle();
     }

@@ -231,21 +231,34 @@ class EpisodeGridState extends State<EpisodeGrid> {
               _choosePage(value);
             },
           ),
-        Wrap(
-          alignment: WrapAlignment.end,
-          children: [
-            TextButton.icon(
-              focusNode: _locateFocus,
-              onPressed: _locateCurrent,
-              icon: const Icon(Icons.my_location_rounded, size: 18),
-              label: const Text('定位当前'),
-            ),
-            TextButton.icon(
-              onPressed: _jump,
-              icon: const Icon(Icons.pin_outlined, size: 18),
-              label: const Text('跳集'),
-            ),
-          ],
+        Focus(
+          canRequestFocus: false,
+          skipTraversal: true,
+          onKeyEvent: (_, event) {
+            if (TelevisionScope.of(context) &&
+                (event is KeyDownEvent || event is KeyRepeatEvent) &&
+                event.logicalKey == LogicalKeyboardKey.arrowDown) {
+              _grid.currentState?.focusItem();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: Wrap(
+            alignment: WrapAlignment.end,
+            children: [
+              TextButton.icon(
+                focusNode: _locateFocus,
+                onPressed: _locateCurrent,
+                icon: const Icon(Icons.my_location_rounded, size: 18),
+                label: const Text('定位当前'),
+              ),
+              TextButton.icon(
+                onPressed: _jump,
+                icon: const Icon(Icons.pin_outlined, size: 18),
+                label: const Text('跳集'),
+              ),
+            ],
+          ),
         ),
         if (widget.shrinkWrap) grid else Expanded(child: grid),
         if (pages > 1 && TelevisionScope.of(context))

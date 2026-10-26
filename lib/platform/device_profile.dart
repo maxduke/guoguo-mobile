@@ -33,7 +33,7 @@ Future<Map<String, Object?>> playbackDeviceInfo() async {
         result[key] = value.length <= 128 ? value : value.substring(0, 128);
       }
     }
-    for (final key in ['apiLevel', 'build']) {
+    for (final key in ['apiLevel', 'build', 'displayWidth', 'displayHeight']) {
       if (raw[key] is int) result[key] = raw[key];
     }
     if (raw['television'] is bool) result['television'] = raw['television'];

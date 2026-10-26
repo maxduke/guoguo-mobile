@@ -140,6 +140,9 @@ void main() {
       expect(status.playback['prepared'], true);
       expect(status.playback['playing'], true);
       expect(status.playback['coverVisible'], false);
+      expect(status.playback['viewWidth'], 1280);
+      expect(status.playback['viewHeight'], 720);
+      expect(status.playback['fit'], 'contain');
       expect(find.textContaining('Fixture TV 9'), findsOneWidget);
       expect(identical(tester.state(find.byType(BetterPlayer)), surface), true);
       expect(native.sources, hasLength(1));
