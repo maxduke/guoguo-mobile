@@ -79,7 +79,15 @@ class PlayerRelatedSheet extends StatelessWidget {
   );
 }
 
-enum PlayerMenuAction { related, fit, orientation, pip, download, lock }
+enum PlayerMenuAction {
+  related,
+  fit,
+  orientation,
+  pip,
+  download,
+  lock,
+  diagnostics,
+}
 
 class PlayerMoreSheet extends StatelessWidget {
   const PlayerMoreSheet({
@@ -130,6 +138,13 @@ class PlayerMoreSheet extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        if (TelevisionScope.of(context))
+          ListTile(
+            leading: const Icon(Icons.monitor_heart_outlined),
+            title: const Text('画面状态'),
+            subtitle: const Text('设备、系统与播放状态'),
+            onTap: () => onAction(PlayerMenuAction.diagnostics),
           ),
         SwitchListTile(
           autofocus: TelevisionScope.of(context),

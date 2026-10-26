@@ -9,6 +9,7 @@ import 'package:guoguo_mobile/ui/components.dart';
 import 'package:guoguo_mobile/ui/episode_pager.dart';
 import 'package:guoguo_mobile/ui/player_page.dart';
 import 'package:guoguo_mobile/ui/player_sheets.dart';
+import 'package:guoguo_mobile/ui/player_render_status.dart';
 import 'package:guoguo_mobile/ui/television_scope.dart';
 import 'package:guoguo_mobile/ui/theme.dart';
 
@@ -102,6 +103,53 @@ Future<void> _key(WidgetTester tester, LogicalKeyboardKey key) async {
 }
 
 void main() {
+  testWidgets(
+    'TV exposes a device snapshot without replacing the video surface',
+    (tester) async {
+      final native = await _mount(tester);
+      final surface = tester.state(find.byType(BetterPlayer));
+      const channel = MethodChannel('guoguo/device');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'playbackDeviceInfo');
+        return {
+          'manufacturer': 'Fixture',
+          'model': 'TV 9',
+          'androidVersion': '10',
+          'apiLevel': 29,
+          'version': '0.20.3-dev',
+          'build': 55,
+          'abis': ['armeabi-v7a'],
+          'renderingPolicy': 'legacy-opengl',
+        };
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      await _key(tester, LogicalKeyboardKey.arrowUp);
+      await _key(tester, LogicalKeyboardKey.arrowUp);
+      await _key(tester, LogicalKeyboardKey.arrowRight);
+      await _key(tester, LogicalKeyboardKey.arrowRight);
+      await _key(tester, LogicalKeyboardKey.select);
+      await _key(tester, LogicalKeyboardKey.arrowUp);
+      expect(Focus.of(tester.element(find.text('画面状态'))).hasPrimaryFocus, true);
+      await _key(tester, LogicalKeyboardKey.select);
+      expect(find.byType(PlayerRenderStatus), findsOneWidget);
+      final status = tester.widget<PlayerRenderStatus>(
+        find.byType(PlayerRenderStatus),
+      );
+      expect(status.playback['prepared'], true);
+      expect(status.playback['playing'], true);
+      expect(status.playback['coverVisible'], false);
+      expect(find.textContaining('Fixture TV 9'), findsOneWidget);
+      expect(identical(tester.state(find.byType(BetterPlayer)), surface), true);
+      expect(native.sources, hasLength(1));
+      await _key(tester, LogicalKeyboardKey.goBack);
+      expect(find.byType(Texture), findsOneWidget);
+      expect(find.byType(Poster), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets(
     'TV playback exposes one texture, clears cover and focuses play',
     (tester) async {

@@ -1,6 +1,7 @@
 import 'player_sheets.dart';
 import 'player_transport.dart';
 import 'player_notice.dart';
+import 'player_render_status.dart';
 import 'throttled_builder.dart';
 import 'detail_page.dart';
 
@@ -32,6 +33,7 @@ import '../platform/playback_failure.dart';
 import '../platform/playback_recovery.dart';
 import '../platform/playback_lifecycle.dart';
 import '../platform/playback_seek.dart';
+import '../platform/device_profile.dart';
 import 'player_remote_controls.dart';
 import 'television_scope.dart';
 import 'theme.dart';
@@ -1700,6 +1702,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               Navigator.pop(context);
               switch (action) {
                 case PlayerMenuAction.related:
+                case PlayerMenuAction.diagnostics:
                   requested = action;
                   break;
                 case PlayerMenuAction.fit:
@@ -1748,6 +1751,34 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     );
     if (!mounted) return;
     if (requested == PlayerMenuAction.related) await _showRelated();
+    if (requested == PlayerMenuAction.diagnostics) {
+      final controller = _player.videoPlayerController;
+      final value = controller?.value;
+      await _sheet(
+        PlayerRenderStatus(
+          deviceInfo: playbackDeviceInfo(),
+          playback: {
+            'at': DateTime.now().toUtc().toIso8601String(),
+            'source': widget.drama.source.name,
+            'episode': widget.episodes[_index].number,
+            'generation': _generation,
+            'uiTelevision': _television,
+            'prepared': _active != null,
+            'loading': _loading,
+            'hasError': _error != null,
+            'coverVisible': _active == null,
+            'localBlocked': _localBlocked,
+            'initialized': value?.initialized == true,
+            'playing': value?.isPlaying == true,
+            'width': value?.size?.width.round() ?? 0,
+            'height': value?.size?.height.round() ?? 0,
+            'positionMs': value?.position.inMilliseconds ?? 0,
+            'durationMs': value?.duration?.inMilliseconds ?? 0,
+            'quality': _active?.media?.quality ?? 0,
+          },
+        ),
+      );
+    }
   }
 
   Widget _page(BuildContext context, int index) {
