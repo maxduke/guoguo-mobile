@@ -338,6 +338,32 @@ class RecordStore extends ChangeNotifier {
     await save();
   });
 
+  Future<void> restoreFavorite(Drama drama) => _change((save) async {
+    if (_favorites.containsKey(drama.key)) return;
+    await save(
+      candidate: RecordBackup(
+        [..._favorites.values, drama],
+        _history.values.toList(),
+        seasonReminders: _seasonReminders.values.toList(),
+      ),
+    );
+    _favorites[drama.key] = drama;
+    notifyListeners();
+  });
+
+  Future<void> restoreHistory(WatchRecord record) => _change((save) async {
+    if (_history.containsKey(record.drama.key)) return;
+    await save(
+      candidate: RecordBackup(_favorites.values.toList(), [
+        ..._history.values,
+        record,
+      ], seasonReminders: _seasonReminders.values.toList()),
+    );
+    _history[record.drama.key] = record;
+    if (!_closed) progress.notifyListeners();
+    notifyListeners();
+  });
+
   RecordBackup _backup() => RecordBackup(
     _favorites.values.toList(),
     _history.values.toList(),

@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 
 import 'television_scope.dart';
@@ -23,6 +24,7 @@ class TelevisionGrid extends StatefulWidget {
     this.above,
     this.below,
     this.scrollIdentity,
+    this.cacheExtent,
   }) : assert(columns > 0);
 
   final List<Object> itemKeys;
@@ -34,6 +36,7 @@ class TelevisionGrid extends StatefulWidget {
   final int? autofocusIndex;
   final FocusNode? above, below;
   final Object? scrollIdentity;
+  final double? cacheExtent;
 
   @override
   State<TelevisionGrid> createState() => TelevisionGridState();
@@ -236,6 +239,9 @@ class TelevisionGridState extends State<TelevisionGrid> {
     return GridView.custom(
       key: ValueKey(widget.scrollIdentity),
       controller: _scroll,
+      scrollCacheExtent: widget.cacheExtent == null
+          ? null
+          : ScrollCacheExtent.pixels(widget.cacheExtent!),
       shrinkWrap: widget.shrinkWrap,
       physics: widget.shrinkWrap ? const NeverScrollableScrollPhysics() : null,
       padding: widget.padding,

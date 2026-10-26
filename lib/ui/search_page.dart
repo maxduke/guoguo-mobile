@@ -8,6 +8,7 @@ import 'components.dart';
 import 'source_selector.dart';
 import 'television_grid.dart';
 import 'television_scope.dart';
+import 'record_actions.dart';
 
 class SearchPage extends StatefulWidget {
   const SearchPage({
@@ -81,6 +82,7 @@ class _SearchPageState extends State<SearchPage> {
       final store = widget.store;
       final source = store.catalog.source;
       final online = source.onlineSearch && !store.offline;
+      final awaitingSearch = online && !_search.submitted;
       final rows = _search.query.isEmpty
           ? const <Drama>[]
           : queryCatalog(
@@ -231,7 +233,8 @@ class _SearchPageState extends State<SearchPage> {
                           ],
                         ),
                       ],
-                      if (_search.query.isNotEmpty) ...[
+                      if (_search.query.isNotEmpty &&
+                          (!awaitingSearch || rows.isNotEmpty)) ...[
                         const SizedBox(height: 18),
                         Text(
                           _search.results == null ? '本地匹配' : '搜索结果',
@@ -275,12 +278,24 @@ class _SearchPageState extends State<SearchPage> {
               if (_search.query.isNotEmpty && rows.isEmpty)
                 SliverToBoxAdapter(
                   child: EmptyState(
-                    icon: _search.loading
+                    icon: _search.error != null
+                        ? Icons.cloud_off_outlined
+                        : _search.loading || awaitingSearch
                         ? Icons.travel_explore
                         : Icons.search_off,
-                    title: _search.loading ? '正在搜索…' : '暂时没有找到',
-                    message: _search.loading
+                    title: _search.error != null
+                        ? '搜索未完成'
+                        : _search.loading
+                        ? '正在搜索…'
+                        : awaitingSearch
+                        ? '搜索当前站源'
+                        : '暂时没有找到',
+                    message: _search.error != null
+                        ? '请重试搜索，或切换站源继续查找'
+                        : _search.loading
                         ? '正在查找当前站源，结果会陆续显示'
+                        : awaitingSearch
+                        ? '点击搜索查找${source.label}，也可选择联想词'
                         : online
                         ? '换个关键词，或点击搜索继续查找'
                         : '换个关键词，仅查找已保存的剧集资料',
@@ -290,17 +305,15 @@ class _SearchPageState extends State<SearchPage> {
                 padding: const EdgeInsets.fromLTRB(22, 0, 22, 24),
                 sliver: SliverLayoutBuilder(
                   builder: (context, constraints) {
-                    final columns = (constraints.crossAxisExtent / 165)
-                        .floor()
-                        .clamp(2, 7);
+                    final layout = dramaGridLayout(
+                      context,
+                      constraints.crossAxisExtent,
+                    );
                     return TelevisionGrid(
                       key: _results,
                       itemKeys: [for (final drama in rows) drama.key],
-                      columns: columns,
-                      mainAxisExtent:
-                          (constraints.crossAxisExtent - (columns - 1) * 14) /
-                          columns /
-                          .61,
+                      columns: layout.columns,
+                      mainAxisExtent: layout.extent,
                       itemBuilder: (context, index) {
                         final drama = store.catalog.currentDrama(rows[index]);
                         return DramaCard(
@@ -314,9 +327,10 @@ class _SearchPageState extends State<SearchPage> {
                           favorite: store.records.favorites.containsKey(
                             drama.key,
                           ),
-                          onFavorite: () => perform(
+                          onFavorite: () => toggleFavoriteWithUndo(
                             context,
-                            () => store.records.toggleFavorite(drama),
+                            store.records,
+                            drama,
                           ),
                         );
                       },

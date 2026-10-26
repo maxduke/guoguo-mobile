@@ -7,6 +7,8 @@ import 'components.dart';
 import 'active_listenable_builder.dart';
 import 'continue_watching_card.dart';
 import 'detail_page.dart';
+import 'television_scope.dart';
+import 'record_actions.dart';
 
 class PersonalPage extends StatefulWidget {
   const PersonalPage({
@@ -292,7 +294,11 @@ class _PersonalPageState extends State<PersonalPage> {
                 ? Icons.bookmark_add_outlined
                 : Icons.history_rounded,
             title: _favoritesOnly ? '把心动的故事留下' : '故事从这一刻开始',
-            message: _favoritesOnly ? '点击海报上的收藏，随时回来接着看' : '开始观看后，这里会记住你的进度',
+            message: _favoritesOnly
+                ? TelevisionScope.of(context)
+                      ? '打开短剧详情，选择收藏，随时回来接着看'
+                      : '点击海报上的收藏，随时回来接着看'
+                : '开始观看后，这里会记住你的进度',
           ),
       ],
     );
@@ -334,12 +340,11 @@ class _PersonalPageState extends State<PersonalPage> {
               icon: Icon(_favoritesOnly ? Icons.bookmark_rounded : Icons.close),
               onPressed: () {
                 setState(_cancelResume);
-                perform(
-                  context,
-                  () => _favoritesOnly
-                      ? store.records.toggleFavorite(drama)
-                      : store.records.removeHistory(drama.key),
-                );
+                if (_favoritesOnly) {
+                  toggleFavoriteWithUndo(context, store.records, drama);
+                } else if (record != null) {
+                  removeHistoryWithUndo(context, store.records, record);
+                }
               },
             ),
           ),

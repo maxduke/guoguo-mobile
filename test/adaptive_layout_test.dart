@@ -15,6 +15,8 @@ import 'package:guoguo_mobile/ui/personal_page.dart';
 import 'package:guoguo_mobile/ui/theme.dart';
 import 'package:guoguo_mobile/ui/components.dart';
 import 'package:guoguo_mobile/ui/search_page.dart';
+import 'package:guoguo_mobile/ui/television_grid.dart';
+import 'package:guoguo_mobile/ui/discovery_cache_status.dart';
 
 import 'widget_test.dart' show NoNetwork;
 
@@ -80,6 +82,65 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  testWidgets(
+    'small large-text home shows content and can expand cache details',
+    (tester) async {
+      store.offline = true;
+      const title = '一部需要两行显示的长剧名与它的后续故事';
+      final savedAt = store.now();
+      store.catalog.discoveryCache.putRecommendations(
+        RecommendationGenre.shortPlay,
+        const [
+          Drama(
+            id: 'large-text',
+            source: DramaSource.hongguo,
+            title: title,
+            episodes: 80,
+          ),
+        ],
+        savedAt,
+      );
+      await mount(tester, size: const Size(320, 640), scale: 2);
+      final discovery = find.byType(DiscoveryPage);
+      final grid = tester.widget<TelevisionGrid>(
+        find.descendant(of: discovery, matching: find.byType(TelevisionGrid)),
+      );
+      expect(grid.columns, 1);
+      final poster = find.descendant(
+        of: find.byType(DramaCard),
+        matching: find.byType(Poster),
+      );
+      final viewport = find.descendant(
+        of: discovery,
+        matching: find.byType(CustomScrollView),
+      );
+      expect(
+        tester.getTopLeft(poster).dy,
+        lessThan(tester.getBottomLeft(viewport).dy - 48),
+      );
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is Text && w.data == title && w.maxLines == 2,
+        ),
+        findsOneWidget,
+      );
+      expect(find.byTooltip('完整剧库').hitTestable(), findsOneWidget);
+      expect(find.text('来自红果的公开推荐'), findsNothing);
+      final details = find.descendant(
+        of: find.byType(DiscoveryCacheStatus),
+        matching: find.byType(ExpansionTile),
+      );
+      await tester.tap(details);
+      await tester.pumpAndSettle();
+      expect(find.text('来自红果的公开推荐'), findsOneWidget);
+      expect(
+        find.text('上次获取 ${formatDiscoveryTimestamp(savedAt)}'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'wide and split windows keep selected navigation and page state',

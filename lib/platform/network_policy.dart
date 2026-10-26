@@ -12,4 +12,9 @@ bool isWifiNetwork(List<ConnectivityResult> states) =>
 bool allowsPrefetchNetwork(
   List<ConnectivityResult> states, {
   required bool cellular,
-}) => !isOfflineNetwork(states) && (cellular || isWifiNetwork(states));
+}) =>
+    !isOfflineNetwork(states) &&
+    (cellular ||
+        !states.contains(ConnectivityResult.mobile) &&
+            (states.contains(ConnectivityResult.wifi) ||
+                states.contains(ConnectivityResult.ethernet)));

@@ -9,6 +9,7 @@ import 'components.dart';
 import 'source_selector.dart';
 import 'catalog_prefetch_scheduler.dart';
 import 'television_grid.dart';
+import 'record_actions.dart';
 
 class LibraryPage extends StatefulWidget {
   const LibraryPage({
@@ -458,17 +459,14 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
                     padding: EdgeInsets.fromLTRB(horizontal, 0, horizontal, 24),
                     sliver: SliverLayoutBuilder(
                       builder: (context, constraints) {
-                        final columns = (constraints.crossAxisExtent / 165)
-                            .floor()
-                            .clamp(2, 7);
+                        final layout = dramaGridLayout(
+                          context,
+                          constraints.crossAxisExtent,
+                        );
                         return TelevisionGrid(
                           itemKeys: [for (final drama in rows) drama.key],
-                          columns: columns,
-                          mainAxisExtent:
-                              (constraints.crossAxisExtent -
-                                  (columns - 1) * 14) /
-                              columns /
-                              .61,
+                          columns: layout.columns,
+                          mainAxisExtent: layout.extent,
                           itemBuilder: (context, index) => ListenableBuilder(
                             listenable: store.records,
                             builder: (context, _) => DramaCard(
@@ -477,9 +475,10 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
                               favorite: store.records.favorites.containsKey(
                                 rows[index].key,
                               ),
-                              onFavorite: () => perform(
+                              onFavorite: () => toggleFavoriteWithUndo(
                                 context,
-                                () => store.records.toggleFavorite(rows[index]),
+                                store.records,
+                                rows[index],
                               ),
                             ),
                           ),

@@ -1,0 +1,103 @@
+{
+  "date": "2026-10-26",
+  "baseline_commit": "69053bbab4c07c480c27025f3e32710e1b1254ef",
+  "branch": "fix/phone-tv-ui-ux",
+  "source_state": "local working tree changes",
+  "flutter_version": "3.47.4",
+  "ffmpeg_version": "N-128094-g31855b2a70-20261025",
+  "format": "passed",
+  "analyze": "passed",
+  "diff_check": "passed",
+  "full_flutter_suite": {
+    "passed": 993,
+    "failed": 0,
+    "skipped": 0,
+    "elapsed": "06:47",
+    "log": "/tmp/guoguo-uiux-fix-full-tests-final.log"
+  },
+  "targeted_repair_suite": {
+    "passed": 19,
+    "failed": 0,
+    "skipped": 0,
+    "elapsed": "00:35",
+    "log": "/tmp/guoguo-uiux-fix-batch-regressions.log"
+  },
+  "record_undo_suite": {
+    "passed": 8,
+    "failed": 0,
+    "skipped": 0,
+    "elapsed": "00:03",
+    "log": "/tmp/guoguo-uiux-fix-record-final.log"
+  },
+  "suite_counts_overlap": true,
+  "previews": {
+    "synthetic_content": true,
+    "rendered_on_host": true,
+    "files": [
+      {
+        "file": "screenshots/phone-light.png",
+        "width": 390,
+        "height": 844
+      },
+      {
+        "file": "screenshots/phone-dark.png",
+        "width": 390,
+        "height": 844
+      },
+      {
+        "file": "screenshots/tablet-light.png",
+        "width": 1024,
+        "height": 768
+      },
+      {
+        "file": "screenshots/tablet-dark.png",
+        "width": 1024,
+        "height": 768
+      },
+      {
+        "file": "screenshots/television-light.png",
+        "width": 1280,
+        "height": 720
+      },
+      {
+        "file": "screenshots/detail-phone-light.png",
+        "width": 390,
+        "height": 844
+      },
+      {
+        "file": "screenshots/detail-phone-dark.png",
+        "width": 390,
+        "height": 844
+      },
+      {
+        "file": "screenshots/detail-tablet-light.png",
+        "width": 1024,
+        "height": 768
+      },
+      {
+        "file": "screenshots/detail-tablet-dark.png",
+        "width": 1024,
+        "height": 768
+      },
+      {
+        "file": "screenshots/phone-large-text-light.png",
+        "width": 320,
+        "height": 640
+      },
+      {
+        "file": "screenshots/detail-phone-large-text-light.png",
+        "width": 320,
+        "height": 640
+      },
+      {
+        "file": "screenshots/television-focused.png",
+        "width": 1280,
+        "height": 720
+      }
+    ]
+  },
+  "physical_device_validation": false,
+  "ios_android_package_builds": false,
+  "go_source_changed": false,
+  "performance_claims": false
+}

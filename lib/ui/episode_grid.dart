@@ -40,6 +40,7 @@ class EpisodeGridState extends State<EpisodeGrid> {
   final _locateFocus = FocusNode(debugLabel: 'episodes-locate-current');
   final _previousFocus = FocusNode(debugLabel: 'episodes-previous-page');
   final _nextFocus = FocusNode(debugLabel: 'episodes-next-page');
+  final _episodeKeys = <String, GlobalKey>{};
 
   @override
   void dispose() {
@@ -89,15 +90,36 @@ class EpisodeGridState extends State<EpisodeGrid> {
       page = _currentPage;
       _pageChosenByUser = false;
     });
-    _focusEpisode(_currentIndex);
+    _focusEpisode(_currentIndex, revealOnPhone: true);
   }
 
   void focusCurrent() => _locateCurrent();
 
-  void _focusEpisode(int index) {
-    if (!TelevisionScope.of(context)) return;
+  void _focusEpisode(int index, {bool revealOnPhone = false}) {
+    final television = TelevisionScope.of(context);
+    if ((!television && !revealOnPhone) ||
+        index < 0 ||
+        index >= widget.episodes.length) {
+      return;
+    }
+    final episodeId = widget.episodes[index].id;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _grid.currentState?.focusItem(index - page * pageSize);
+      if (!mounted ||
+          index ~/ pageSize != page ||
+          index >= widget.episodes.length ||
+          widget.episodes[index].id != episodeId ||
+          ModalRoute.of(context)?.isCurrent == false) {
+        return;
+      }
+      if (television) {
+        _grid.currentState?.focusItem(index - page * pageSize);
+      } else if (_episodeKeys[episodeId]?.currentContext case final target?) {
+        Scrollable.ensureVisible(
+          target,
+          alignment: .5,
+          duration: const Duration(milliseconds: 200),
+        );
+      }
     });
   }
 
@@ -163,6 +185,12 @@ class EpisodeGridState extends State<EpisodeGrid> {
     final pages = (count / pageSize).ceil();
     final current = page.clamp(0, pages - 1);
     final start = current * pageSize;
+    final visibleIds = widget.episodes
+        .skip(start)
+        .take(pageSize)
+        .map((e) => e.id)
+        .toSet();
+    _episodeKeys.removeWhere((id, _) => !visibleIds.contains(id));
     final scaler = MediaQuery.textScalerOf(context);
     final maxDigits = widget.episodes
         .skip(start)
@@ -186,6 +214,8 @@ class EpisodeGridState extends State<EpisodeGrid> {
         sliver: false,
         scrollIdentity: current,
         shrinkWrap: widget.shrinkWrap,
+        // Each page has at most 30 cells, including the locate target.
+        cacheExtent: pageSize * (tileHeight + 10),
         padding: const EdgeInsets.only(bottom: 24),
         columns: math.max(1, (constraints.maxWidth / (tileWidth + 10)).ceil()),
         mainAxisExtent: tileHeight,
@@ -204,7 +234,13 @@ class EpisodeGridState extends State<EpisodeGrid> {
             container: true,
             selected: absolute == _currentIndex,
             label: '第 ${widget.episodes[absolute].number} 集',
-            child: widget.builder(context, absolute),
+            child: KeyedSubtree(
+              key: _episodeKeys.putIfAbsent(
+                widget.episodes[absolute].id,
+                GlobalKey.new,
+              ),
+              child: widget.builder(context, absolute),
+            ),
           );
         },
       ),

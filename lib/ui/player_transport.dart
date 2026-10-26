@@ -54,6 +54,44 @@ class _PlayerTransportState extends State<PlayerTransport>
     _ => _foreground,
   };
 
+  FocusNode? _buttonFocus(int index) => _remoteFocus[index].descendants
+      .where((node) => node.canRequestFocus && !node.skipTraversal)
+      .firstOrNull;
+
+  FocusNode? _directionalButton(int index, LogicalKeyboardKey key) {
+    final origin = _buttonFocus(index);
+    if (origin?.context == null) return null;
+    final horizontal =
+        key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.arrowRight;
+    final backwards =
+        key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.arrowUp;
+    final rect = origin!.rect;
+    FocusNode? nearest;
+    var distance = double.infinity;
+    for (var i = 0; i < _remoteFocus.length; i++) {
+      if (i == index || !_buttonEnabled(i)) continue;
+      final target = _buttonFocus(i);
+      if (target?.context == null) continue;
+      final candidate = target!.rect;
+      final sameRow =
+          candidate.center.dy >= rect.top && candidate.center.dy <= rect.bottom;
+      if (horizontal != sameRow) continue;
+      final delta = candidate.center - rect.center;
+      final forward = horizontal ? delta.dx : delta.dy;
+      if (backwards ? forward >= -.5 : forward <= .5) continue;
+      final score = horizontal
+          ? forward.abs()
+          : forward.abs() * 1000 + delta.dx.abs();
+      if (score < distance) {
+        nearest = target;
+        distance = score;
+      }
+    }
+    return nearest;
+  }
+
   Widget _remoteItem(int index, Widget child) {
     if (!TelevisionScope.of(context)) return child;
     return Focus(
@@ -64,28 +102,24 @@ class _PlayerTransportState extends State<PlayerTransport>
         if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
           return KeyEventResult.ignored;
         }
-        final step = switch (event.logicalKey) {
-          LogicalKeyboardKey.arrowLeft => -1,
-          LogicalKeyboardKey.arrowRight => 1,
-          _ => 0,
-        };
-        if (step == 0) return KeyEventResult.ignored;
-        var next = index + step;
-        while (next >= 0 &&
-            next < _remoteFocus.length &&
-            !_buttonEnabled(next)) {
-          next += step;
+        final key = event.logicalKey;
+        if (!{
+          LogicalKeyboardKey.arrowLeft,
+          LogicalKeyboardKey.arrowRight,
+          LogicalKeyboardKey.arrowUp,
+          LogicalKeyboardKey.arrowDown,
+        }.contains(key)) {
+          return KeyEventResult.ignored;
         }
-        if (next >= 0 && next < _remoteFocus.length) {
-          final target = _remoteFocus[next].descendants
-              .where((node) => node.canRequestFocus && !node.skipTraversal)
-              .firstOrNull;
-          if (target?.context != null) {
-            FocusTraversalGroup.of(
-              target!.context!,
-            ).invalidateScopeData(target.nearestScope!);
-            FocusTraversalPolicy.defaultTraversalRequestFocusCallback(target);
-          }
+        final target = _directionalButton(index, key);
+        if (target != null) {
+          FocusTraversalGroup.of(
+            target.context!,
+          ).invalidateScopeData(target.nearestScope!);
+          FocusTraversalPolicy.defaultTraversalRequestFocusCallback(target);
+        } else if (key == LogicalKeyboardKey.arrowUp ||
+            key == LogicalKeyboardKey.arrowDown) {
+          return KeyEventResult.ignored;
         }
         widget.onScrub(_preview != null || _menuOpen);
         return KeyEventResult.handled;

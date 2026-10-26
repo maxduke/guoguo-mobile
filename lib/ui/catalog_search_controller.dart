@@ -24,6 +24,7 @@ class CatalogSearchController extends ChangeNotifier {
   String? _error, _notice;
   bool _loading = false, _hasMore = false, _closed = false;
   bool _fromCache = false;
+  bool _submitted = false;
   int _page = 0, _generation = 0;
   Timer? _suggestionTimer;
   ({DramaSource source, String query, String id})? _request;
@@ -36,6 +37,7 @@ class CatalogSearchController extends ChangeNotifier {
   bool get loading => _loading;
   bool get hasMore => _hasMore;
   bool get fromCache => _fromCache;
+  bool get submitted => _submitted;
 
   void _cancel() {
     _suggestionTimer?.cancel();
@@ -51,7 +53,7 @@ class CatalogSearchController extends ChangeNotifier {
   void _sourceChanged() {
     if (_source == catalog.source) return;
     _source = catalog.source;
-    input.clear();
+    _resetInput(input.value);
   }
 
   void _inputChanged() {
@@ -61,6 +63,10 @@ class CatalogSearchController extends ChangeNotifier {
         value.composing == _lastInput.composing) {
       return;
     }
+    _resetInput(value);
+  }
+
+  void _resetInput(TextEditingValue value) {
     _lastInput = value;
     _cancel();
     final generation = ++_generation;
@@ -73,6 +79,7 @@ class CatalogSearchController extends ChangeNotifier {
     _error = _notice = null;
     _loading = false;
     _fromCache = false;
+    _submitted = false;
     notifyListeners();
     if (_query.isEmpty ||
         _source != DramaSource.hongguo ||
@@ -136,6 +143,7 @@ class CatalogSearchController extends ChangeNotifier {
       id: 'search-$generation-${DateTime.now().microsecondsSinceEpoch}',
     );
     _query = query;
+    _submitted = true;
     _suggestions = const [];
     _error = _notice = null;
     _loading = source.onlineSearch && !catalog.isOffline();

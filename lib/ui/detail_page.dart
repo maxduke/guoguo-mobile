@@ -15,6 +15,7 @@ import 'player_page.dart';
 import 'download_range_sheet.dart';
 import 'related_series_section.dart';
 import 'television_scope.dart';
+import 'record_actions.dart';
 
 Future<void> openDrama(
   BuildContext context,
@@ -379,37 +380,55 @@ class _DetailPageState extends State<DetailPage> {
   );
 
   Widget _summary(bool wide) {
+    final compact =
+        !wide &&
+        MediaQuery.sizeOf(context).width < 600 &&
+        MediaQuery.textScalerOf(context).scale(14) >= 21;
     final favorite = widget.store.records.favorites.containsKey(drama.key);
     final facts = [
       if (drama.episodes > 0) '${drama.episodes} 集',
       if (drama.statusLabel.isNotEmpty) drama.statusLabel,
       if (drama.vip == true) 'VIP',
     ].join(' · ');
+    final hasDetails =
+        drama.description.isNotEmpty ||
+        drama.tags.isNotEmpty ||
+        drama.date.isNotEmpty ||
+        compact && drama.category.isNotEmpty;
+    final favoriteButton = OutlinedButton.icon(
+      style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+      onPressed: () =>
+          toggleFavoriteWithUndo(context, widget.store.records, drama),
+      icon: Icon(favorite ? Icons.bookmark : Icons.bookmark_add_outlined),
+      label: Text(favorite ? '已收藏' : '收藏'),
+    );
+    final detailsButton = TextButton(
+      onPressed: () => setState(() => _expanded = !_expanded),
+      child: Text(_expanded ? '收起资料' : '展开资料'),
+    );
     final heading = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(drama.title, style: Theme.of(context).textTheme.headlineSmall),
+        Text(
+          drama.title,
+          style: compact
+              ? Theme.of(context).textTheme.titleLarge
+              : Theme.of(context).textTheme.headlineSmall,
+        ),
         const SizedBox(height: 6),
         Text(
-          '${drama.source.label} · ${drama.category.isEmpty ? '短剧' : drama.category}',
+          compact
+              ? '${drama.source.label}${facts.isEmpty ? '' : ' · $facts'}'
+              : '${drama.source.label} · ${drama.category.isEmpty ? '短剧' : drama.category}',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
             color: Theme.of(context).colorScheme.primary,
           ),
         ),
-        if (facts.isNotEmpty) ...[
+        if (!compact && facts.isNotEmpty) ...[
           const SizedBox(height: 4),
           Text(facts, style: Theme.of(context).textTheme.bodySmall),
         ],
-        const SizedBox(height: 8),
-        OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
-          onPressed: () => perform(
-            context,
-            () => widget.store.records.toggleFavorite(drama),
-          ),
-          icon: Icon(favorite ? Icons.bookmark : Icons.bookmark_add_outlined),
-          label: Text(favorite ? '已收藏' : '收藏'),
-        ),
+        if (!compact) ...[const SizedBox(height: 8), favoriteButton],
       ],
     );
     return Column(
@@ -424,8 +443,8 @@ class _DetailPageState extends State<DetailPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               SizedBox(
-                width: 76,
-                height: 104,
+                width: compact ? 56 : 76,
+                height: compact ? 76 : 104,
                 child: Poster(drama, radius: 12),
               ),
               const SizedBox(width: 12),
@@ -437,7 +456,11 @@ class _DetailPageState extends State<DetailPage> {
           const SizedBox(height: 8),
           const Text('部分分集需要站源授权，试看不作为完整正片', style: TextStyle(fontSize: 12)),
         ],
-        if (drama.description.isNotEmpty) ...[
+        if (compact && _expanded && drama.category.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(drama.category, style: Theme.of(context).textTheme.bodySmall),
+        ],
+        if (drama.description.isNotEmpty && (!compact || _expanded)) ...[
           const SizedBox(height: 12),
           Text(
             drama.description,
@@ -453,7 +476,7 @@ class _DetailPageState extends State<DetailPage> {
           const SizedBox(height: 8),
           Text('上线 ${drama.date}', style: const TextStyle(fontSize: 12)),
         ],
-        if (drama.tags.isNotEmpty) ...[
+        if (drama.tags.isNotEmpty && (!compact || _expanded)) ...[
           const SizedBox(height: 8),
           Text(
             drama.tags.join(' · '),
@@ -462,13 +485,16 @@ class _DetailPageState extends State<DetailPage> {
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
-        if (drama.description.isNotEmpty ||
-            drama.tags.isNotEmpty ||
-            drama.date.isNotEmpty)
-          TextButton(
-            onPressed: () => setState(() => _expanded = !_expanded),
-            child: Text(_expanded ? '收起资料' : '展开资料'),
+        if (compact) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [favoriteButton, if (hasDetails) detailsButton],
           ),
+        ] else if (hasDetails)
+          detailsButton,
         if (widget.store.catalog.detailErrors[drama.key] != null)
           Text(
             widget.store.catalog.detailErrors[drama.key]!,
@@ -484,7 +510,7 @@ class _DetailPageState extends State<DetailPage> {
             widget.store.cachePersistenceError!,
             style: const TextStyle(fontSize: 12),
           ),
-        const SizedBox(height: 20),
+        SizedBox(height: compact ? 12 : 20),
       ],
     );
   }

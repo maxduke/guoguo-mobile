@@ -5,6 +5,7 @@ import '../domain/discovery.dart';
 import '../platform/provider_client.dart';
 import 'components.dart';
 import 'television_grid.dart';
+import 'record_actions.dart';
 import 'discovery_cache_status.dart';
 
 class RecommendationsPage extends StatefulWidget {
@@ -217,14 +218,15 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
               padding: const EdgeInsets.all(22),
               sliver: SliverLayoutBuilder(
                 builder: (context, constraints) {
-                  final columns = (constraints.crossAxisExtent / 170)
-                      .floor()
-                      .clamp(2, 6);
+                  final layout = dramaGridLayout(
+                    context,
+                    constraints.crossAxisExtent,
+                    maxColumns: 6,
+                  );
                   return TelevisionGrid(
                     itemKeys: [for (final drama in rows) drama.key],
-                    columns: columns,
-                    mainAxisExtent:
-                        constraints.crossAxisExtent / columns * 1.6 + 45,
+                    columns: layout.columns,
+                    mainAxisExtent: layout.extent,
                     itemBuilder: (context, index) => ListenableBuilder(
                       listenable: Listenable.merge([
                         widget.store.catalog,
@@ -240,9 +242,10 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
                           favorite: widget.store.records.favorites.containsKey(
                             drama.key,
                           ),
-                          onFavorite: () => perform(
+                          onFavorite: () => toggleFavoriteWithUndo(
                             context,
-                            () => widget.store.records.toggleFavorite(drama),
+                            widget.store.records,
+                            drama,
                           ),
                         );
                       },
