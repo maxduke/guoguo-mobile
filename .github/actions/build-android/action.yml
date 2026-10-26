@@ -2,8 +2,8 @@ name: Build and verify Android phone and TV package
 description: Build the embedded core and APK, verifying signing, identity, ABIs and native alignment.
 inputs:
   mode:
-    description: debug or release; release requires GUOGUO_ANDROID_* signing variables.
-    default: debug
+    description: preview (optimized test app), debug, or release; release requires GUOGUO_ANDROID_* signing variables.
+    default: preview
 runs:
   using: composite
   steps:
@@ -44,7 +44,21 @@ runs:
         ANDROID_BUILD_MODE: ${{ inputs.mode }}
       run: |
         set -euo pipefail
-        case "$ANDROID_BUILD_MODE" in debug|release) ;; *) exit 2 ;; esac
-        flutter build apk "--$ANDROID_BUILD_MODE" --no-pub
+        case "$ANDROID_BUILD_MODE" in
+          preview)
+            export GUOGUO_ANDROID_PREVIEW=true
+            android_compilation_mode=release
+            ;;
+          debug|release)
+            export GUOGUO_ANDROID_PREVIEW=false
+            android_compilation_mode="$ANDROID_BUILD_MODE"
+            ;;
+          *) exit 2 ;;
+        esac
+        flutter build apk "--$android_compilation_mode" --split-per-abi --no-pub
         python3 scripts/core_identity.py verify --artifact packages/guoguo_core/android/libs/guoguo.aar --manifest packages/guoguo_core/android/libs/guoguo.aar.manifest.json --platform android
-        python3 scripts/android_package.py --apk "build/app/outputs/flutter-apk/app-$ANDROID_BUILD_MODE.apk" --mode "$ANDROID_BUILD_MODE" --build-tools "$ANDROID_HOME/build-tools/36.0.0"
+        python3 scripts/android_package.py --split-per-abi \
+          --apk "build/app/outputs/flutter-apk/app-armeabi-v7a-$android_compilation_mode.apk" \
+                "build/app/outputs/flutter-apk/app-arm64-v8a-$android_compilation_mode.apk" \
+                "build/app/outputs/flutter-apk/app-x86_64-$android_compilation_mode.apk" \
+          --mode "$ANDROID_BUILD_MODE" --build-tools "$ANDROID_HOME/build-tools/36.0.0"

@@ -1,6 +1,7 @@
 import 'player_sheets.dart';
 import 'player_transport.dart';
 import 'player_notice.dart';
+import 'player_render_status.dart';
 import 'throttled_builder.dart';
 import 'detail_page.dart';
 
@@ -32,8 +33,10 @@ import '../platform/playback_failure.dart';
 import '../platform/playback_recovery.dart';
 import '../platform/playback_lifecycle.dart';
 import '../platform/playback_seek.dart';
+import '../platform/device_profile.dart';
 import 'player_remote_controls.dart';
 import 'television_scope.dart';
+import 'theme.dart';
 import '../platform/network_policy.dart';
 import '../platform/media_preparer.dart';
 import '../platform/casting.dart';
@@ -594,6 +597,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         _loading = false;
         _error = null;
       });
+      if (_television) _showControls(focusPlay: true);
       if (_airplay?.blocksLocal == true) {
         _lifecycle.setExternalPlayback(true);
         _showControls();
@@ -1373,6 +1377,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   void _goTo(int index) {
     if (_localBlocked) return;
     if (index == _index || index < 0 || index >= widget.episodes.length) return;
+    if (_television) {
+      _pageChanged(index);
+      return;
+    }
     if (_pipActive && !_foreground) {
       // Background playback changes the native media directly; synchronize the
       // visible page when returning to the foreground.
@@ -1412,11 +1420,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     });
   }
 
-  void _showControls() {
+  void _showControls({bool focusPlay = false}) {
     final wasHidden = !_controls;
     setState(() => _controls = true);
     _armHide();
-    if (wasHidden && _television) {
+    if ((wasHidden || focusPlay) && _television) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted &&
             _controls &&
@@ -1428,6 +1436,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         }
       });
     }
+  }
+
+  void _hideTelevisionControls() {
+    _hideTimer?.cancel();
+    if (mounted) setState(() => _controls = false);
   }
 
   void _tap() {
@@ -1488,16 +1501,35 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (_modal || !mounted || !_foreground || _locked) return;
     _modal = true;
     _hideTimer?.cancel();
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: const Color(0xFF161A18),
-      isScrollControlled: true,
-      builder: (_) => Theme(
-        data: ThemeData.dark(),
-        child: SafeArea(child: child),
-      ),
-    );
+    if (_television) {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => Theme(
+          data: guoguoTheme(Brightness.dark, television: true),
+          child: Dialog(
+            backgroundColor: const Color(0xFF161A18),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: 720,
+                maxHeight: MediaQuery.sizeOf(context).height * .84,
+              ),
+              child: FocusTraversalGroup(child: child),
+            ),
+          ),
+        ),
+      );
+    } else {
+      await showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        backgroundColor: const Color(0xFF161A18),
+        isScrollControlled: true,
+        builder: (_) => Theme(
+          data: ThemeData.dark(),
+          child: SafeArea(child: child),
+        ),
+      );
+    }
     _modal = false;
     if (mounted) _armHide();
   }
@@ -1670,6 +1702,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               Navigator.pop(context);
               switch (action) {
                 case PlayerMenuAction.related:
+                case PlayerMenuAction.diagnostics:
                   requested = action;
                   break;
                 case PlayerMenuAction.fit:
@@ -1718,6 +1751,38 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     );
     if (!mounted) return;
     if (requested == PlayerMenuAction.related) await _showRelated();
+    if (requested == PlayerMenuAction.diagnostics && mounted) {
+      final controller = _player.videoPlayerController;
+      final value = controller?.value;
+      final viewSize = View.of(context).physicalSize;
+      await _sheet(
+        PlayerRenderStatus(
+          deviceInfo: playbackDeviceInfo(),
+          playback: {
+            'at': DateTime.now().toUtc().toIso8601String(),
+            'source': widget.drama.source.name,
+            'episode': widget.episodes[_index].number,
+            'generation': _generation,
+            'uiTelevision': _television,
+            'prepared': _active != null,
+            'loading': _loading,
+            'hasError': _error != null,
+            'coverVisible': _active == null,
+            'localBlocked': _localBlocked,
+            'initialized': value?.initialized == true,
+            'playing': value?.isPlaying == true,
+            'width': value?.size?.width.round() ?? 0,
+            'height': value?.size?.height.round() ?? 0,
+            'positionMs': value?.position.inMilliseconds ?? 0,
+            'durationMs': value?.duration?.inMilliseconds ?? 0,
+            'quality': _active?.media?.quality ?? 0,
+            'viewWidth': viewSize.width.round(),
+            'viewHeight': viewSize.height.round(),
+            'fit': _fill ? 'cover' : 'contain',
+          },
+        ),
+      );
+    }
   }
 
   Widget _page(BuildContext context, int index) {
@@ -1980,6 +2045,11 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         !_localBlocked,
     controlsVisible: _controls,
     playing: _player.videoPlayerController?.value.isPlaying == true,
+    isPlaying: () => _player.videoPlayerController?.value.isPlaying == true,
+    onBack: () => Navigator.maybePop(context),
+    onHideControls: !_loading && _error == null
+        ? _hideTelevisionControls
+        : null,
     onShowControls: _showControls,
     onPlayPause: () => unawaited(_togglePlay()),
     onSeekBy: (offset) {
@@ -2053,13 +2123,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                     unawaited(_seek(Duration(milliseconds: value.round())));
                   }
                 },
-                child: EpisodePager(
-                  controller: _pages,
-                  count: widget.episodes.length,
-                  onChanged: _pageChanged,
-                  builder: _page,
-                  locked: _locked || _localBlocked,
-                ),
+                child: _television
+                    ? _page(context, _index)
+                    : EpisodePager(
+                        controller: _pages,
+                        count: widget.episodes.length,
+                        onChanged: _pageChanged,
+                        builder: _page,
+                        locked: _locked || _localBlocked,
+                      ),
               ),
             ),
             Positioned(
@@ -2160,6 +2232,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                           ),
                           child: SafeArea(
                             bottom: false,
+                            minimum: _television
+                                ? const EdgeInsets.symmetric(
+                                    horizontal: 24,
+                                    vertical: 12,
+                                  )
+                                : EdgeInsets.zero,
                             child: Row(
                               children: [
                                 IconButton(
@@ -2175,9 +2253,9 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                                     '${widget.drama.title} · 第 ${widget.episodes[_index].number} 集',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       color: Colors.white,
-                                      fontSize: 15,
+                                      fontSize: _television ? 22 : 15,
                                     ),
                                   ),
                                 ),
@@ -2236,13 +2314,37 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                           ),
                           child: SafeArea(
                             top: false,
-                            minimum: const EdgeInsets.only(bottom: 4),
+                            minimum: EdgeInsets.only(
+                              bottom: _television ? 24 : 4,
+                            ),
                             // The TV owns transport while casting. Remove the phone
                             // controls instead of disabling its Slider beneath the
                             // modal route (its overlay retains stale semantics).
                             child: _casting.blocksLocal
                                 ? const SizedBox.shrink()
-                                : _transport(),
+                                : Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: _television ? 36 : 0,
+                                      vertical: _television ? 16 : 0,
+                                    ),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        _transport(),
+                                        if (_television)
+                                          const Padding(
+                                            padding: EdgeInsets.only(top: 12),
+                                            child: Text(
+                                              '方向键选择 · 确认操作 · 返回收起控制条',
+                                              style: TextStyle(
+                                                color: Colors.white70,
+                                                fontSize: 16,
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
                           ),
                         ),
                       ],

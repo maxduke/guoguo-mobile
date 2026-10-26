@@ -10,7 +10,7 @@
 
 <img src="screenshots/phone-light.png" width="260" alt="手机浅色界面" /> <img src="screenshots/tablet-dark.png" width="560" alt="平板深色界面" />
 
-Android TV 界面布局示例（2026-10-25，合成内容，主机渲染）：
+Android TV 界面布局示例（2026-10-26，合成内容，主机渲染；[遥控器导航说明](docs/tv-remote-navigation.md)）：
 
 <img src="screenshots/television-light.png" width="820" alt="电视侧栏和遥控器焦点布局示例" />
 

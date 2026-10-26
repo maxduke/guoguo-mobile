@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../domain/models.dart';
+import 'television_grid.dart';
+import 'television_scope.dart';
 
 /// Pages by list index while showing the source's original episode numbers.
 class EpisodeGrid extends StatefulWidget {
@@ -14,6 +16,7 @@ class EpisodeGrid extends StatefulWidget {
     required this.onJump,
     this.initialIndex = 0,
     this.shrinkWrap = false,
+    this.autofocus = false,
   });
 
   final List<Episode> episodes;
@@ -23,15 +26,28 @@ class EpisodeGrid extends StatefulWidget {
 
   /// Places the grid in the parent's scroll view (used on the detail page).
   final bool shrinkWrap;
+  final bool autofocus;
 
   @override
-  State<EpisodeGrid> createState() => _EpisodeGridState();
+  State<EpisodeGrid> createState() => EpisodeGridState();
 }
 
-class _EpisodeGridState extends State<EpisodeGrid> {
+class EpisodeGridState extends State<EpisodeGrid> {
   static const pageSize = 30;
   late int page = _currentPage;
   bool _pageChosenByUser = false;
+  final _grid = GlobalKey<TelevisionGridState>();
+  final _locateFocus = FocusNode(debugLabel: 'episodes-locate-current');
+  final _previousFocus = FocusNode(debugLabel: 'episodes-previous-page');
+  final _nextFocus = FocusNode(debugLabel: 'episodes-next-page');
+
+  @override
+  void dispose() {
+    _locateFocus.dispose();
+    _previousFocus.dispose();
+    _nextFocus.dispose();
+    super.dispose();
+  }
 
   int get _currentIndex => widget.episodes.isEmpty
       ? 0
@@ -73,6 +89,24 @@ class _EpisodeGridState extends State<EpisodeGrid> {
       page = _currentPage;
       _pageChosenByUser = false;
     });
+    _focusEpisode(_currentIndex);
+  }
+
+  void focusCurrent() => _locateCurrent();
+
+  void _focusEpisode(int index) {
+    if (!TelevisionScope.of(context)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _grid.currentState?.focusItem(index - page * pageSize);
+    });
+  }
+
+  void _choosePage(int value) {
+    setState(() {
+      page = value;
+      _pageChosenByUser = true;
+    });
+    _focusEpisode(value * pageSize);
   }
 
   Future<void> _jump() async {
@@ -142,27 +176,38 @@ class _EpisodeGridState extends State<EpisodeGrid> {
       64.0,
       scaler.scale(18) + scaler.scale(12) * 2 + 20,
     );
-    final grid = GridView.builder(
-      key: ValueKey(current),
-      shrinkWrap: widget.shrinkWrap,
-      physics: widget.shrinkWrap ? const NeverScrollableScrollPhysics() : null,
-      padding: const EdgeInsets.only(bottom: 24),
-      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: tileWidth,
+    final grid = LayoutBuilder(
+      builder: (context, constraints) => TelevisionGrid(
+        key: _grid,
+        itemKeys: [
+          for (final episode in widget.episodes.skip(start).take(pageSize))
+            episode.id,
+        ],
+        sliver: false,
+        scrollIdentity: current,
+        shrinkWrap: widget.shrinkWrap,
+        padding: const EdgeInsets.only(bottom: 24),
+        columns: math.max(1, (constraints.maxWidth / (tileWidth + 10)).ceil()),
         mainAxisExtent: tileHeight,
         mainAxisSpacing: 10,
         crossAxisSpacing: 10,
+        autofocusIndex: widget.autofocus ? _currentIndex - start : null,
+        above: _locateFocus,
+        below: pages <= 1
+            ? null
+            : current < pages - 1
+            ? _nextFocus
+            : _previousFocus,
+        itemBuilder: (context, index) {
+          final absolute = start + index;
+          return Semantics(
+            container: true,
+            selected: absolute == _currentIndex,
+            label: '第 ${widget.episodes[absolute].number} 集',
+            child: widget.builder(context, absolute),
+          );
+        },
       ),
-      itemCount: math.min(pageSize, count - start),
-      itemBuilder: (context, index) {
-        final absolute = start + index;
-        return Semantics(
-          container: true,
-          selected: absolute == _currentIndex,
-          label: '第 ${widget.episodes[absolute].number} 集',
-          child: widget.builder(context, absolute),
-        );
-      },
     );
     return Column(
       mainAxisSize: widget.shrinkWrap ? MainAxisSize.min : MainAxisSize.max,
@@ -183,28 +228,68 @@ class _EpisodeGridState extends State<EpisodeGrid> {
             ],
             onChanged: (value) {
               if (value == null) return;
-              setState(() {
-                page = value;
-                _pageChosenByUser = true;
-              });
+              _choosePage(value);
             },
           ),
-        Wrap(
-          alignment: WrapAlignment.end,
-          children: [
-            TextButton.icon(
-              onPressed: _locateCurrent,
-              icon: const Icon(Icons.my_location_rounded, size: 18),
-              label: const Text('定位当前'),
-            ),
-            TextButton.icon(
-              onPressed: _jump,
-              icon: const Icon(Icons.pin_outlined, size: 18),
-              label: const Text('跳集'),
-            ),
-          ],
+        Focus(
+          canRequestFocus: false,
+          skipTraversal: true,
+          onKeyEvent: (_, event) {
+            if (TelevisionScope.of(context) &&
+                (event is KeyDownEvent || event is KeyRepeatEvent) &&
+                event.logicalKey == LogicalKeyboardKey.arrowDown) {
+              _grid.currentState?.focusItem();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: Wrap(
+            alignment: WrapAlignment.end,
+            children: [
+              TextButton.icon(
+                focusNode: _locateFocus,
+                onPressed: _locateCurrent,
+                icon: const Icon(Icons.my_location_rounded, size: 18),
+                label: const Text('定位当前'),
+              ),
+              TextButton.icon(
+                onPressed: _jump,
+                icon: const Icon(Icons.pin_outlined, size: 18),
+                label: const Text('跳集'),
+              ),
+            ],
+          ),
         ),
         if (widget.shrinkWrap) grid else Expanded(child: grid),
+        if (pages > 1 && TelevisionScope.of(context))
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              ExcludeFocus(
+                excluding: current == 0,
+                child: TextButton.icon(
+                  focusNode: _previousFocus,
+                  onPressed: current > 0
+                      ? () => _choosePage(current - 1)
+                      : null,
+                  icon: const Icon(Icons.chevron_left),
+                  label: const Text('上一页'),
+                ),
+              ),
+              Text('${current + 1} / $pages'),
+              ExcludeFocus(
+                excluding: current == pages - 1,
+                child: TextButton.icon(
+                  focusNode: _nextFocus,
+                  onPressed: current < pages - 1
+                      ? () => _choosePage(current + 1)
+                      : null,
+                  icon: const Icon(Icons.chevron_right),
+                  label: const Text('下一页'),
+                ),
+              ),
+            ],
+          ),
       ],
     );
   }

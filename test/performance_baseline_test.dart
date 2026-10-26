@@ -368,21 +368,43 @@ void main() {
       () => coverCache.getFileFromCache('performance-initialization'),
     );
     var cacheDisposed = false;
+    final requestedCovers = <String>{};
     Future<void> closeCache() async {
       if (cacheDisposed) return;
       cacheDisposed = true;
-      // Drain reads started by posters before closing their store. Their
-      // cleanup timer must not outlive this widget measurement.
-      await coverCache.getFileFromCache('performance-final-drain');
-      await coverCache.dispose();
+      await tester.pumpWidget(const SizedBox());
+      // Join the actual image lookups; an unrelated cache key does not wait
+      // for pending per-key reads, which can schedule cleanup after disposal.
+      final pending = Future.wait([
+        for (final key in requestedCovers) coverCache.getFileFromCache(key),
+      ]);
+      var drained = false;
+      pending.then<void>(
+        (_) => drained = true,
+        onError: (Object _, StackTrace _) => drained = true,
+      );
+      // The reads originated on the fake test clock. Alternate its microtasks
+      // with real I/O instead of awaiting a fake-zone Future inside runAsync.
+      final wait = Stopwatch()..start();
+      while (!drained && wait.elapsed < const Duration(seconds: 10)) {
+        await tester.pump();
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 1)),
+        );
+      }
+      expect(drained, isTrue, reason: 'Outstanding cover cache reads');
+      await pending;
+      // dispose() only closes the database. Run the store's pending cleanup
+      // after I/O callbacks have returned to the test clock, before closing it.
+      await tester.pump();
+      await tester.pump(coverCache.store.cleanupRunMinInterval);
+      await tester.runAsync(coverCache.dispose);
     }
 
-    addTearDown(
-      () => tester.runAsync(() async {
-        await closeCache();
-        await temporary!.delete(recursive: true);
-      }),
-    );
+    addTearDown(() async {
+      await closeCache();
+      await tester.runAsync(() => temporary!.delete(recursive: true));
+    });
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -404,6 +426,11 @@ void main() {
         );
         clock.stop();
         mountedCards = cards.evaluate().length;
+        requestedCovers.addAll(
+          tester
+              .widgetList<Poster>(find.byType(Poster))
+              .map((poster) => coverRequest(poster.drama)),
+        );
         expect(mountedCards, greaterThan(0));
         expect(mountedCards, lessThan(count));
         expect(tester.takeException(), isNull);
@@ -470,7 +497,7 @@ void main() {
       app.dispose();
     }
     _report['render'] = results;
-    await tester.runAsync(closeCache);
+    await closeCache();
     await tester.runAsync(() => _write(output!));
   }, skip: output == null);
 }

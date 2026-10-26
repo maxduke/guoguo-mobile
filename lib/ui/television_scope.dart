@@ -1,17 +1,41 @@
 import 'package:flutter/material.dart';
 
-class TelevisionScope extends InheritedWidget {
+class TelevisionScope extends StatelessWidget {
   const TelevisionScope({
     super.key,
     required this.enabled,
-    required super.child,
+    required this.child,
   });
   final bool enabled;
+  final Widget child;
   static bool of(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<TelevisionScope>()?.enabled ??
+      context
+          .dependOnInheritedWidgetOfExactType<_TelevisionEnvironment>()
+          ?.enabled ??
       false;
+
   @override
-  bool updateShouldNotify(TelevisionScope oldWidget) =>
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    return _TelevisionEnvironment(
+      enabled: enabled,
+      child: MediaQuery(
+        data: media.copyWith(
+          navigationMode: enabled
+              ? NavigationMode.directional
+              : media.navigationMode,
+        ),
+        child: child,
+      ),
+    );
+  }
+}
+
+class _TelevisionEnvironment extends InheritedWidget {
+  const _TelevisionEnvironment({required this.enabled, required super.child});
+  final bool enabled;
+  @override
+  bool updateShouldNotify(_TelevisionEnvironment oldWidget) =>
       enabled != oldWidget.enabled;
 }
 

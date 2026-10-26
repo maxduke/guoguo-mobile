@@ -128,24 +128,38 @@ class DramaCard extends StatelessWidget {
                 ),
               ),
             ),
-            Positioned(
-              top: 5,
-              right: 5,
-              child: IconButton.filledTonal(
-                tooltip: '${favorite ? '取消收藏' : '收藏'} ${drama.title}',
-                onPressed: onFavorite,
-                style: IconButton.styleFrom(
-                  backgroundColor: Colors.black.withValues(alpha: .25),
-                  foregroundColor: Colors.white,
-                ),
-                icon: Icon(
-                  favorite
-                      ? Icons.bookmark_rounded
-                      : Icons.bookmark_border_rounded,
-                  size: 20,
-                ),
+            if (!TelevisionScope.of(context) || favorite)
+              Positioned(
+                top: 5,
+                right: 5,
+                child: TelevisionScope.of(context)
+                    ? Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: Icon(
+                          favorite
+                              ? Icons.bookmark_rounded
+                              : Icons.bookmark_border_rounded,
+                          semanticLabel: favorite ? '已收藏' : null,
+                          color: Colors.white,
+                          shadows: const [Shadow(blurRadius: 6)],
+                          size: 24,
+                        ),
+                      )
+                    : IconButton.filledTonal(
+                        tooltip: '${favorite ? '取消收藏' : '收藏'} ${drama.title}',
+                        onPressed: onFavorite,
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.black.withValues(alpha: .25),
+                          foregroundColor: Colors.white,
+                        ),
+                        icon: Icon(
+                          favorite
+                              ? Icons.bookmark_rounded
+                              : Icons.bookmark_border_rounded,
+                          size: 20,
+                        ),
+                      ),
               ),
-            ),
             if (drama.vip == true)
               Positioned(
                 top: 10,

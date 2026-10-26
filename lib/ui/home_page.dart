@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../data/app_store.dart';
 import '../data/app_startup.dart';
@@ -55,6 +56,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _routeActive = true;
   bool _savingRecords = false;
   int _resumeGeneration = 0;
+  final _railFocus = List.generate(
+    4,
+    (index) => FocusNode(debugLabel: 'tv-navigation-$index'),
+  );
+  final _pageFocus = List.generate(
+    3,
+    (index) => FocusScopeNode(debugLabel: 'tv-page-$index'),
+  );
+  bool _contentFocused = false;
   void _cancelResume() {
     _resumeGeneration++;
     _resuming = false;
@@ -103,7 +113,96 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void dispose() {
     store.records.cancelUpdateChecks();
     WidgetsBinding.instance.removeObserver(this);
+    for (final node in [..._railFocus, ..._pageFocus]) {
+      node.dispose();
+    }
     super.dispose();
+  }
+
+  void _openSettings() {
+    setState(_cancelResume);
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => SettingsPage(store: store, downloads: widget.downloads),
+      ),
+    );
+  }
+
+  void _enterContent(int index) {
+    _selectTab(index);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _tab != index ||
+          ModalRoute.of(context)?.isCurrent == false) {
+        return;
+      }
+      final scope = _pageFocus[index];
+      final previous = scope.focusedChild;
+      final target = previous?.canRequestFocus == true
+          ? previous
+          : ReadingOrderTraversalPolicy().findFirstFocus(
+              scope,
+              ignoreCurrentFocus: true,
+            );
+      if (target?.context != null) {
+        FocusTraversalPolicy.defaultTraversalRequestFocusCallback(target!);
+      }
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  KeyEventResult _railKey(int index, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.arrowDown) {
+      _railFocus[(index + (key == LogicalKeyboardKey.arrowUp ? -1 : 1)).clamp(
+            0,
+            3,
+          )]
+          .requestFocus();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowLeft) return KeyEventResult.handled;
+    if (key == LogicalKeyboardKey.arrowRight) {
+      if (index < _destinations.length) {
+        _enterContent(index);
+      } else if (event is KeyDownEvent) {
+        _openSettings();
+      }
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  Widget _televisionPage(int index, Widget child) {
+    if (!TelevisionScope.of(context)) return child;
+    return FocusScope(
+      node: _pageFocus[index],
+      onFocusChange: (focused) {
+        if (mounted && index == _tab && _contentFocused != focused) {
+          setState(() => _contentFocused = focused);
+        }
+      },
+      onKeyEvent: (_, event) {
+        if ((event is KeyDownEvent || event is KeyRepeatEvent) &&
+            event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+          final current = FocusManager.instance.primaryFocus;
+          if (current?.context != null &&
+              !FocusTraversalGroup.of(
+                current!.context!,
+              ).inDirection(current, TraversalDirection.left)) {
+            _railFocus[_tab].requestFocus();
+          }
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: FocusTraversalGroup(child: child),
+    );
   }
 
   void _open(Drama drama) {
@@ -164,104 +263,127 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final television = TelevisionScope.of(context);
     final wide =
         television || bounds.maxWidth >= 900 && bounds.maxHeight >= 480;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('果果'),
-        actions: [
-          IconButton(
-            tooltip: '设置',
-            icon: const Icon(Icons.tune_rounded),
-            onPressed: () {
-              setState(_cancelResume);
-              Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                  builder: (_) =>
-                      SettingsPage(store: store, downloads: widget.downloads),
-                ),
-              );
-            },
-          ),
-          const SizedBox(width: 12),
-        ],
-      ),
-      body: LayoutBuilder(
-        builder: (context, bodyBounds) => Row(
-          children: [
-            if (television)
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 24,
-                ),
-                child: SizedBox(
-                  width: 128,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      for (var i = 0; i < _destinations.length; i++)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          child: SizedBox(
-                            width: double.infinity,
-                            child: FilledButton.tonalIcon(
-                              autofocus: i == _tab,
-                              onPressed: () => _selectTab(i),
-                              icon: Icon(_destinations[i].icon),
-                              label: Text(_destinations[i].label),
-                              style: ButtonStyle(
-                                backgroundColor: WidgetStatePropertyAll(
-                                  i == _tab
-                                      ? Theme.of(
-                                          context,
-                                        ).colorScheme.primaryContainer
-                                      : Theme.of(
-                                          context,
-                                        ).colorScheme.surfaceContainerLow,
+    return PopScope<void>(
+      canPop: !television || !_contentFocused,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && television && _contentFocused) {
+          _railFocus[_tab].requestFocus();
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('果果'),
+          actions: [
+            if (!television)
+              IconButton(
+                tooltip: '设置',
+                icon: const Icon(Icons.tune_rounded),
+                onPressed: _openSettings,
+              ),
+            const SizedBox(width: 12),
+          ],
+        ),
+        body: LayoutBuilder(
+          builder: (context, bodyBounds) => Row(
+            children: [
+              if (television)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 24,
+                  ),
+                  child: SizedBox(
+                    width: 128,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.start,
+                      children: [
+                        for (var i = 0; i < _destinations.length; i++)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: Focus(
+                                canRequestFocus: false,
+                                skipTraversal: true,
+                                onKeyEvent: (_, event) => _railKey(i, event),
+                                child: FilledButton.tonalIcon(
+                                  focusNode: _railFocus[i],
+                                  autofocus: i == _tab,
+                                  onPressed: () => _selectTab(i),
+                                  icon: Icon(_destinations[i].icon),
+                                  label: Text(_destinations[i].label),
+                                  style: ButtonStyle(
+                                    backgroundColor: WidgetStatePropertyAll(
+                                      i == _tab
+                                          ? Theme.of(
+                                              context,
+                                            ).colorScheme.primaryContainer
+                                          : Theme.of(
+                                              context,
+                                            ).colorScheme.surfaceContainerLow,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
                           ),
+                        const Spacer(),
+                        Focus(
+                          canRequestFocus: false,
+                          skipTraversal: true,
+                          onKeyEvent: (_, event) => _railKey(3, event),
+                          child: FilledButton.tonalIcon(
+                            focusNode: _railFocus[3],
+                            onPressed: _openSettings,
+                            icon: const Icon(Icons.settings_outlined),
+                            label: const Text('设置'),
+                          ),
                         ),
-                    ],
+                        const SizedBox(height: 12),
+                        Text(
+                          '→ 进入内容\n返回键回导航',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
                   ),
+                )
+              else if (wide)
+                NavigationRail(
+                  selectedIndex: _tab,
+                  onDestinationSelected: _selectTab,
+                  labelType: NavigationRailLabelType.all,
+                  destinations: [
+                    for (final destination in _destinations)
+                      NavigationRailDestination(
+                        icon: Icon(destination.icon),
+                        selectedIcon: Icon(destination.selectedIcon),
+                        label: Text(destination.label),
+                      ),
+                  ],
                 ),
-              )
-            else if (wide)
-              NavigationRail(
+              Expanded(
+                key: const ValueKey('home-pages'),
+                child: _content(bodyBounds.maxHeight * .4),
+              ),
+            ],
+          ),
+        ),
+        bottomNavigationBar: wide
+            ? null
+            : NavigationBar(
                 selectedIndex: _tab,
                 onDestinationSelected: _selectTab,
-                labelType: NavigationRailLabelType.all,
                 destinations: [
                   for (final destination in _destinations)
-                    NavigationRailDestination(
+                    NavigationDestination(
                       icon: Icon(destination.icon),
                       selectedIcon: Icon(destination.selectedIcon),
-                      label: Text(destination.label),
+                      label: destination.label,
                     ),
                 ],
               ),
-            Expanded(
-              key: const ValueKey('home-pages'),
-              child: _content(bodyBounds.maxHeight * .4),
-            ),
-          ],
-        ),
       ),
-      bottomNavigationBar: wide
-          ? null
-          : NavigationBar(
-              selectedIndex: _tab,
-              onDestinationSelected: _selectTab,
-              destinations: [
-                for (final destination in _destinations)
-                  NavigationDestination(
-                    icon: Icon(destination.icon),
-                    selectedIcon: Icon(destination.selectedIcon),
-                    label: destination.label,
-                  ),
-              ],
-            ),
     );
   }
 
@@ -335,56 +457,65 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           index: _tab,
           children: [
             ExcludeFocus(
-              excluding: _tab != 0 || !_routeActive,
-              child: ListenableBuilder(
-                listenable: Listenable.merge([
-                  store.catalog,
-                  store,
-                  if (widget.startup != null) widget.startup!,
-                ]),
-                builder: (context, _) => DiscoveryPage(
-                  store: store,
-                  source: store.catalog.source,
-                  active: _tab == 0 && _routeActive,
-                  ready: widget.startup == null || widget.startup!.coreReady,
-                  autoLoad: widget.autoLoad || widget.startup != null,
-                  onOpen: _open,
-                  onSearch: _openSearch,
-                  onLibrary: _openLibrary,
-                  onMore: _openFeed,
-                  continuation: ListenableBuilder(
-                    listenable: Listenable.merge([
-                      store.records,
-                      store.records.progress,
-                    ]),
-                    builder: (context, _) {
-                      final recent = store.records.continuable;
-                      return recent.isEmpty
-                          ? const SizedBox.shrink()
-                          : Padding(
-                              padding: const EdgeInsets.only(top: 16),
-                              child: _continueCard(recent.first),
-                            );
-                    },
+              excluding: _tab != 0,
+              child: _televisionPage(
+                0,
+                ListenableBuilder(
+                  listenable: Listenable.merge([
+                    store.catalog,
+                    store,
+                    if (widget.startup != null) widget.startup!,
+                  ]),
+                  builder: (context, _) => DiscoveryPage(
+                    store: store,
+                    source: store.catalog.source,
+                    active: _tab == 0 && _routeActive,
+                    ready: widget.startup == null || widget.startup!.coreReady,
+                    autoLoad: widget.autoLoad || widget.startup != null,
+                    onOpen: _open,
+                    onSearch: _openSearch,
+                    onLibrary: _openLibrary,
+                    onMore: _openFeed,
+                    continuation: ListenableBuilder(
+                      listenable: Listenable.merge([
+                        store.records,
+                        store.records.progress,
+                      ]),
+                      builder: (context, _) {
+                        final recent = store.records.continuable;
+                        return recent.isEmpty
+                            ? const SizedBox.shrink()
+                            : Padding(
+                                padding: const EdgeInsets.only(top: 16),
+                                child: _continueCard(recent.first),
+                              );
+                      },
+                    ),
                   ),
                 ),
               ),
             ),
             ExcludeFocus(
-              excluding: _tab != 1 || !_routeActive,
-              child: PersonalPage(
-                store: store,
-                downloads: widget.downloads,
-                active: _tab == 1 && _routeActive,
+              excluding: _tab != 1,
+              child: _televisionPage(
+                1,
+                PersonalPage(
+                  store: store,
+                  downloads: widget.downloads,
+                  active: _tab == 1 && _routeActive,
+                ),
               ),
             ),
             ExcludeFocus(
-              excluding: _tab != 2 || !_routeActive,
-              child: DownloadsPage(
-                store: store,
-                downloads: widget.downloads,
-                onOpen: _open,
-                active: _tab == 2,
+              excluding: _tab != 2,
+              child: _televisionPage(
+                2,
+                DownloadsPage(
+                  store: store,
+                  downloads: widget.downloads,
+                  onOpen: _open,
+                  active: _tab == 2,
+                ),
               ),
             ),
           ],

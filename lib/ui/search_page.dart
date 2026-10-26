@@ -6,6 +6,8 @@ import '../domain/models.dart';
 import 'catalog_search_controller.dart';
 import 'components.dart';
 import 'source_selector.dart';
+import 'television_grid.dart';
+import 'television_scope.dart';
 
 class SearchPage extends StatefulWidget {
   const SearchPage({
@@ -25,6 +27,7 @@ class SearchPage extends StatefulWidget {
 class _SearchPageState extends State<SearchPage> {
   late CatalogSearchController _search;
   final _scroll = ScrollController();
+  final _results = GlobalKey<TelevisionGridState>();
 
   @override
   void initState() {
@@ -48,10 +51,22 @@ class _SearchPageState extends State<SearchPage> {
     super.dispose();
   }
 
-  Future<void> _submit(String text) {
+  Future<void> _submit(String text) async {
+    final search = _search, source = widget.store.catalog.source;
     FocusScope.of(context).unfocus();
     if (!_search.loading && _scroll.hasClients) _scroll.jumpTo(0);
-    return _search.submit(text);
+    await search.submit(text);
+    if (!mounted || !TelevisionScope.of(context)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted &&
+          search == _search &&
+          source == widget.store.catalog.source &&
+          search.query == text.trim() &&
+          FocusManager.instance.primaryFocus is FocusScopeNode) {
+        _results.currentState?.focusItem(0);
+      }
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   @override
@@ -278,20 +293,22 @@ class _SearchPageState extends State<SearchPage> {
                     final columns = (constraints.crossAxisExtent / 165)
                         .floor()
                         .clamp(2, 7);
-                    return SliverGrid.builder(
-                      itemCount: rows.length,
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: columns,
-                        mainAxisSpacing: 22,
-                        crossAxisSpacing: 14,
-                        childAspectRatio: .61,
-                      ),
+                    return TelevisionGrid(
+                      key: _results,
+                      itemKeys: [for (final drama in rows) drama.key],
+                      columns: columns,
+                      mainAxisExtent:
+                          (constraints.crossAxisExtent - (columns - 1) * 14) /
+                          columns /
+                          .61,
                       itemBuilder: (context, index) {
                         final drama = store.catalog.currentDrama(rows[index]);
                         return DramaCard(
                           drama: drama,
                           onTap: () {
-                            FocusScope.of(context).unfocus();
+                            if (!TelevisionScope.of(context)) {
+                              FocusScope.of(context).unfocus();
+                            }
                             widget.onOpen(drama);
                           },
                           favorite: store.records.favorites.containsKey(

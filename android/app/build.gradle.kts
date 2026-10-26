@@ -18,7 +18,9 @@ val releaseStorePassword = signingValue("storePassword", "GUOGUO_ANDROID_STORE_P
 val releaseKeyAlias = signingValue("keyAlias", "GUOGUO_ANDROID_KEY_ALIAS")
 val releaseKeyPassword = signingValue("keyPassword", "GUOGUO_ANDROID_KEY_PASSWORD")
 val hasReleaseSigning = listOf(releaseStore, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { it != null }
-if (!hasReleaseSigning && gradle.startParameter.taskNames.any { it.substringAfterLast(':').endsWith("Release") }) {
+// AOT/R8 preview packages stay separate from the fixed-signature public app.
+val previewBuild = System.getenv("GUOGUO_ANDROID_PREVIEW") == "true"
+if (!hasReleaseSigning && !previewBuild && gradle.startParameter.taskNames.any { it.substringAfterLast(':').endsWith("Release") }) {
     throw GradleException("Android release signing is missing. Configure key.properties or GUOGUO_ANDROID_* signing variables; see docs/android-tv.md.")
 }
 
@@ -38,13 +40,13 @@ android {
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 24
         targetSdk = flutter.targetSdkVersion
-        // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
-        // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)
-        // You can force using the value of versionCode by specifying the `-P force-version-code-ignoring-abi=true`
-        // flag during build.
+        // gradle.properties keeps this build number identical for all APK ABIs.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        ndk { abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86_64")) }
+        manifestPlaceholders["appLabel"] = "果果"
+        if (project.findProperty("split-per-abi")?.toString() != "true") {
+            ndk { abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86_64")) }
+        }
     }
 
     signingConfigs {
@@ -61,9 +63,17 @@ android {
         debug {
             applicationIdSuffix = ".dev"
             versionNameSuffix = "-dev"
+            manifestPlaceholders["appLabel"] = "果果 测试"
         }
         release {
-            signingConfig = if (hasReleaseSigning) signingConfigs.getByName("release") else null
+            if (previewBuild) {
+                applicationIdSuffix = ".dev"
+                versionNameSuffix = "-dev"
+                manifestPlaceholders["appLabel"] = "果果 测试"
+                signingConfig = signingConfigs.getByName("debug")
+            } else {
+                signingConfig = if (hasReleaseSigning) signingConfigs.getByName("release") else null
+            }
         }
     }
 }

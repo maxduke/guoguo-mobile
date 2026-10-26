@@ -12,7 +12,99 @@ import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/domain/discovery.dart';
 import 'widget_test.dart' show NoNetwork;
 
+class _VideoSurfaceProbe extends StatefulWidget {
+  const _VideoSurfaceProbe({super.key, required this.onDeactivate});
+  final VoidCallback onDeactivate;
+  @override
+  State<_VideoSurfaceProbe> createState() => _VideoSurfaceProbeState();
+}
+
+class _VideoSurfaceProbeState extends State<_VideoSurfaceProbe> {
+  @override
+  Widget build(BuildContext context) => const SizedBox.expand();
+  @override
+  void deactivate() {
+    widget.onDeactivate();
+    super.deactivate();
+  }
+}
+
 void main() {
+  testWidgets(
+    'media keys read current playback state without requiring a rebuild',
+    (tester) async {
+      var playing = true, changes = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerRemoteControls(
+            enabled: true,
+            controlsVisible: false,
+            playing: playing,
+            isPlaying: () => playing,
+            onShowControls: () {},
+            onPlayPause: () {
+              changes++;
+              playing = !playing;
+            },
+            onSeekBy: (_) {},
+            onPrevious: null,
+            onNext: null,
+            child: const Scaffold(body: Text('video')),
+          ),
+        ),
+      );
+      await tester.pump();
+      playing = false; // Native pause arrives independently of the page build.
+      await tester.sendKeyEvent(LogicalKeyboardKey.mediaPlay);
+      expect(changes, 1);
+      expect(playing, true);
+      await tester.sendKeyEvent(LogicalKeyboardKey.mediaPlay);
+      expect(changes, 1);
+      await tester.sendKeyEvent(LogicalKeyboardKey.mediaPause);
+      expect(changes, 2);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets('remote availability changes retain the mounted video surface', (
+    tester,
+  ) async {
+    var deactivations = 0;
+    final enabled = ValueNotifier(true);
+    final surface = Scaffold(
+      body: _VideoSurfaceProbe(
+        key: GlobalKey(),
+        onDeactivate: () => deactivations++,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ValueListenableBuilder<bool>(
+          valueListenable: enabled,
+          builder: (_, active, _) => PlayerRemoteControls(
+            enabled: active,
+            controlsVisible: false,
+            onShowControls: () {},
+            onPlayPause: () {},
+            onSeekBy: (_) {},
+            onPrevious: null,
+            onNext: null,
+            child: surface,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    enabled.value = false;
+    await tester.pump();
+    expect(deactivations, 0);
+    enabled.value = true;
+    await tester.pump();
+    expect(deactivations, 0);
+    await tester.pumpWidget(const SizedBox());
+    enabled.dispose();
+  });
+
   testWidgets('TV home navigation is reachable with D-pad and center only', (
     tester,
   ) async {

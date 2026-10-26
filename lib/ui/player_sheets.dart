@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../domain/models.dart';
 import 'episode_grid.dart';
+import 'television_scope.dart';
 
 class PlayerEpisodeSheet extends StatelessWidget {
   const PlayerEpisodeSheet({
@@ -30,6 +31,7 @@ class PlayerEpisodeSheet extends StatelessWidget {
             child: EpisodeGrid(
               episodes: episodes,
               initialIndex: index,
+              autofocus: TelevisionScope.of(context),
               onJump: onSelect,
               builder: (context, selected) => FilledButton.tonal(
                 onPressed: () => onSelect(selected),
@@ -77,7 +79,15 @@ class PlayerRelatedSheet extends StatelessWidget {
   );
 }
 
-enum PlayerMenuAction { related, fit, orientation, pip, download, lock }
+enum PlayerMenuAction {
+  related,
+  fit,
+  orientation,
+  pip,
+  download,
+  lock,
+  diagnostics,
+}
 
 class PlayerMoreSheet extends StatelessWidget {
   const PlayerMoreSheet({
@@ -129,7 +139,15 @@ class PlayerMoreSheet extends StatelessWidget {
               ],
             ),
           ),
+        if (TelevisionScope.of(context))
+          ListTile(
+            leading: const Icon(Icons.monitor_heart_outlined),
+            title: const Text('画面状态'),
+            subtitle: const Text('设备、系统与播放状态'),
+            onTap: () => onAction(PlayerMenuAction.diagnostics),
+          ),
         SwitchListTile(
+          autofocus: TelevisionScope.of(context),
           title: const Text('自动播放下一集'),
           subtitle: const Text('关闭后，播完停在当前集'),
           value: autoAdvance,
@@ -140,11 +158,12 @@ class PlayerMoreSheet extends StatelessWidget {
           title: Text(fill ? '显示完整画面' : '等比例铺满（裁切边缘）'),
           onTap: () => onAction(PlayerMenuAction.fit),
         ),
-        ListTile(
-          leading: const Icon(Icons.screen_rotation_outlined),
-          title: const Text('切换横竖屏'),
-          onTap: () => onAction(PlayerMenuAction.orientation),
-        ),
+        if (!TelevisionScope.of(context))
+          ListTile(
+            leading: const Icon(Icons.screen_rotation_outlined),
+            title: const Text('切换横竖屏'),
+            onTap: () => onAction(PlayerMenuAction.orientation),
+          ),
         ListTile(
           leading: const Icon(Icons.picture_in_picture_alt),
           title: const Text('画中画'),
@@ -156,25 +175,32 @@ class PlayerMoreSheet extends StatelessWidget {
           title: const Text('下载当前集'),
           onTap: () => onAction(PlayerMenuAction.download),
         ),
-        ListTile(
-          leading: const Icon(Icons.lock_outline),
-          title: const Text('锁定手势'),
-          onTap: () => onAction(PlayerMenuAction.lock),
-        ),
+        if (!TelevisionScope.of(context))
+          ListTile(
+            leading: const Icon(Icons.lock_outline),
+            title: const Text('锁定手势'),
+            onTap: () => onAction(PlayerMenuAction.lock),
+          ),
         ListTile(
           leading: const Icon(Icons.video_library_outlined),
           title: const Text('相关剧集'),
           subtitle: const Text('按标题匹配同系列作品'),
           onTap: () => onAction(PlayerMenuAction.related),
         ),
-        const ExpansionTile(
-          leading: Icon(Icons.touch_app_outlined),
-          title: Text('播放手势'),
+        ExpansionTile(
+          leading: Icon(
+            TelevisionScope.of(context)
+                ? Icons.settings_remote_outlined
+                : Icons.touch_app_outlined,
+          ),
+          title: Text(TelevisionScope.of(context) ? '遥控器操作' : '播放手势'),
           childrenPadding: EdgeInsets.fromLTRB(16, 0, 16, 16),
           expandedCrossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '单击显示或隐藏控件；读屏模式下控件保持显示。上下滑动切换分集；左右滑动调节进度，松手跳转。长按临时 2 倍速，松手恢复原倍速。也可使用底部播放、暂停、上一集、下一集和选集按钮。',
+              TelevisionScope.of(context)
+                  ? '方向键选择，确认键操作。控制条收起时，左右键快退或快进 10 秒；方向或确认键显示控制条。返回键先收起控制条，再按一次退出播放。选集面板默认定位当前集。'
+                  : '单击显示或隐藏控件；读屏模式下控件保持显示。上下滑动切换分集；左右滑动调节进度，松手跳转。长按临时 2 倍速，松手恢复原倍速。也可使用底部播放、暂停、上一集、下一集和选集按钮。',
             ),
           ],
         ),
