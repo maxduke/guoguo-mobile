@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../data/app_store.dart';
 import '../data/discovery_cache.dart';
@@ -10,6 +11,8 @@ import '../platform/provider_client.dart';
 import 'components.dart';
 import 'discovery_cache_status.dart';
 import 'source_selector.dart';
+import 'television_grid.dart';
+import 'television_scope.dart';
 
 /// A finite preview; directory and full-feed pagination belong to their pages.
 class DiscoveryPage extends StatefulWidget {
@@ -47,6 +50,14 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   DateTime? _savedAt;
   bool _cached = false, _loading = false, _attempted = false;
   int _generation = 0;
+  final _grid = GlobalKey<TelevisionGridState>();
+  final _moreFocus = FocusNode(debugLabel: 'discovery-more');
+
+  @override
+  void dispose() {
+    _moreFocus.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -220,6 +231,11 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       final title = widget.source == DramaSource.hongguo
           ? '真人剧推荐'
           : _board?.name ?? '当前站源栏目';
+      final search = OutlinedButton.icon(
+        onPressed: widget.onSearch,
+        icon: const Icon(Icons.search),
+        label: const Text('搜索剧名'),
+      );
       return RefreshIndicator(
         onRefresh: () => _load(refresh: true),
         child: CustomScrollView(
@@ -258,11 +274,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                       ],
                     ),
                     const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      onPressed: widget.onSearch,
-                      icon: const Icon(Icons.search),
-                      label: const Text('搜索剧名'),
-                    ),
+                    if (TelevisionScope.of(context))
+                      Align(alignment: Alignment.centerLeft, child: search)
+                    else
+                      search,
                     if (widget.continuation != null) widget.continuation!,
                     const SizedBox(height: 18),
                     Wrap(
@@ -277,12 +292,29 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                             style: Theme.of(context).textTheme.titleLarge,
                           ),
                         ),
-                        TextButton(
-                          onPressed: widget.onMore,
-                          child: Text(
-                            widget.source == DramaSource.hongguo
-                                ? '更多推荐'
-                                : '查看全部栏目',
+                        Focus(
+                          canRequestFocus: false,
+                          skipTraversal: true,
+                          onKeyEvent: (_, event) {
+                            if (TelevisionScope.of(context) &&
+                                rows.isNotEmpty &&
+                                (event is KeyDownEvent ||
+                                    event is KeyRepeatEvent) &&
+                                event.logicalKey ==
+                                    LogicalKeyboardKey.arrowDown) {
+                              _grid.currentState?.focusItem();
+                              return KeyEventResult.handled;
+                            }
+                            return KeyEventResult.ignored;
+                          },
+                          child: TextButton(
+                            focusNode: _moreFocus,
+                            onPressed: widget.onMore,
+                            child: Text(
+                              widget.source == DramaSource.hongguo
+                                  ? '更多推荐'
+                                  : '查看全部栏目',
+                            ),
                           ),
                         ),
                         IconButton(
@@ -349,53 +381,57 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(22, 12, 22, 24),
               sliver: SliverLayoutBuilder(
-                builder: (context, constraints) => SliverGrid.builder(
-                  itemCount: rows.length,
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: (constraints.crossAxisExtent / 165)
-                        .floor()
-                        .clamp(2, 6),
-                    mainAxisSpacing: 22,
-                    crossAxisSpacing: 14,
-                    childAspectRatio: .61,
-                  ),
-                  itemBuilder: (context, index) => ListenableBuilder(
-                    listenable: Listenable.merge([
-                      store.catalog,
-                      store.records,
-                    ]),
-                    builder: (context, _) {
-                      final row = rows[index];
-                      final drama = store.catalog.currentDrama(row.drama);
-                      return Stack(
-                        children: [
-                          DramaCard(
-                            drama: drama,
-                            onTap: () => widget.onOpen(drama),
-                            favorite: store.records.favorites.containsKey(
-                              drama.key,
-                            ),
-                            onFavorite: () => perform(
-                              context,
-                              () => store.records.toggleFavorite(drama),
-                            ),
-                          ),
-                          if (_kind == DiscoveryKind.ranking && row.rank > 0)
-                            Positioned(
-                              top: 8,
-                              left: 8,
-                              child: IgnorePointer(
-                                child: Semantics(
-                                  label: '排名第 ${row.rank} 名',
-                                  child: Chip(label: Text('${row.rank}')),
-                                ),
+                builder: (context, constraints) {
+                  final columns = (constraints.crossAxisExtent / 165)
+                      .floor()
+                      .clamp(2, 6);
+                  return TelevisionGrid(
+                    key: _grid,
+                    above: _moreFocus,
+                    itemKeys: [for (final row in rows) row.drama.key],
+                    columns: columns,
+                    mainAxisExtent:
+                        (constraints.crossAxisExtent - (columns - 1) * 14) /
+                        columns /
+                        .61,
+                    itemBuilder: (context, index) => ListenableBuilder(
+                      listenable: Listenable.merge([
+                        store.catalog,
+                        store.records,
+                      ]),
+                      builder: (context, _) {
+                        final row = rows[index];
+                        final drama = store.catalog.currentDrama(row.drama);
+                        return Stack(
+                          children: [
+                            DramaCard(
+                              drama: drama,
+                              onTap: () => widget.onOpen(drama),
+                              favorite: store.records.favorites.containsKey(
+                                drama.key,
+                              ),
+                              onFavorite: () => perform(
+                                context,
+                                () => store.records.toggleFavorite(drama),
                               ),
                             ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
+                            if (_kind == DiscoveryKind.ranking && row.rank > 0)
+                              Positioned(
+                                top: 8,
+                                left: 8,
+                                child: IgnorePointer(
+                                  child: Semantics(
+                                    label: '排名第 ${row.rank} 名',
+                                    child: Chip(label: Text('${row.rank}')),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        );
+                      },
+                    ),
+                  );
+                },
               ),
             ),
           ],

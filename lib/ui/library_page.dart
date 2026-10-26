@@ -8,6 +8,7 @@ import '../domain/models.dart';
 import 'components.dart';
 import 'source_selector.dart';
 import 'catalog_prefetch_scheduler.dart';
+import 'television_grid.dart';
 
 class LibraryPage extends StatefulWidget {
   const LibraryPage({
@@ -456,31 +457,34 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
                   SliverPadding(
                     padding: EdgeInsets.fromLTRB(horizontal, 0, horizontal, 24),
                     sliver: SliverLayoutBuilder(
-                      builder: (context, constraints) => SliverGrid.builder(
-                        itemCount: rows.length,
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: (constraints.crossAxisExtent / 165)
-                              .floor()
-                              .clamp(2, 7),
-                          mainAxisSpacing: 22,
-                          crossAxisSpacing: 14,
-                          childAspectRatio: .61,
-                        ),
-                        itemBuilder: (context, index) => ListenableBuilder(
-                          listenable: store.records,
-                          builder: (context, _) => DramaCard(
-                            drama: rows[index],
-                            onTap: () => widget.onOpen(rows[index]),
-                            favorite: store.records.favorites.containsKey(
-                              rows[index].key,
-                            ),
-                            onFavorite: () => perform(
-                              context,
-                              () => store.records.toggleFavorite(rows[index]),
+                      builder: (context, constraints) {
+                        final columns = (constraints.crossAxisExtent / 165)
+                            .floor()
+                            .clamp(2, 7);
+                        return TelevisionGrid(
+                          itemKeys: [for (final drama in rows) drama.key],
+                          columns: columns,
+                          mainAxisExtent:
+                              (constraints.crossAxisExtent -
+                                  (columns - 1) * 14) /
+                              columns /
+                              .61,
+                          itemBuilder: (context, index) => ListenableBuilder(
+                            listenable: store.records,
+                            builder: (context, _) => DramaCard(
+                              drama: rows[index],
+                              onTap: () => widget.onOpen(rows[index]),
+                              favorite: store.records.favorites.containsKey(
+                                rows[index].key,
+                              ),
+                              onFavorite: () => perform(
+                                context,
+                                () => store.records.toggleFavorite(rows[index]),
+                              ),
                             ),
                           ),
-                        ),
-                      ),
+                        );
+                      },
                     ),
                   ),
                   SliverPadding(

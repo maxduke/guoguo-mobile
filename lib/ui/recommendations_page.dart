@@ -4,6 +4,7 @@ import '../domain/models.dart';
 import '../domain/discovery.dart';
 import '../platform/provider_client.dart';
 import 'components.dart';
+import 'television_grid.dart';
 import 'discovery_cache_status.dart';
 
 class RecommendationsPage extends StatefulWidget {
@@ -219,15 +220,11 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
                   final columns = (constraints.crossAxisExtent / 170)
                       .floor()
                       .clamp(2, 6);
-                  return SliverGrid.builder(
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: columns,
-                      mainAxisSpacing: 22,
-                      crossAxisSpacing: 14,
-                      mainAxisExtent:
-                          constraints.crossAxisExtent / columns * 1.6 + 45,
-                    ),
-                    itemCount: rows.length,
+                  return TelevisionGrid(
+                    itemKeys: [for (final drama in rows) drama.key],
+                    columns: columns,
+                    mainAxisExtent:
+                        constraints.crossAxisExtent / columns * 1.6 + 45,
                     itemBuilder: (context, index) => ListenableBuilder(
                       listenable: Listenable.merge([
                         widget.store.catalog,

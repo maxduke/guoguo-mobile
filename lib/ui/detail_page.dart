@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:background_downloader/background_downloader.dart';
 
 import '../data/app_store.dart';
@@ -13,6 +14,7 @@ import 'episode_grid.dart';
 import 'player_page.dart';
 import 'download_range_sheet.dart';
 import 'related_series_section.dart';
+import 'television_scope.dart';
 
 Future<void> openDrama(
   BuildContext context,
@@ -106,7 +108,7 @@ class DetailPage extends StatefulWidget {
 class _DetailPageState extends State<DetailPage> {
   List<Episode> _episodes = const [];
   final _seriesKey = GlobalKey<RelatedSeriesSectionState>();
-  final _episodesKey = GlobalKey();
+  final _episodesKey = GlobalKey<EpisodeGridState>();
   bool _loading = false, _episodeFailed = false;
   bool _choosingDownloads = false, _enqueueing = false, _expanded = false;
   bool get _downloadBusy => _choosingDownloads || _enqueueing;
@@ -292,66 +294,83 @@ class _DetailPageState extends State<DetailPage> {
     List<Episode> rows,
     WatchRecord? record,
     WatchResume resume,
-  ) => Material(
-    color: Theme.of(context).colorScheme.surface,
-    child: SafeArea(
-      top: false,
-      child: Center(
-        heightFactor: 1,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1000),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-            child: Row(
-              children: [
-                IconButton.filledTonal(
-                  tooltip: '选择下载分集',
-                  onPressed: rows.isEmpty || _downloadBusy || _loading
-                      ? null
-                      : () => _downloadRange(rows, resume.index),
-                  style: IconButton.styleFrom(minimumSize: const Size(52, 52)),
-                  icon: _enqueueing
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.download_rounded),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton.icon(
-                    key: const ValueKey('detail-primary-play'),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(0, 52),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
+  ) => Focus(
+    canRequestFocus: false,
+    skipTraversal: true,
+    onKeyEvent: (_, event) {
+      if (TelevisionScope.of(context) &&
+          rows.isNotEmpty &&
+          (event is KeyDownEvent || event is KeyRepeatEvent) &&
+          event.logicalKey == LogicalKeyboardKey.arrowUp) {
+        _episodesKey.currentState?.focusCurrent();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    },
+    child: Material(
+      color: Theme.of(context).colorScheme.surface,
+      child: SafeArea(
+        top: false,
+        child: Center(
+          heightFactor: 1,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1000),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+              child: Row(
+                children: [
+                  IconButton.filledTonal(
+                    tooltip: '选择下载分集',
+                    onPressed: rows.isEmpty || _downloadBusy || _loading
+                        ? null
+                        : () => _downloadRange(rows, resume.index),
+                    style: IconButton.styleFrom(
+                      minimumSize: const Size(52, 52),
+                    ),
+                    icon: _enqueueing
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.download_rounded),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton.icon(
+                      key: const ValueKey('detail-primary-play'),
+                      autofocus: TelevisionScope.of(context),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 52),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                      ),
+                      onPressed: rows.isEmpty
+                          ? null
+                          : () => _play(rows, resume.index),
+                      icon: const Icon(Icons.play_arrow_rounded),
+                      label: Text(
+                        rows.isEmpty
+                            ? (_episodeFailed
+                                  ? '分集加载失败'
+                                  : _loading
+                                  ? '正在加载分集…'
+                                  : '暂无可播放分集')
+                            : record == null
+                            ? '开始观看'
+                            : !resume.canContinue
+                            ? resume.status == WatchStatus.completed
+                                  ? '重新观看'
+                                  : '重看第 ${resume.episode!.number} 集'
+                            : '继续第 ${resume.episode!.number} 集',
+                        textAlign: TextAlign.center,
                       ),
                     ),
-                    onPressed: rows.isEmpty
-                        ? null
-                        : () => _play(rows, resume.index),
-                    icon: const Icon(Icons.play_arrow_rounded),
-                    label: Text(
-                      rows.isEmpty
-                          ? (_episodeFailed
-                                ? '分集加载失败'
-                                : _loading
-                                ? '正在加载分集…'
-                                : '暂无可播放分集')
-                          : record == null
-                          ? '开始观看'
-                          : !resume.canContinue
-                          ? resume.status == WatchStatus.completed
-                                ? '重新观看'
-                                : '重看第 ${resume.episode!.number} 集'
-                          : '继续第 ${resume.episode!.number} 集',
-                      textAlign: TextAlign.center,
-                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

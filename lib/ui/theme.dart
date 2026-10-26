@@ -99,8 +99,38 @@ ThemeData guoguoTheme(Brightness brightness, {bool television = false}) {
             ),
           )
         : const IconButtonThemeData(),
+    textButtonTheme: television
+        ? TextButtonThemeData(
+            style: ButtonStyle(
+              minimumSize: const WidgetStatePropertyAll(Size(56, 56)),
+              side: WidgetStateProperty.resolveWith(
+                (states) => states.contains(WidgetState.focused)
+                    ? BorderSide(color: scheme.primary, width: 3)
+                    : BorderSide.none,
+              ),
+            ),
+          )
+        : const TextButtonThemeData(),
+    outlinedButtonTheme: television
+        ? OutlinedButtonThemeData(
+            style: ButtonStyle(
+              minimumSize: const WidgetStatePropertyAll(Size(56, 56)),
+              side: WidgetStateProperty.resolveWith(
+                (states) => states.contains(WidgetState.focused)
+                    ? BorderSide(color: scheme.primary, width: 3)
+                    : BorderSide(color: scheme.outline),
+              ),
+            ),
+          )
+        : const OutlinedButtonThemeData(),
     chipTheme: ChipThemeData(
-      side: BorderSide.none,
+      side: television
+          ? WidgetStateBorderSide.resolveWith(
+              (states) => states.contains(WidgetState.focused)
+                  ? BorderSide(color: scheme.primary, width: 3)
+                  : BorderSide.none,
+            )
+          : BorderSide.none,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ),
     dividerTheme: DividerThemeData(

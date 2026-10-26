@@ -238,6 +238,28 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'TV transport keeps arrows in the row and returns from the timeline',
+    (tester) async {
+      await _mount(tester);
+      await _key(tester, LogicalKeyboardKey.arrowLeft);
+      expect(_focused(tester, '暂停'), true);
+      await _key(tester, LogicalKeyboardKey.arrowRight);
+      await _key(tester, LogicalKeyboardKey.arrowRight);
+      expect(_focused(tester, '1.0x'), true);
+      expect(find.byKey(const Key('television-focus-outline')), findsOneWidget);
+      await _key(tester, LogicalKeyboardKey.arrowRight);
+      expect(_focused(tester, '选集'), true);
+      await _key(tester, LogicalKeyboardKey.arrowRight);
+      expect(_focused(tester, '选集'), true);
+      await _key(tester, LogicalKeyboardKey.arrowUp);
+      await _key(tester, LogicalKeyboardKey.arrowDown);
+      expect(_focused(tester, '选集'), true);
+      expect(find.byType(Texture), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('TV options retain the video and use remote-specific actions', (
     tester,
   ) async {

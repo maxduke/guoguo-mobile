@@ -31,9 +31,9 @@ class PlayerEpisodeSheet extends StatelessWidget {
             child: EpisodeGrid(
               episodes: episodes,
               initialIndex: index,
+              autofocus: TelevisionScope.of(context),
               onJump: onSelect,
               builder: (context, selected) => FilledButton.tonal(
-                autofocus: TelevisionScope.of(context) && selected == index,
                 onPressed: () => onSelect(selected),
                 style: FilledButton.styleFrom(
                   padding: EdgeInsets.zero,
