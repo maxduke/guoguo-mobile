@@ -204,8 +204,10 @@ void main() {
       expect(find.text('旧源结果'), findsNothing);
       expect(
         tester.widget<TextField>(find.byType(TextField)).controller!.text,
-        isEmpty,
+        '迟到',
       );
+      expect(provider.calls.last, same(request));
+      expect(find.text('搜索当前站源'), findsOneWidget);
       await tester.tap(find.byType(BackButton));
       await tester.pumpAndSettle();
       // The discovery preview does not fetch the directory; entering the

@@ -386,13 +386,19 @@ void main() {
       // The reads originated on the fake test clock. Alternate its microtasks
       // with real I/O instead of awaiting a fake-zone Future inside runAsync.
       final wait = Stopwatch()..start();
-      while (!drained && wait.elapsed < const Duration(seconds: 10)) {
+      while ((!drained || tester.binding.imageCache.pendingImageCount > 0) &&
+          wait.elapsed < const Duration(seconds: 10)) {
         await tester.pump();
         await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 1)),
         );
       }
       expect(drained, isTrue, reason: 'Outstanding cover cache reads');
+      expect(
+        tester.binding.imageCache.pendingImageCount,
+        0,
+        reason: 'Outstanding image loads may still schedule cache reads',
+      );
       await pending;
       // dispose() only closes the database. Run the store's pending cleanup
       // after I/O callbacks have returned to the test clock, before closing it.

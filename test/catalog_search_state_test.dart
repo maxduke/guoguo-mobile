@@ -146,6 +146,39 @@ List<String> _ids(WidgetTester tester) => tester
     .toList();
 
 void main() {
+  testWidgets(
+    'online input waits for submission and distinguishes failure from no results',
+    (tester) async {
+      final (:provider, store: _) = await _mount(tester);
+      await tester.enterText(find.byType(TextField), '没有本地匹配的故事');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(provider.searches, isEmpty);
+      expect(find.text('搜索当前站源'), findsOneWidget);
+      expect(find.text('暂时没有找到'), findsNothing);
+      provider.suggestions.single.result.completeError(
+        StateError('suggestion unavailable'),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('搜索当前站源'), findsOneWidget);
+      await tester.tap(find.byTooltip('联网搜索'));
+      await tester.pump();
+      expect(find.text('正在搜索…'), findsOneWidget);
+      expect(find.text('暂时没有找到'), findsNothing);
+      provider.searches.single.result.completeError(
+        StateError('search unavailable'),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('搜索未完成'), findsOneWidget);
+      expect(find.text('暂时没有找到'), findsNothing);
+      await tester.tap(find.text('重试搜索'));
+      await tester.pump();
+      await _finish(tester, provider.searches.last, []);
+      expect(find.text('暂时没有找到'), findsOneWidget);
+      expect(find.text('搜索未完成'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('expired continuation preserves results and restarts on retry', (
     tester,
   ) async {
@@ -780,7 +813,7 @@ void main() {
   );
 
   testWidgets(
-    'external source changes clear search and reject late responses',
+    'external source changes retain the keyword and reject late responses',
     (tester) async {
       final (:provider, :store) = await _mount(tester);
       await _submit(tester);
@@ -797,7 +830,7 @@ void main() {
       );
       expect(
         tester.widget<TextField>(find.byType(TextField)).controller!.text,
-        isEmpty,
+        '故事',
       );
       expect(
         provider.cancellations,
@@ -812,6 +845,16 @@ void main() {
           ),
         ),
       );
+      expect(provider.searches, hasLength(1));
+      expect(find.text('搜索当前站源'), findsOneWidget);
+      await tester.tap(find.byTooltip('联网搜索'));
+      await tester.pump();
+      expect(provider.searches.last.args['source'], 'huangguo');
+      expect(provider.searches.last.args['query'], '故事');
+      await _finish(tester, provider.searches.last, [
+        _drama('new-result', source: DramaSource.huangguo),
+      ]);
+      expect(_ids(tester), ['new-result']);
       expect(tester.takeException(), isNull);
     },
   );

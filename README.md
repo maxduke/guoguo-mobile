@@ -6,7 +6,7 @@
 
 ## 界面预览
 
-以下为当前导航的布局示例（2026-10-09），使用示例内容，不是站源实测截图。
+以下为当前导航的布局示例（2026-10-26），使用示例内容，不是站源实测截图。
 
 <img src="screenshots/phone-light.png" width="260" alt="手机浅色界面" /> <img src="screenshots/tablet-dark.png" width="560" alt="平板深色界面" />
 

@@ -274,7 +274,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                     SwitchListTile(
                       title: const Text('使用移动数据预缓冲'),
-                      subtitle: const Text('默认只在 Wi-Fi 下预缓冲'),
+                      subtitle: const Text('默认在 Wi-Fi 或有线网络下预缓冲'),
                       value: store.preferences.cellularPrefetch,
                       onChanged: (v) => perform(
                         context,

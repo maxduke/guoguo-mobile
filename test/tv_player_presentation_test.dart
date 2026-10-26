@@ -19,9 +19,11 @@ import 'widget_test.dart' show NoNetwork;
 Future<NativeCastPlayer> _mount(
   WidgetTester tester, {
   int initialIndex = 0,
+  Size size = const Size(1280, 720),
+  double textScale = 1,
 }) async {
   tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-  tester.view.physicalSize = const Size(1280, 720);
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
@@ -41,13 +43,18 @@ Future<NativeCastPlayer> _mount(
   await tester.pumpWidget(
     MaterialApp(
       theme: guoguoTheme(Brightness.dark, television: true),
-      builder: (context, page) => TelevisionScope(
-        enabled: true,
-        child: Shortcuts(
-          shortcuts: const {
-            SingleActivator(LogicalKeyboardKey.select): ActivateIntent(),
-          },
-          child: page!,
+      builder: (context, page) => MediaQuery(
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: TextScaler.linear(textScale)),
+        child: TelevisionScope(
+          enabled: true,
+          child: Shortcuts(
+            shortcuts: const {
+              SingleActivator(LogicalKeyboardKey.select): ActivateIntent(),
+            },
+            child: page!,
+          ),
         ),
       ),
       home: Builder(
@@ -103,6 +110,38 @@ Future<void> _key(WidgetTester tester, LogicalKeyboardKey key) async {
 }
 
 void main() {
+  for (final scale in [1.0, 1.8]) {
+    testWidgets(
+      'narrow TV player preserves visual directions and video at scale $scale',
+      (tester) async {
+        final native = await _mount(
+          tester,
+          size: const Size(720, 480),
+          textScale: scale,
+        );
+        final surface = tester.state(find.byType(BetterPlayer));
+        await _key(tester, LogicalKeyboardKey.arrowRight);
+        await _key(tester, LogicalKeyboardKey.arrowRight);
+        expect(_focused(tester, '1.0x'), true);
+        expect(
+          tester.getCenter(find.text('选集')).dy,
+          greaterThan(tester.getCenter(find.text('1.0x')).dy + 30),
+        );
+        await _key(tester, LogicalKeyboardKey.arrowRight);
+        expect(_focused(tester, '1.0x'), true);
+        await _key(tester, LogicalKeyboardKey.arrowDown);
+        expect(_focused(tester, '选集'), true);
+        await _key(tester, LogicalKeyboardKey.select);
+        expect(find.byType(PlayerEpisodeSheet), findsOneWidget);
+        await _key(tester, LogicalKeyboardKey.goBack);
+        expect(find.byType(PlayerEpisodeSheet), findsNothing);
+        expect(tester.state(find.byType(BetterPlayer)), same(surface));
+        expect(native.sources, hasLength(1));
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets(
     'TV exposes a device snapshot without replacing the video surface',
     (tester) async {

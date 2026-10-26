@@ -1,0 +1,109 @@
+{
+  "date": "2026-10-26",
+  "baseline_commit": "69053bbab4c07c480c27025f3e32710e1b1254ef",
+  "app_version": "0.20.3+57",
+  "flutter_version": "3.47.4",
+  "environment": "Linux Flutter host widget tests with synthetic content",
+  "physical_device_validation": false,
+  "implementation_changed": false,
+  "existing_layout_interaction_tests": {
+    "passed": 46,
+    "failed": 0,
+    "skipped": 0,
+    "files": [
+      "test/adaptive_layout_test.dart",
+      "test/adaptive_preview_test.dart",
+      "test/detail_episode_ux_test.dart",
+      "test/detail_preview_test.dart",
+      "test/continue_and_range_test.dart",
+      "test/player_accessibility_test.dart",
+      "test/search_preview_test.dart",
+      "test/downloads_preview_test.dart"
+    ]
+  },
+  "existing_television_network_tests": {
+    "passed": 28,
+    "failed": 0,
+    "skipped": 0,
+    "files": [
+      "test/television_focus_paths_test.dart",
+      "test/television_navigation_test.dart",
+      "test/tv_player_presentation_test.dart",
+      "test/network_policy_test.dart"
+    ]
+  },
+  "audit_behavior_probes": {
+    "passed": 7,
+    "failed": 0,
+    "skipped": 0,
+    "meaning": "Assertions confirm current behavior and comparison layouts, not remediation",
+    "source_file": "/tmp/guoguo_uiux_probe_test.dart",
+    "log_file": "/tmp/guoguo-uiux-review-2026-10-26-probes.log"
+  },
+  "observations": {
+    "online_search_input": {
+      "submitted": false,
+      "cached_matches": 0,
+      "visible_labels": ["本地匹配", "暂时没有找到"]
+    },
+    "search_source_change": {
+      "from": "hongguo",
+      "to": "huangguo",
+      "keyword_present_before": true,
+      "keyword_empty_after": true
+    },
+    "phone_locate_current": {
+      "logical_window": [390, 700],
+      "episode_count": 70,
+      "current_episode_number": 29,
+      "current_episode_hit_testable_after_locate": false,
+      "current_episode_hit_testable_after_manual_scroll": true,
+      "episode_label_rect_after_manual_scroll": [51.9, 336.0, 68.1, 356.0]
+    },
+    "television_transport": {
+      "horizontal_parent_padding_each_side": 36,
+      "component": "PlayerTransport in TelevisionScope with the playback page horizontal padding",
+      "samples": [
+        {
+          "logical_window": [640, 360],
+          "text_scale": 1.0,
+          "wraps": true,
+          "speed_label_center": [528.85, 252.0],
+          "episodes_label_center": [123.1, 328.0],
+          "arrow_right_from_speed_focuses_episodes": true
+        },
+        {
+          "logical_window": [720, 480],
+          "text_scale": 1.0,
+          "wraps": true,
+          "speed_label_center": [568.85, 372.0],
+          "episodes_label_center": [163.1, 448.0],
+          "arrow_right_from_speed_focuses_episodes": true
+        },
+        {
+          "logical_window": [720, 480],
+          "text_scale": 1.8,
+          "wraps": true,
+          "speed_label_center": [591.85, 372.0],
+          "episodes_label_center": [140.2, 448.0],
+          "arrow_right_from_speed_focuses_episodes": true
+        },
+        {
+          "logical_window": [960, 540],
+          "text_scale": 1.8,
+          "wraps": false,
+          "speed_label_center": [643.85, 508.0],
+          "episodes_label_center": [767.8, 508.0],
+          "arrow_right_from_speed_focuses_episodes": true
+        }
+      ]
+    },
+    "ethernet_prefetch_policy": {
+      "evidence": "lib/platform/network_policy.dart and test/network_policy_test.dart",
+      "default_cellular_preference": false,
+      "ethernet_allowed_with_default": false,
+      "ethernet_allowed_with_cellular_preference_enabled": true,
+      "system_background_download_behavior_tested": false
+    }
+  }
+}

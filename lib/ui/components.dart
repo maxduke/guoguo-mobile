@@ -94,7 +94,27 @@ class Poster extends StatelessWidget {
   }
 }
 
-class DramaCard extends StatelessWidget {
+({int columns, double extent}) dramaGridLayout(
+  BuildContext context,
+  double width, {
+  int maxColumns = 7,
+}) {
+  final scaler = MediaQuery.textScalerOf(context);
+  final scale = scaler.scale(16) / 16;
+  final columns = (width / (165 * scale.clamp(1, 3))).floor().clamp(
+    scale >= 1.4 ? 1 : 2,
+    maxColumns,
+  );
+  final cardWidth = (width - (columns - 1) * 14) / columns;
+  final theme = Theme.of(context).textTheme;
+  final textHeight =
+      scaler.scale(theme.titleMedium!.fontSize!) * 1.4 * 2 +
+      scaler.scale(theme.bodySmall!.fontSize!) * 1.4 +
+      11;
+  return (columns: columns, extent: cardWidth / .75 + textHeight);
+}
+
+class DramaCard extends StatefulWidget {
   const DramaCard({
     super.key,
     required this.drama,
@@ -106,125 +126,208 @@ class DramaCard extends StatelessWidget {
   final VoidCallback onTap, onFavorite;
   final bool favorite;
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Expanded(
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            TelevisionFocusOutline(
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: onTap,
-                  borderRadius: BorderRadius.circular(16),
-                  child: Semantics(
-                    label: '${drama.title}，打开详情',
-                    button: true,
-                    excludeSemantics: true,
-                    child: Poster(drama),
+  State<DramaCard> createState() => _DramaCardState();
+}
+
+class _DramaCardState extends State<DramaCard> {
+  bool _focused = false;
+  Drama get drama => widget.drama;
+  bool get favorite => widget.favorite;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final titleStyle = theme.textTheme.titleMedium!.copyWith(height: 1.4);
+    final subtitleStyle = theme.textTheme.bodySmall!.copyWith(
+      height: 1.4,
+      color: theme.colorScheme.onSurfaceVariant,
+    );
+    final television = TelevisionScope.of(context);
+    return Focus(
+      includeSemantics: false,
+      canRequestFocus: false,
+      skipTraversal: true,
+      onFocusChange: television
+          ? (focused) {
+              if (_focused != focused) setState(() => _focused = focused);
+            }
+          : null,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                TelevisionFocusOutline(
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: widget.onTap,
+                      borderRadius: BorderRadius.circular(16),
+                      child: Semantics(
+                        label: '${drama.title}，打开详情',
+                        button: true,
+                        excludeSemantics: true,
+                        child: Poster(drama),
+                      ),
+                    ),
                   ),
                 ),
-              ),
+                if (!TelevisionScope.of(context) || favorite)
+                  Positioned(
+                    top: 5,
+                    right: 5,
+                    child: TelevisionScope.of(context)
+                        ? Padding(
+                            padding: const EdgeInsets.all(10),
+                            child: Icon(
+                              favorite
+                                  ? Icons.bookmark_rounded
+                                  : Icons.bookmark_border_rounded,
+                              semanticLabel: favorite ? '已收藏' : null,
+                              color: Colors.white,
+                              shadows: const [Shadow(blurRadius: 6)],
+                              size: 24,
+                            ),
+                          )
+                        : IconButton.filledTonal(
+                            tooltip:
+                                '${favorite ? '取消收藏' : '收藏'} ${drama.title}',
+                            onPressed: widget.onFavorite,
+                            style: IconButton.styleFrom(
+                              backgroundColor: Colors.black.withValues(
+                                alpha: .25,
+                              ),
+                              foregroundColor: Colors.white,
+                            ),
+                            icon: Icon(
+                              favorite
+                                  ? Icons.bookmark_rounded
+                                  : Icons.bookmark_border_rounded,
+                              size: 20,
+                            ),
+                          ),
+                  ),
+                if (drama.vip == true)
+                  Positioned(
+                    top: 10,
+                    left: 10,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFDBC399),
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 3,
+                        ),
+                        child: Text(
+                          'VIP',
+                          style: TextStyle(
+                            color: Color(0xFF3A2B16),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (drama.episodes > 0 && !(television && _focused))
+                  Positioned(
+                    bottom: 9,
+                    left: 10,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 3,
+                        ),
+                        child: Text(
+                          '${drama.episodes} 集',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (television && _focused)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: ExcludeSemantics(
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.black87,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    drama.title,
+                                    maxLines: 6,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: titleStyle.copyWith(
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  '${drama.source.label}${drama.episodes > 0 ? ' · ${drama.episodes} 集' : ''}',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: subtitleStyle.copyWith(
+                                    color: Colors.white70,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
-            if (!TelevisionScope.of(context) || favorite)
-              Positioned(
-                top: 5,
-                right: 5,
-                child: TelevisionScope.of(context)
-                    ? Padding(
-                        padding: const EdgeInsets.all(10),
-                        child: Icon(
-                          favorite
-                              ? Icons.bookmark_rounded
-                              : Icons.bookmark_border_rounded,
-                          semanticLabel: favorite ? '已收藏' : null,
-                          color: Colors.white,
-                          shadows: const [Shadow(blurRadius: 6)],
-                          size: 24,
-                        ),
-                      )
-                    : IconButton.filledTonal(
-                        tooltip: '${favorite ? '取消收藏' : '收藏'} ${drama.title}',
-                        onPressed: onFavorite,
-                        style: IconButton.styleFrom(
-                          backgroundColor: Colors.black.withValues(alpha: .25),
-                          foregroundColor: Colors.white,
-                        ),
-                        icon: Icon(
-                          favorite
-                              ? Icons.bookmark_rounded
-                              : Icons.bookmark_border_rounded,
-                          size: 20,
-                        ),
-                      ),
-              ),
-            if (drama.vip == true)
-              Positioned(
-                top: 10,
-                left: 10,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFDBC399),
-                    borderRadius: BorderRadius.circular(5),
-                  ),
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                    child: Text(
-                      'VIP',
-                      style: TextStyle(
-                        color: Color(0xFF3A2B16),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            if (drama.episodes > 0)
-              Positioned(
-                bottom: 9,
-                left: 10,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 3,
-                    ),
-                    child: Text(
-                      '${drama.episodes} 集',
-                      style: const TextStyle(color: Colors.white, fontSize: 11),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 9),
+          SizedBox(
+            height:
+                MediaQuery.textScalerOf(context).scale(titleStyle.fontSize!) *
+                1.4 *
+                2,
+            child: Text(
+              drama.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: titleStyle,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            drama.category.isEmpty ? drama.source.label : drama.category,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: subtitleStyle,
+          ),
+        ],
       ),
-      const SizedBox(height: 9),
-      Text(
-        drama.title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: Theme.of(context).textTheme.titleMedium,
-      ),
-      const SizedBox(height: 2),
-      Text(
-        drama.category.isEmpty ? drama.source.label : drama.category,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontSize: 12,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
-      ),
-    ],
-  );
+    );
+  }
 }
 
 class EmptyState extends StatelessWidget {

@@ -41,6 +41,60 @@ class FakeDownloads extends DownloadStore {
 }
 
 void main() {
+  for (final index in [0, 28, 58]) {
+    testWidgets('phone locate reveals current episode $index without playing', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
+        ..offline = true;
+      final rows = episodes();
+      store.catalog.episodeCache[drama.key] = rows;
+      final record = WatchRecord(
+        drama: drama,
+        episodeId: rows[index].id,
+        episodeIndex: index,
+        positionMs: 3000,
+        durationMs: 60000,
+        updatedAt: DateTime.utc(2026, 10, 26),
+      );
+      await store.records.saveWatch(record);
+      final downloads = FakeDownloads(store);
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox());
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DetailPage(store: store, downloads: downloads, drama: drama),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byType(DropdownButton<int>));
+      await tester.tap(find.byType(DropdownButton<int>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(index >= 30 ? '2–60 集' : '62–120 集').last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('定位当前'));
+      await tester.tap(find.text('定位当前'));
+      await tester.pumpAndSettle();
+      final cell = find.widgetWithText(OutlinedButton, '${rows[index].number}');
+      expect(cell.hitTestable(), findsOneWidget);
+      final primary = find.byKey(const ValueKey('detail-primary-play'));
+      expect(
+        tester.getBottomLeft(cell).dy,
+        lessThan(tester.getTopLeft(primary).dy),
+      );
+      expect(store.records.history[drama.key], same(record));
+      expect(find.byType(DetailPage), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   Future<AppStore> mountMetadata(WidgetTester tester) async {
     tester.view.physicalSize = const Size(390, 700);
     tester.view.devicePixelRatio = 1;
@@ -67,6 +121,55 @@ void main() {
     await tester.pumpAndSettle();
     return store;
   }
+
+  testWidgets(
+    'small large-text detail exposes episodes and keeps metadata expandable',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
+        ..offline = true;
+      store.catalog.episodeCache[_metadataDrama.key] = episodes();
+      final downloads = FakeDownloads(store);
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox());
+        downloads.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(1.6)),
+            child: child!,
+          ),
+          home: DetailPage(
+            store: store,
+            downloads: downloads,
+            drama: _metadataDrama,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.widgetWithText(OutlinedButton, '2').hitTestable(),
+        findsOneWidget,
+      );
+      expect(find.text(_metadataDrama.description), findsNothing);
+      await tester.tap(find.text('展开资料'));
+      await tester.pumpAndSettle();
+      expect(find.text(_metadataDrama.description), findsOneWidget);
+      expect(find.text(_metadataDrama.tags.join(' · ')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('detail-primary-play')).hitTestable(),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'episodes precede related series and remain visible below compact metadata',

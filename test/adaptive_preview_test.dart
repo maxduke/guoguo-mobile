@@ -15,6 +15,7 @@ import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/ui/home_page.dart';
 import 'package:guoguo_mobile/ui/theme.dart';
 import 'package:guoguo_mobile/ui/television_scope.dart';
+import 'package:guoguo_mobile/ui/components.dart';
 
 import 'widget_test.dart' show NoNetwork;
 
@@ -65,8 +66,11 @@ void main() {
       for (final brightness in Brightness.values) {
         tester.view.physicalSize = sample.$2;
         tester.view.devicePixelRatio = 1;
-        final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
-          ..offline = true;
+        final store = AppStore(
+          storage: MemoryStorage(),
+          provider: NoNetwork(),
+          now: () => DateTime(2026, 10, 26, 12),
+        )..offline = true;
         final dramas = List.generate(
           6,
           (i) => Drama(
@@ -108,12 +112,12 @@ void main() {
                 brightness,
                 television: sample.$1 == 'television',
               ),
-              builder: (context, child) => TelevisionScope(
-                enabled: sample.$1 == 'television',
-                child: MediaQuery(
-                  data: MediaQuery.of(
-                    context,
-                  ).copyWith(textScaler: TextScaler.linear(sample.$3)),
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: TextScaler.linear(sample.$3)),
+                child: TelevisionScope(
+                  enabled: sample.$1 == 'television',
                   child: child!,
                 ),
               ),
@@ -128,16 +132,36 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
-        await tester.runAsync(() async {
-          final boundary =
-              key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-          final image = await boundary.toImage();
-          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-          await File(
-            'build/adaptive-previews/${sample.$1}-${brightness.name}.png',
-          ).writeAsBytes(bytes!.buffer.asUint8List());
-          image.dispose();
-        });
+        Future<void> capture(String name) async {
+          await tester.runAsync(() async {
+            final boundary =
+                key.currentContext!.findRenderObject()!
+                    as RenderRepaintBoundary;
+            final image = await boundary.toImage();
+            final bytes = await image.toByteData(
+              format: ui.ImageByteFormat.png,
+            );
+            await File(
+              'build/adaptive-previews/$name-${brightness.name}.png',
+            ).writeAsBytes(bytes!.buffer.asUint8List());
+            image.dispose();
+          });
+        }
+
+        await capture(sample.$1);
+        if (sample.$1 == 'television') {
+          final action = find.descendant(
+            of: find.byType(DramaCard).first,
+            matching: find.byWidgetPredicate(
+              (w) => w is Semantics && w.properties.button == true,
+            ),
+          );
+          Focus.of(tester.element(action)).requestFocus();
+          await tester.pumpAndSettle();
+          expect(find.text('红果 · 80 集'), findsOneWidget);
+          expect(tester.takeException(), isNull);
+          await capture('television-focused');
+        }
         await tester.pumpWidget(const SizedBox());
         if (startup != null) {
           startup.dispose();
@@ -147,6 +171,18 @@ void main() {
         }
       }
     }
+    // Image decoding can complete after a preview is unmounted. Join it before
+    // advancing CacheStore's scheduled database cleanup and closing the cache.
+    final closing = Stopwatch()..start();
+    while (tester.binding.imageCache.pendingImageCount > 0 &&
+        closing.elapsed < const Duration(seconds: 10)) {
+      await tester.pump();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 1)),
+      );
+    }
+    expect(tester.binding.imageCache.pendingImageCount, 0);
+    await tester.pump(coverCache.store.cleanupRunMinInterval);
     await tester.runAsync(() async {
       await coverCache.dispose();
       await temporary!.delete(recursive: true);

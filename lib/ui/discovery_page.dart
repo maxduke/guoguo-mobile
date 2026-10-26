@@ -13,6 +13,7 @@ import 'discovery_cache_status.dart';
 import 'source_selector.dart';
 import 'television_grid.dart';
 import 'television_scope.dart';
+import 'record_actions.dart';
 
 /// A finite preview; directory and full-feed pagination belong to their pages.
 class DiscoveryPage extends StatefulWidget {
@@ -221,6 +222,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     listenable: widget.store.catalog,
     builder: (context, _) {
       final store = widget.store;
+      final compact =
+          !TelevisionScope.of(context) &&
+          MediaQuery.sizeOf(context).width < 600 &&
+          MediaQuery.textScalerOf(context).scale(14) >= 21;
       final rows = {
         for (final row in _rows)
           if (widget.source != DramaSource.huangdou ||
@@ -266,22 +271,29 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                             }
                           },
                         ),
-                        TextButton.icon(
-                          onPressed: widget.onLibrary,
-                          icon: const Icon(Icons.grid_view_outlined),
-                          label: const Text('完整剧库'),
-                        ),
+                        if (compact)
+                          IconButton(
+                            tooltip: '完整剧库',
+                            onPressed: widget.onLibrary,
+                            icon: const Icon(Icons.grid_view_outlined),
+                          )
+                        else
+                          TextButton.icon(
+                            onPressed: widget.onLibrary,
+                            icon: const Icon(Icons.grid_view_outlined),
+                            label: const Text('完整剧库'),
+                          ),
                       ],
                     ),
-                    const SizedBox(height: 12),
+                    SizedBox(height: compact ? 8 : 12),
                     if (TelevisionScope.of(context))
                       Align(alignment: Alignment.centerLeft, child: search)
                     else
                       search,
                     if (widget.continuation != null) widget.continuation!,
-                    const SizedBox(height: 18),
+                    SizedBox(height: compact ? 8 : 18),
                     Wrap(
-                      spacing: 12,
+                      spacing: compact ? 8 : 12,
                       runSpacing: 4,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
@@ -289,7 +301,9 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                           header: true,
                           child: Text(
                             title,
-                            style: Theme.of(context).textTheme.titleLarge,
+                            style: compact
+                                ? Theme.of(context).textTheme.titleMedium
+                                : Theme.of(context).textTheme.titleLarge,
                           ),
                         ),
                         Focus(
@@ -307,15 +321,24 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                             }
                             return KeyEventResult.ignored;
                           },
-                          child: TextButton(
-                            focusNode: _moreFocus,
-                            onPressed: widget.onMore,
-                            child: Text(
-                              widget.source == DramaSource.hongguo
-                                  ? '更多推荐'
-                                  : '查看全部栏目',
-                            ),
-                          ),
+                          child: compact
+                              ? IconButton(
+                                  focusNode: _moreFocus,
+                                  onPressed: widget.onMore,
+                                  tooltip: widget.source == DramaSource.hongguo
+                                      ? '更多推荐'
+                                      : '查看全部栏目',
+                                  icon: const Icon(Icons.chevron_right),
+                                )
+                              : TextButton(
+                                  focusNode: _moreFocus,
+                                  onPressed: widget.onMore,
+                                  child: Text(
+                                    widget.source == DramaSource.hongguo
+                                        ? '更多推荐'
+                                        : '查看全部栏目',
+                                  ),
+                                ),
                         ),
                         IconButton(
                           tooltip: '更新首页栏目',
@@ -326,12 +349,13 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                         ),
                       ],
                     ),
-                    Text(
-                      _description.isNotEmpty
-                          ? _description
-                          : '查看当前站源内容，或进入完整剧库浏览',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+                    if (!compact)
+                      Text(
+                        _description.isNotEmpty
+                            ? _description
+                            : '查看当前站源内容，或进入完整剧库浏览',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                   ],
                 ),
               ),
@@ -341,6 +365,8 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                 child: DiscoveryCacheStatus(
                   savedAt: _savedAt!,
                   cached: _cached,
+                  compact: compact,
+                  description: _description,
                 ),
               ),
             if (_loading)
@@ -382,18 +408,17 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
               padding: const EdgeInsets.fromLTRB(22, 12, 22, 24),
               sliver: SliverLayoutBuilder(
                 builder: (context, constraints) {
-                  final columns = (constraints.crossAxisExtent / 165)
-                      .floor()
-                      .clamp(2, 6);
+                  final layout = dramaGridLayout(
+                    context,
+                    constraints.crossAxisExtent,
+                    maxColumns: 6,
+                  );
                   return TelevisionGrid(
                     key: _grid,
                     above: _moreFocus,
                     itemKeys: [for (final row in rows) row.drama.key],
-                    columns: columns,
-                    mainAxisExtent:
-                        (constraints.crossAxisExtent - (columns - 1) * 14) /
-                        columns /
-                        .61,
+                    columns: layout.columns,
+                    mainAxisExtent: layout.extent,
                     itemBuilder: (context, index) => ListenableBuilder(
                       listenable: Listenable.merge([
                         store.catalog,
@@ -410,9 +435,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                               favorite: store.records.favorites.containsKey(
                                 drama.key,
                               ),
-                              onFavorite: () => perform(
+                              onFavorite: () => toggleFavoriteWithUndo(
                                 context,
-                                () => store.records.toggleFavorite(drama),
+                                store.records,
+                                drama,
                               ),
                             ),
                             if (_kind == DiscoveryKind.ranking && row.rank > 0)
