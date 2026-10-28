@@ -59,6 +59,7 @@ type hongguoAppClient struct {
 	state          hongguoCatalogState
 	player         hongguoPlayerIdentity
 	playerPending  *hongguoPlayerDeviceCall
+	upcomingModels map[string]hongguoUpcomingModel
 	details        map[string]hongguoDetailEntry
 	pending        map[string]*hongguoDetailCall
 	searches       map[string]hongguoSearchEntry
@@ -146,11 +147,19 @@ func hongguoCatalogHasMore(state *hongguoCatalogState) bool {
 }
 
 func (downloader *Downloader) hongguoAppRequest(ctx context.Context, method, path string, extra url.Values, payload any) (map[string]any, error) {
-	return downloader.hongguoRequest(ctx, hongguoSignedAppRequest, method, path, extra, payload)
+	return downloader.hongguoRequest(ctx, hongguoSignedAppRequest, method, path, extra, payload, 0)
 }
 
 func (downloader *Downloader) hongguoPlayerRequest(ctx context.Context, path string, payload any) (map[string]any, error) {
-	return downloader.hongguoRequest(ctx, hongguoUnsignedPlayerRequest, http.MethodPost, path, nil, payload)
+	return downloader.hongguoPlayerRequestWithAttempts(ctx, path, payload, 0)
+}
+
+func (downloader *Downloader) hongguoPlayerRequestWithAttempts(ctx context.Context, path string, payload any, limit int) (map[string]any, error) {
+	return downloader.hongguoRequest(ctx, hongguoUnsignedPlayerRequest, http.MethodPost, path, nil, payload, limit)
+}
+
+func (downloader *Downloader) hongguoRequestAttempts() int {
+	return max(1, min(downloader.cfg.Retries, 3))
 }
 
 func hongguoAppDeviceQuery() url.Values {
@@ -163,7 +172,7 @@ func hongguoAppDeviceQuery() url.Values {
 	}
 }
 
-func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRequestMode, method, path string, extra url.Values, payload any) (map[string]any, error) {
+func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRequestMode, method, path string, extra url.Values, payload any, limit int) (map[string]any, error) {
 	client := downloader.hongguoClient()
 	client.mu.Lock()
 	base, deviceID, installID := client.baseURL, client.state.DeviceID, client.state.InstallID
@@ -196,12 +205,9 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRe
 			return nil, err
 		}
 	}
-	attempts := downloader.cfg.Retries
-	if attempts < 1 {
-		attempts = 1
-	}
-	if attempts > 3 {
-		attempts = 3
+	attempts := downloader.hongguoRequestAttempts()
+	if limit > 0 && limit < attempts {
+		attempts = limit
 	}
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {

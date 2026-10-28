@@ -203,7 +203,7 @@ func (d *Downloader) resolveHongguoMedia(ctx context.Context, task Task) (provid
 	if !hongguoNumericID.MatchString(videoID) || !hongguoNumericID.MatchString(seriesID) {
 		return providerMedia{}, fmt.Errorf("红果章节 ID 无效，请重新获取章节")
 	}
-	media, nativeErr := d.resolveHongguoAppMedia(ctx, videoID)
+	media, nativeErr := d.resolveHongguoAppMedia(ctx, videoID, d.hongguoUpcomingVideoIDs(ctx, seriesID, videoID)...)
 	if nativeErr == nil {
 		return media, nil
 	}

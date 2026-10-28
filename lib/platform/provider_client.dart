@@ -379,11 +379,13 @@ extension ProviderOperations on ProviderClient {
     Drama drama,
     Episode episode, {
     int quality = 0,
+    int metadataAhead = 0,
   }) async => ResolvedMedia.fromJson(
     await call('resolve', {
       'id': drama.id,
       'chapter': episode.raw,
       'quality': quality,
+      if (metadataAhead > 0) 'metadataAhead': metadataAhead,
     }),
   );
   Future<ResolvedMedia> fallback(ResolvedMedia media) async =>

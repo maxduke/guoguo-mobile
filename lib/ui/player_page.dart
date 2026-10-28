@@ -165,6 +165,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   double _speed = 1;
   PlaybackFailure? _error;
   String _loadingPhase = '正在查找本地视频…';
+  String? _recoveryCause;
+  String get _loadingMessage => _recoveryCause == null
+      ? _loadingPhase
+      : '${_recoveryCause!}\n$_loadingPhase';
   PlaybackAttempt? _attempt;
 
   @override
@@ -483,6 +487,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       _active = null;
       _loading = true;
       _loadingPhase = '正在准备这一集…';
+      _recoveryCause = null;
       _error = null;
       _controls = _accessibleNavigation;
     });
@@ -596,6 +601,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       setState(() {
         _loading = false;
         _error = null;
+        _recoveryCause = null;
       });
       if (_television) _showControls(focusPlay: true);
       if (_airplay?.blocksLocal == true) {
@@ -652,7 +658,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     Duration? savedPosition,
   }) async {
     if (_localBlocked || !automatic && (_loading || _recovering)) return;
-    if (!automatic) _recovery.reset();
+    if (!automatic) {
+      _recovery.reset();
+      _recoveryCause = null;
+    }
     _health.reset();
     _finishAttempt(PlaybackResult.cancelled);
     if (savedPosition == null) _save();
@@ -722,9 +731,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       await _ensureCompatible(play: _playIntent);
       return;
     }
-    final exhausted = _error?.kind == PlaybackFailureKind.network
-        ? _error!
-        : const PlaybackFailure('自动恢复未成功，请重试或切换分集');
+    final exhausted = _error ?? const PlaybackFailure('自动恢复未成功，请重试或切换分集');
+    _recoveryCause = _error?.message ?? _recoveryCause;
     await _recovery.recover(
       _index,
       pause: () async {
@@ -1802,7 +1810,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                   const CircularProgressIndicator(color: Colors.white),
                   const SizedBox(height: 16),
                   Text(
-                    _loadingPhase,
+                    _loadingMessage,
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: Colors.white70),
                   ),

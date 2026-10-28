@@ -80,6 +80,7 @@ type mobileRequest struct {
 	Page           int                        `json:"page"`
 	Refresh        bool                       `json:"refresh"`
 	Quality        int                        `json:"quality"`
+	MetadataAhead  int                        `json:"metadataAhead"`
 	Chapter        Chapter                    `json:"chapter"`
 }
 
@@ -345,6 +346,12 @@ func (c *MobileClient) Call(raw string) (result string, callErr error) {
 		}
 		value = map[string]any{"boardId": result.BoardID, "page": result.Page, "items": rows, "hasMore": result.HasMore, "warning": result.Warning, "kind": result.Kind, "description": result.Description, "fetchedAt": result.FetchedAt, "stale": result.Stale}
 	case "resolve":
+		if request.MetadataAhead < 0 || request.MetadataAhead > hongguoModelLookahead {
+			return "", errors.New("播放预取范围无效")
+		}
+		if request.MetadataAhead > 0 {
+			ctx = context.WithValue(ctx, hongguoMetadataAheadKey{}, request.MetadataAhead)
+		}
 		if request.Chapter.ID == "" {
 			return "", errors.New("缺少分集 ID")
 		}

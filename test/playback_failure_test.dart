@@ -9,6 +9,18 @@ import 'package:guoguo_mobile/platform/playback_failure.dart';
 import 'package:guoguo_mobile/platform/provider_client.dart';
 
 void main() {
+  test('Hongguo failures retain safe guidance without upstream details', () {
+    for (final (raw, message) in [
+      ('红果 App 取流失败：红果播放设备注册失败，请稍后重试；private-secret', '红果播放连接暂未就绪，请稍后重试'),
+      ('红果 App 接口未返回有效数据 https://private.test/?key=secret', '红果暂未返回播放资源，请稍后重试'),
+      ('红果 App 未返回兼容的媒体，已跳过不支持的编码 private-secret', '红果暂未提供可播放资源，请重试或切换分集'),
+    ]) {
+      final failure = PlaybackFailure.from(ProviderException(raw));
+      expect(failure.message, message);
+      expect(failure.autoRecover, true);
+      expect(failure.message, isNot(contains('secret')));
+    }
+  });
   test(
     'unavailable files, cancellation and AirPlay require explicit action',
     () {

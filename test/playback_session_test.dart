@@ -14,6 +14,7 @@ class _Provider implements ProviderClient {
   bool encrypted = true;
   int expiresAt = 0;
   final qualities = <int>[];
+  final metadataAhead = <int>[];
   final releases = <String>[], cancelled = <String>[];
   final plans = <String, Map<String, dynamic>>{};
   Completer<Map<String, dynamic>>? resolveGate, warmGate;
@@ -41,6 +42,7 @@ class _Provider implements ProviderClient {
       case 'resolve':
         resolves++;
         qualities.add(args['quality'] as int);
+        metadataAhead.add(args['metadataAhead'] as int? ?? 0);
         final result = plan('session-$resolves');
         plans[result['session'] as String] = result;
         return resolveGate == null ? result : await resolveGate!.future;
@@ -106,11 +108,12 @@ class _Fixture {
   DateTime now = DateTime.utc(2026, 10, 3);
   String? local;
   bool online = true, progressive = false;
+  DramaSource source = DramaSource.hongguo;
   bool? fullPrefetch;
   _Preparer Function()? jobFactory;
   late final session = PlaybackSessionController(
     provider: provider,
-    drama: const Drama(id: 'fixture', source: DramaSource.hongguo, title: '会话'),
+    drama: Drama(id: 'fixture', source: source, title: '会话'),
     episodes: [
       Episode.fromJson({'id': '1'}, 0),
       Episode.fromJson({'id': '2'}, 1),
@@ -136,6 +139,18 @@ class _Fixture {
 }
 
 void main() {
+  test(
+    'only Hongguo background preparation hints bounded model lookahead',
+    () async {
+      final f = _Fixture();
+      await f.session.prefetch(1);
+      await f.session.prepare(0, ticket: f.session.generation);
+      expect(f.provider.metadataAhead, [2, 0]);
+      final other = _Fixture()..source = DramaSource.huangdou;
+      await other.session.prefetch(1);
+      expect(other.provider.metadataAhead, [0]);
+    },
+  );
   test(
     'background CENC completes preparation before selection and reuses its file',
     () async {

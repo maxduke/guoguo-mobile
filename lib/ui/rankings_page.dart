@@ -7,6 +7,37 @@ import '../domain/models.dart';
 import 'components.dart';
 import 'discovery_cache_status.dart';
 
+class _RankingSnapshot {
+  const _RankingSnapshot({
+    required this.rows,
+    required this.updatedAt,
+    required this.kind,
+    required this.description,
+    required this.cachedOnly,
+    required this.hasMore,
+    required this.page,
+    this.warning,
+    this.error,
+    this.failedMore,
+  });
+
+  final List<DiscoveryRow> rows;
+  final DateTime? updatedAt;
+  final DiscoveryKind kind;
+  final String description;
+  final bool cachedOnly, hasMore;
+  final int page;
+  final String? warning, error;
+  final bool? failedMore;
+
+  bool freshAt(DateTime now) =>
+      !cachedOnly &&
+      error == null &&
+      updatedAt != null &&
+      !now.isBefore(updatedAt!) &&
+      now.difference(updatedAt!) < const Duration(minutes: 5);
+}
+
 class RankingsPage extends StatefulWidget {
   const RankingsPage({super.key, required this.store, required this.onOpen});
   final AppStore store;
@@ -27,6 +58,9 @@ class _RankingsPageState extends State<RankingsPage> {
   bool loading = false, hasMore = false;
   bool? failedMore;
   int page = 1, generation = 0;
+  // Four Hongguo boards fit without expanding the existing persistent cache.
+  final _columns = <String, _RankingSnapshot>{};
+  final _pending = <String, Object>{};
   @override
   void initState() {
     super.initState();
@@ -45,6 +79,8 @@ class _RankingsPageState extends State<RankingsPage> {
   }
 
   void _restoreBoards() {
+    _columns.clear();
+    _pending.clear();
     boards =
         widget.store.catalog.discoveryCache.boards(source)?.boards ?? const [];
     selected = boards.isEmpty ? null : boards.first.id;
@@ -52,6 +88,12 @@ class _RankingsPageState extends State<RankingsPage> {
   }
 
   void _restoreColumn() {
+    final session = _columns.remove(selected);
+    if (session != null) {
+      _columns[selected!] = session;
+      _applySnapshot(session);
+      return;
+    }
     final cached = selected == null
         ? null
         : widget.store.catalog.discoveryCache.ranking(source, selected!);
@@ -63,10 +105,50 @@ class _RankingsPageState extends State<RankingsPage> {
     warning = cached?.warning;
     page = 1;
     hasMore = false;
-    loading = false;
+    loading = _pending.containsKey(selected);
     error = null;
     failedMore = null;
     failedBoards = false;
+  }
+
+  _RankingSnapshot _snapshot() => _RankingSnapshot(
+    rows: rows,
+    updatedAt: updatedAt,
+    kind: kind,
+    description: description,
+    cachedOnly: cachedOnly,
+    hasMore: hasMore,
+    page: page,
+    warning: warning,
+    error: error,
+    failedMore: failedMore,
+  );
+
+  void _applySnapshot(_RankingSnapshot snapshot) {
+    rows = snapshot.rows;
+    updatedAt = snapshot.updatedAt;
+    kind = snapshot.kind;
+    description = snapshot.description;
+    cachedOnly = snapshot.cachedOnly;
+    hasMore = snapshot.hasMore;
+    page = snapshot.page;
+    warning = snapshot.warning;
+    error = snapshot.error;
+    failedMore = snapshot.failedMore;
+    failedBoards = false;
+    loading = _pending.containsKey(selected);
+  }
+
+  void _rememberColumn(String board, _RankingSnapshot snapshot) {
+    _columns.remove(board);
+    _columns[board] = snapshot;
+    while (_columns.length > 4) {
+      final victim = _columns.keys.firstWhere(
+        (key) => key != selected,
+        orElse: () => _columns.keys.first,
+      );
+      _columns.remove(victim);
+    }
   }
 
   Future<void> _loadBoards() async {
@@ -94,7 +176,7 @@ class _RankingsPageState extends State<RankingsPage> {
         final board = boards.any((board) => board.id == selected)
             ? selected!
             : boards.first.id;
-        _selectBoard(board, refresh: true);
+        _selectBoard(board, reselect: true);
       } else {
         setState(() {
           selected = null;
@@ -113,13 +195,14 @@ class _RankingsPageState extends State<RankingsPage> {
     }
   }
 
-  void _selectBoard(String board, {bool refresh = false}) {
-    if (!mounted || (!refresh && board == selected)) return;
+  void _selectBoard(String board, {bool reselect = false}) {
+    if (!mounted || (!reselect && board == selected)) return;
+    generation++;
     setState(() {
       selected = board;
       _restoreColumn();
     });
-    _load();
+    if (_columns[board]?.freshAt(widget.store.now()) != true) _load();
   }
 
   Future<void> _retry() => failedBoards || selected == null
@@ -130,15 +213,22 @@ class _RankingsPageState extends State<RankingsPage> {
     final board = selected;
     if (!mounted ||
         board == null ||
-        loading ||
+        _pending.containsKey(board) ||
         (more && (!hasMore || cachedOnly))) {
       return;
     }
-    final request = ++generation;
+    final request = Object();
+    _pending[board] = request;
     final requestStore = widget.store;
     final requestSource = source;
+    final before = _snapshot();
     final nextPage = more ? page + 1 : 1;
     final previous = more ? rows : const <DiscoveryRow>[];
+    bool current() =>
+        mounted &&
+        identical(requestStore, widget.store) &&
+        source == requestSource &&
+        identical(_pending[board], request);
     setState(() {
       loading = true;
       error = null;
@@ -152,16 +242,20 @@ class _RankingsPageState extends State<RankingsPage> {
         page: nextPage,
         refresh: refresh,
       );
-      if (!mounted || request != generation) return;
+      if (!current()) return;
       final nextRows = List<DiscoveryRow>.unmodifiable(
         {
           for (final row in [...previous, ...result.rows]) row.drama.key: row,
         }.values,
       );
-      final fetchedAt =
+      final responseAt =
           result.fetchedAt ??
-          (result.stale ? updatedAt : null) ??
+          (result.stale ? before.updatedAt : null) ??
           requestStore.now();
+      // A later page cannot make the older prefix look freshly retrieved.
+      final fetchedAt = more && before.updatedAt?.isBefore(responseAt) == true
+          ? before.updatedAt!
+          : responseAt;
       await requestStore.catalog.saveRankingColumn(
         requestSource,
         board,
@@ -173,35 +267,53 @@ class _RankingsPageState extends State<RankingsPage> {
           warning: result.warning,
         ),
       );
-      if (!mounted || request != generation) return;
-      setState(() {
-        rows = nextRows;
-        updatedAt = fetchedAt;
-        cachedOnly = result.stale;
-        hasMore = result.hasMore && !result.stale;
-        kind = result.kind;
-        description = result.description;
-        warning = result.warning?.isNotEmpty == true ? result.warning : null;
-        page = nextPage;
-      });
+      if (!current()) return;
+      final snapshot = _RankingSnapshot(
+        rows: nextRows,
+        updatedAt: fetchedAt,
+        cachedOnly: result.stale,
+        hasMore: result.hasMore && !result.stale,
+        kind: result.kind,
+        description: result.description,
+        warning: result.warning?.isNotEmpty == true ? result.warning : null,
+        page: nextPage,
+      );
+      _rememberColumn(board, snapshot);
+      if (selected == board) setState(() => _applySnapshot(snapshot));
     } catch (failure) {
-      if (mounted && request == generation) {
-        setState(() {
-          failedMore = more;
-          error = requestStore.offline
-              ? '当前离线，联网后可重试栏目'
-              : rows.isEmpty
-              ? '栏目暂时无法加载，请重试'
-              : more
-              ? '更多栏目内容暂时无法加载，已保留现有内容'
-              : '栏目刷新失败，已保留现有内容';
-          if (!requestStore.offline) {
-            error = providerFailureMessage(failure, error!);
-          }
-        });
+      if (current()) {
+        var message = requestStore.offline
+            ? '当前离线，联网后可重试栏目'
+            : before.rows.isEmpty
+            ? '栏目暂时无法加载，请重试'
+            : more
+            ? '更多栏目内容暂时无法加载，已保留现有内容'
+            : '栏目刷新失败，已保留现有内容';
+        if (!requestStore.offline) {
+          message = providerFailureMessage(failure, message);
+        }
+        final snapshot = _RankingSnapshot(
+          rows: before.rows,
+          updatedAt: before.updatedAt,
+          kind: before.kind,
+          description: before.description,
+          cachedOnly: before.cachedOnly,
+          hasMore: before.hasMore,
+          page: before.page,
+          warning: before.warning,
+          error: message,
+          failedMore: more,
+        );
+        _rememberColumn(board, snapshot);
+        if (selected == board) setState(() => _applySnapshot(snapshot));
       }
     } finally {
-      if (mounted && request == generation) setState(() => loading = false);
+      if (current()) {
+        _pending.remove(board);
+        setState(() {
+          if (selected == board) loading = false;
+        });
+      }
     }
   }
 
@@ -227,6 +339,16 @@ class _RankingsPageState extends State<RankingsPage> {
                     Padding(
                       padding: const EdgeInsets.only(right: 8),
                       child: ChoiceChip(
+                        avatar: _pending.containsKey(board.id)
+                            ? SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  semanticsLabel: '正在更新${board.name}',
+                                ),
+                              )
+                            : null,
                         label: Text(board.name),
                         selected: selected == board.id,
                         onSelected: (_) => _selectBoard(board.id),
@@ -254,7 +376,9 @@ class _RankingsPageState extends State<RankingsPage> {
               ),
             if (updatedAt != null)
               DiscoveryCacheStatus(savedAt: updatedAt!, cached: cachedOnly),
-            if (loading) const LinearProgressIndicator(),
+            if (loading && rows.isEmpty) const LinearProgressIndicator(),
+            if (loading && rows.isNotEmpty)
+              const Padding(padding: EdgeInsets.all(8), child: Text('正在后台更新…')),
             if (warning != null)
               Padding(padding: const EdgeInsets.all(16), child: Text(warning!)),
             if (error != null)
@@ -292,6 +416,9 @@ class _RankingsPageState extends State<RankingsPage> {
                   : RefreshIndicator(
                       onRefresh: () => _load(refresh: true),
                       child: ListView.builder(
+                        key: PageStorageKey(
+                          'rankings-${source.name}-$selected',
+                        ),
                         physics: const AlwaysScrollableScrollPhysics(),
                         padding: const EdgeInsets.all(16),
                         itemCount: visible.length + (hasMore ? 1 : 0),
