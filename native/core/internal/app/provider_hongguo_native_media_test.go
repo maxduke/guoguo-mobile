@@ -50,7 +50,7 @@ func TestHongguoAppMediaMedia(t *testing.T) {
 				t.Fatal(err)
 			}
 			calls := 0
-			d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
+			d := hongguoRegisteredMediaDownloader(t, func(request *http.Request) (*http.Response, error) {
 				calls++
 				if request.Method != http.MethodPost || request.URL.Path != "/novel/player/multi_video_model/v1/" {
 					t.Errorf("unexpected stream request: %s %s", request.Method, request.URL.Path)
@@ -103,10 +103,13 @@ func assertHongguoUnsignedPlaybackRequest(t *testing.T, request *http.Request) {
 		}
 	}
 	query := request.URL.Query()
-	for _, name := range []string{"device_id", "iid", "cdid"} {
+	for _, name := range []string{"device_id", "iid"} {
 		if !hongguoNumericID.MatchString(query.Get(name)) {
 			t.Errorf("playback must supply a numeric %s", name)
 		}
+	}
+	if cdid := query.Get("cdid"); len(cdid) != 36 || cdid[14] != '4' || strings.Count(cdid, "-") != 4 {
+		t.Error("playback must supply a UUID CDID")
 	}
 	ticket, err := strconv.ParseInt(query.Get("_rticket"), 10, 64)
 	if err != nil || ticket <= 0 || query.Get("ts") != strconv.FormatInt(ticket/1000, 10) || request.Header.Get("X-SS-Req-Ticket") != query.Get("_rticket") {
@@ -129,7 +132,7 @@ func TestHongguoPlaybackIdentityIsIsolatedFromCatalogAndRestart(t *testing.T) {
 	}
 	var identities [][3]string
 	for restart := 0; restart < 2; restart++ {
-		d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
+		d := hongguoRegisteredMediaDownloader(t, func(request *http.Request) (*http.Response, error) {
 			query := request.URL.Query()
 			if strings.HasPrefix(request.URL.Path, "/novel/player/") {
 				assertHongguoUnsignedPlaybackRequest(t, request)
@@ -190,7 +193,7 @@ func TestHongguoPlaybackRetryStaysUnsigned(t *testing.T) {
 		t.Fatal(err)
 	}
 	var identities [][3]string
-	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
+	d := hongguoRegisteredMediaDownloader(t, func(request *http.Request) (*http.Response, error) {
 		assertHongguoUnsignedPlaybackRequest(t, request)
 		query := request.URL.Query()
 		identities = append(identities, [3]string{query.Get("device_id"), query.Get("iid"), query.Get("cdid")})
@@ -225,7 +228,7 @@ func TestHongguoAppMediaRejectsInvalidResponses(t *testing.T) {
 		{"legacy unkeyed model", `{"code":0,"data":{"video_model":{"video_list":[{"main_url":"https://media.example.test/other-episode.mp4"}]}}}`, "未返回兼容的媒体"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
+			d := hongguoRegisteredMediaDownloader(t, func(request *http.Request) (*http.Response, error) {
 				return rankingHTTPResponse(request, http.StatusOK, test.body), nil
 			})
 			media, err := d.resolveHongguoAppMedia(context.Background(), "800001")
