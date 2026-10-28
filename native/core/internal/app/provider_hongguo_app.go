@@ -16,6 +16,8 @@ import (
 )
 
 const hongguoAppBaseURL = "https://api5-normal-sinfonlineb.fqnovel.com"
+const hongguoAppVersion = "7.3.5.32"
+const hongguoAppVersionCode = "73532"
 const hongguoAppUserAgent = "com.phoenix.read/73532 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
 
 type hongguoRequestMode uint8
@@ -30,6 +32,7 @@ type hongguoPlayerIdentity struct {
 	deviceID  string
 	installID string
 	cdid      string
+	cookie    string
 }
 
 type hongguoCatalogCursor struct {
@@ -55,6 +58,7 @@ type hongguoAppClient struct {
 	baseURL        string
 	state          hongguoCatalogState
 	player         hongguoPlayerIdentity
+	playerPending  *hongguoPlayerDeviceCall
 	details        map[string]hongguoDetailEntry
 	pending        map[string]*hongguoDetailCall
 	searches       map[string]hongguoSearchEntry
@@ -68,7 +72,6 @@ func (downloader *Downloader) hongguoClient() *hongguoAppClient {
 		downloader.hongguo = &hongguoAppClient{
 			baseURL: hongguoAppBaseURL,
 			state:   hongguoCatalogState{Version: 1, DeviceID: newHongguoDeviceID(), InstallID: newHongguoDeviceID(), Feeds: map[string]hongguoCatalogCursor{}},
-			player:  hongguoPlayerIdentity{deviceID: newHongguoDeviceID(), installID: newHongguoDeviceID(), cdid: newHongguoDeviceID()},
 			details: map[string]hongguoDetailEntry{}, pending: map[string]*hongguoDetailCall{},
 			searches: map[string]hongguoSearchEntry{}, searchPending: map[string]*hongguoSearchCall{},
 			suggestions: map[string]hongguoSuggestionEntry{}, suggestPending: map[string]*hongguoSuggestionCall{},
@@ -150,22 +153,35 @@ func (downloader *Downloader) hongguoPlayerRequest(ctx context.Context, path str
 	return downloader.hongguoRequest(ctx, hongguoUnsignedPlayerRequest, http.MethodPost, path, nil, payload)
 }
 
+func hongguoAppDeviceQuery() url.Values {
+	return url.Values{
+		"aid": {"8662"}, "app_name": {"novelread"}, "version_code": {hongguoAppVersionCode}, "version_name": {hongguoAppVersion},
+		"manifest_version_code": {hongguoAppVersionCode}, "update_version_code": {hongguoAppVersionCode}, "channel": {"update_64"},
+		"device_platform": {"android"}, "os": {"android"}, "ssmix": {"a"}, "device_type": {"25053RT47C"},
+		"device_brand": {"Redmi"}, "language": {"zh"}, "os_api": {"36"}, "os_version": {"16"},
+		"resolution": {"1280*2772"}, "dpi": {"520"}, "ac": {"wifi"},
+	}
+}
+
 func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRequestMode, method, path string, extra url.Values, payload any) (map[string]any, error) {
 	client := downloader.hongguoClient()
 	client.mu.Lock()
 	base, deviceID, installID := client.baseURL, client.state.DeviceID, client.state.InstallID
-	player := client.player
 	client.mu.Unlock()
+	var player hongguoPlayerIdentity
+	httpClient := downloader.client
 	if mode == hongguoUnsignedPlayerRequest {
+		var err error
+		player, err = downloader.hongguoPlaybackDevice(ctx)
+		if err != nil {
+			return nil, err
+		}
 		deviceID, installID = player.deviceID, player.installID
+		httpClient = hongguoAnonymousClient(httpClient)
 	}
-	query := url.Values{
-		"aid": {"8662"}, "app_name": {"novelread"}, "version_code": {"73532"}, "version_name": {"7.3.5.32"},
-		"manifest_version_code": {"73532"}, "update_version_code": {"73532"}, "channel": {"update_64"},
-		"device_platform": {"android"}, "os": {"android"}, "ssmix": {"a"}, "device_type": {"25053RT47C"},
-		"device_brand": {"Redmi"}, "language": {"zh"}, "os_api": {"36"}, "os_version": {"16"},
-		"resolution": {"1280*2772"}, "dpi": {"520"}, "ac": {"wifi"}, "device_id": {deviceID}, "iid": {installID},
-	}
+	query := hongguoAppDeviceQuery()
+	query.Set("device_id", deviceID)
+	query.Set("iid", installID)
 	for key, values := range extra {
 		query[key] = append([]string(nil), values...)
 	}
@@ -204,6 +220,9 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRe
 		request.Header.Set("Accept", "application/json")
 		request.Header.Set("X-XS-From-Web", "0")
 		request.Header.Set("Sdk-Version", "2")
+		if mode == hongguoUnsignedPlayerRequest && player.cookie != "" {
+			request.Header.Set("Cookie", player.cookie)
+		}
 		comment, _ := ctx.Value(hongguoCommentKey{}).(bool)
 		comment = comment && mode == hongguoSignedAppRequest
 		var commentNonce hongguoCommentNonce
@@ -218,7 +237,7 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRe
 		if payload != nil {
 			request.Header.Set("Content-Type", "application/json; charset=utf-8")
 		}
-		response, err := downloader.doPreparedCatalogRequest(request, 20*time.Second, func(prepared *http.Request) error {
+		response, err := downloader.doPreparedCatalogRequestWithClient(request, 20*time.Second, func(prepared *http.Request) error {
 			now := time.Now()
 			query.Set("_rticket", strconv.FormatInt(now.UnixMilli(), 10))
 			if mode == hongguoUnsignedPlayerRequest {
@@ -237,7 +256,7 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRe
 				return nil
 			}
 			return signHongguoRequest(prepared, body, now)
-		})
+		}, httpClient)
 		if err != nil {
 			lastErr = err
 			var backoff *requestBackoff
@@ -259,8 +278,16 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRe
 			}
 			continue
 		}
-		if len(content) == 0 || len(content) > providerMaxBodyBytes {
+		if len(content) > providerMaxBodyBytes {
 			return nil, errors.New("红果 App 接口未返回有效数据")
+		}
+		if len(content) == 0 || mode == hongguoUnsignedPlayerRequest && len(bytes.TrimSpace(content)) == 0 {
+			lastErr = errors.New("红果 App 接口未返回有效数据")
+			if mode == hongguoUnsignedPlayerRequest {
+				// Transient empty models share the existing retry budget and identity.
+				continue
+			}
+			return nil, lastErr
 		}
 		var result map[string]any
 		decoder := json.NewDecoder(bytes.NewReader(content))

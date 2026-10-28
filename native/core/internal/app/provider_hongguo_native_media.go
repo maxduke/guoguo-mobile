@@ -24,7 +24,7 @@ func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoI
 			"need_mp4_align":            false,
 			"use_os_player":             false,
 			"use_server_dns":            false,
-			// preload rejects the detail API's video_platform value of 3.
+			// The player API rejects the detail API's video_platform value of 3.
 			"video_platform": 1024,
 		},
 		"mixed_video_id_map": map[string]any{

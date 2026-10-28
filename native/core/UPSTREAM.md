@@ -129,3 +129,31 @@ Host regression and real search/recommendation/detail/media sampling passed;
 one 71-episode series also passed full-episode CENC preparation and decoding.
 The [review and validation record](../../docs/hongguo-upstream-review-2026-10-24.md)
 records the adoption decisions and CDN/device acceptance limits.
+
+## October 28 Hongguo anonymous playback device repair
+
+Playback device registration and client-lifetime identity reuse are selectively
+adapted from [tsukiyo-zero/hongguoTV `388931852ddc614db8b00775a3dc54c5ede6307f`](https://github.com/tsukiyo-zero/hongguoTV/commit/388931852ddc614db8b00775a3dc54c5ede6307f),
+reviewed at main `c376666da49615871867e742861f98e108da39ba`.
+The references are `kotlin-tv/core/src/main/kotlin/com/hongguotv/core/DeviceRegister.kt`
+and `PlaybackDeviceSession.kt`; DeviceRegister itself credits
+charlie901208/HGTV `feat/phone-login` (GPL-3.0-only).
+The existing [GPL-3.0 license](licenses/hongguoTV-GPL-3.0.txt) is retained.
+
+The local Go implementation registers anonymously through
+`https://log5-applog-lf.fqnovel.com/service/2/device_register/`, using the
+gzip/ttEncrypt binary envelope and matching registration headers. It retains
+the local App version, device profile, player endpoint and unsigned playback
+strategy. Registered IDs and an RFC 4122 version-4 CDID replace random numeric
+playback IDs. Successful identity is shared by playback and prefetch within the
+same mobile client, stays in memory, and is independent of saved catalog state.
+Concurrent registration is coalesced with independently cancelable waiters;
+unsuccessful/canceled registration publishes no identity. Only the four device
+cookie names used by the reference are sent, without an account/site cookie jar
+or redirect forwarding. HTTP 200 empty player responses now use the existing
+retry budget without registering again or rotating the identity.
+
+On 2026-10-28 a same-episode comparison reproduced empty responses with random
+IDs and valid 1080p/CENC models with registered IDs. Three genre probes and one
+full-episode preparation/decode succeeded. The [repair and optimization review](../../docs/hongguo-upstream-review-2026-10-28.md)
+records the controls, local regression evidence and remaining device limits.
