@@ -65,6 +65,21 @@ class PlaybackFailure {
       return _network;
     }
     if (error is ProviderException) {
+      // Match our own bounded core messages, and never render the surrounding
+      // fallback errors, response body, media URL or device identifiers.
+      if (error.message.contains('红果播放设备注册失败')) {
+        return const PlaybackFailure(
+          '红果播放连接暂未就绪，请稍后重试',
+          kind: PlaybackFailureKind.network,
+        );
+      }
+      if (error.message.contains('红果 App 接口未返回有效数据')) {
+        return const PlaybackFailure('红果暂未返回播放资源，请稍后重试');
+      }
+      if (error.message.contains('红果 App 未返回兼容的媒体') ||
+          error.message.contains('红果 App 播放信息格式异常')) {
+        return const PlaybackFailure('红果暂未提供可播放资源，请重试或切换分集');
+      }
       // Preserve known actionable messages; upstream exception text is not UI.
       return switch (error.message) {
         '已取消准备' => _cancelled,

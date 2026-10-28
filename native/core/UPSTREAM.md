@@ -157,3 +157,25 @@ On 2026-10-28 a same-episode comparison reproduced empty responses with random
 IDs and valid 1080p/CENC models with registered IDs. Three genre probes and one
 full-episode preparation/decode succeeded. The [repair and optimization review](../../docs/hongguo-upstream-review-2026-10-28.md)
 records the controls, local regression evidence and remaining device limits.
+
+## October 28 Hongguo playback and ranking optimization
+
+Bounded upcoming-episode model reuse is selectively adapted from
+`ContentRepository.streamLadder` at [hongguoTV `c376666da49615871867e742861f98e108da39ba`](https://github.com/tsukiyo-zero/hongguoTV/blob/c376666da49615871867e742861f98e108da39ba/kotlin-tv/core/src/main/kotlin/com/hongguotv/core/ContentRepository.kt),
+introduced by [e606c8d](https://github.com/tsukiyo-zero/hongguoTV/commit/e606c8d7c236369dcfe222c5eae17b0f0cf5bfa4).
+The Go adaptation keeps a 60-second, six-entry, 256-KiB-per-entry memory cache,
+consumes models on use, validates the exact requested episode, and derives the
+next IDs from a fresh validated detail. The optional mobile `metadataAhead`
+count is sent only by Hongguo background preparation after the existing prefetch
+policy permits it. This does not prepare additional media or affect downloads.
+
+The Flutter ranking page adopts independent in-flight board results and fresh
+session switching inspired by `RankBrowserState` at the same pinned revision.
+It retains the existing five-minute policy, four session snapshots, persisted
+cache, pagination and forced refresh. CookieJar changes are deferred because
+the current live first/second ranking pages succeeded without them. Safe
+playback guidance/recovery presentation is local implementation.
+
+The [implementation and broader feature comparison](../../docs/hongguo-optimizations-2026-10-28.md)
+records the scope and candidate follow-ups. The existing GPL-3.0 license and
+algorithm provenance are retained; account/cloud synchronization is excluded.

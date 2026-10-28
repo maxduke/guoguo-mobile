@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,9 +12,35 @@ import (
 	"time"
 )
 
-func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoID string) (providerMedia, error) {
+func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoID string, metadataAhead ...string) (providerMedia, error) {
 	if !hongguoNumericID.MatchString(videoID) {
 		return providerMedia{}, errors.New("红果视频 ID 无效")
+	}
+	if err := ctx.Err(); err != nil {
+		return providerMedia{}, err
+	}
+	if len(metadataAhead) > hongguoModelLookahead {
+		return providerMedia{}, errors.New("红果播放预取范围无效")
+	}
+	ids := []string{videoID}
+	for _, next := range metadataAhead {
+		if !hongguoNumericID.MatchString(next) {
+			return providerMedia{}, errors.New("红果视频 ID 无效")
+		}
+		if next != videoID && (len(ids) == 1 || next != ids[1]) {
+			ids = append(ids, next)
+		}
+	}
+	if cached := downloader.takeHongguoUpcomingModel(videoID); cached != nil {
+		var entry map[string]any
+		decoder := json.NewDecoder(bytes.NewReader(cached))
+		decoder.UseNumber()
+		if decoder.Decode(&entry) == nil {
+			if media, err := parseHongguoAppMedia(entry); err == nil {
+				traceCache(ctx)
+				return media, nil
+			}
+		}
 	}
 	payload := map[string]any{
 		"biz_param": map[string]any{
@@ -28,15 +55,50 @@ func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoI
 			"video_platform": 1024,
 		},
 		"mixed_video_id_map": map[string]any{
-			"1004": []string{videoID}, // Short-drama content type.
+			"1004": ids, // Short-drama content type.
 		},
 	}
-	result, err := downloader.hongguoPlayerRequest(ctx, "/novel/player/multi_video_model/v1/", payload)
+	attempts := downloader.hongguoRequestAttempts()
+	limit := 0
+	if len(ids) > 1 {
+		limit = 1
+	}
+	fetch := func(limit int) (map[string]any, providerMedia, error) {
+		result, err := downloader.hongguoPlayerRequestWithAttempts(ctx, "/novel/player/multi_video_model/v1/", payload, limit)
+		if err != nil {
+			return nil, providerMedia{}, err
+		}
+		// Never substitute another episode when the requested ID is missing.
+		media, err := parseHongguoAppMedia(nestedMap(result, "data", videoID))
+		return result, media, err
+	}
+	result, media, err := fetch(limit)
+	if err != nil && len(ids) > 1 && attempts > 1 && ctx.Err() == nil {
+		var backoff *requestBackoff
+		if !errors.As(err, &backoff) && !errors.Is(err, errHongguoDeviceRegistration) {
+			// Optional lookahead must not consume the selected episode's remaining
+			// retry budget. Fall back to one ID and keep the same registered device.
+			select {
+			case <-time.After(time.Second):
+			case <-ctx.Done():
+				return providerMedia{}, ctx.Err()
+			}
+			ids = ids[:1]
+			payload["mixed_video_id_map"] = map[string]any{"1004": ids}
+			result, media, err = fetch(attempts - 1)
+		}
+	}
+	if ctx.Err() != nil {
+		return providerMedia{}, ctx.Err()
+	}
 	if err != nil {
 		return providerMedia{}, err
 	}
-	// Never substitute another episode when the requested ID is missing.
-	entry := nestedMap(result, "data", videoID)
+	downloader.keepHongguoUpcomingModels(result, ids[1:])
+	return media, nil
+}
+
+func parseHongguoAppMedia(entry map[string]any) (providerMedia, error) {
 	model, _ := entry["video_model"].(map[string]any)
 	if encoded, ok := entry["video_model"].(string); ok {
 		decoder := json.NewDecoder(strings.NewReader(encoded))

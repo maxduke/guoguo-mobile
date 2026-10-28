@@ -8,6 +8,7 @@ import 'package:guoguo_mobile/data/storage.dart';
 import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/domain/playback_diagnostic.dart';
 import 'package:guoguo_mobile/platform/episode_buffer.dart';
+import 'package:guoguo_mobile/platform/provider_client.dart';
 import 'package:guoguo_mobile/ui/player_page.dart';
 import 'package:guoguo_mobile/ui/player_notice.dart';
 
@@ -18,6 +19,7 @@ class _Provider extends NoNetwork {
   Object? failure;
   int resolves = 0;
   Completer<void>? gate;
+  int? gatedResolve;
 
   @override
   Future<Map<String, dynamic>> call(
@@ -26,7 +28,7 @@ class _Provider extends NoNetwork {
   ]) async {
     if (method != 'resolve') return {};
     resolves++;
-    await gate?.future;
+    if (gatedResolve == null || resolves == gatedResolve) await gate?.future;
     if (failure case final error?) throw error;
     return {
       'url': 'https://fixture.test/video.mp4',
@@ -40,6 +42,7 @@ void main() {
     WidgetTester tester,
     _Provider provider, {
     bool offline = false,
+    bool settle = true,
   }) async {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     final native = NativeCastPlayer()..install();
@@ -70,9 +73,36 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    if (settle) await tester.pumpAndSettle();
     return (native, downloads, store);
   }
+
+  testWidgets(
+    'automatic retry keeps the safe cause visible and clears it on success',
+    (tester) async {
+      final gate = Completer<void>();
+      final provider = _Provider()
+        ..failure = const ProviderException('红果 App 接口未返回有效数据 private-secret')
+        ..gate = gate
+        ..gatedResolve = 2;
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete();
+      });
+      final (native, _, _) = await mount(tester, provider, settle: false);
+      for (var index = 0; index < 5; index++) {
+        await tester.pump();
+      }
+      expect(provider.resolves, 2);
+      expect(find.textContaining('红果暂未返回播放资源，请稍后重试'), findsOneWidget);
+      expect(find.textContaining('private-secret'), findsNothing);
+      provider.failure = null;
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(native.sources, hasLength(1));
+      expect(find.textContaining('红果暂未返回播放资源'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 
   testWidgets(
     'offline file failure offers one manual recheck and episode selection',

@@ -147,11 +147,16 @@ class _Fixture {
     bool more = false,
     int next = 18,
     String session = 'session',
+    bool settle = true,
   }) async {
     latest.result.complete(
       _page(feed, items, more: more, next: next, session: session),
     );
-    await tester.pumpAndSettle();
+    if (settle) {
+      await tester.pumpAndSettle();
+    } else {
+      await tester.pump();
+    }
   }
 }
 
@@ -387,7 +392,7 @@ void main() {
     );
 
     testWidgets(
-      '${feed.name} switching back uses its own cache and ignores late responses',
+      '${feed.name} switching keeps current content safe from late responses',
       (tester) async {
         final fixture = await _mount(
           tester,
@@ -397,16 +402,32 @@ void main() {
         final stale = fixture.latest;
         await tester.tap(find.text(feed.other));
         await tester.pump();
-        await fixture.finish(tester, [_drama('other')]);
+        await fixture.finish(tester, [
+          _drama('other'),
+        ], settle: feed != _Feed.rankings);
         stale.result.complete(_page(feed, [_drama('late')]));
         await tester.pumpAndSettle();
         expect(_ids(tester), ['other']);
         await tester.tap(find.text(feed.current));
         await tester.pump();
-        expect(_ids(tester), ['cached-2', 'cached-1']);
-        _expectFirstPage(fixture);
-        await fixture.finish(tester, [_drama('fresh')]);
-        expect(_ids(tester), ['fresh']);
+        if (feed == _Feed.rankings) {
+          expect(_ids(tester), ['late']);
+          expect(fixture.pages, hasLength(2));
+          expect(
+            fixture.store.catalog.discoveryCache
+                .ranking(DramaSource.hongguo, 'a')!
+                .rows
+                .single
+                .drama
+                .id,
+            'late',
+          );
+        } else {
+          expect(_ids(tester), ['cached-2', 'cached-1']);
+          _expectFirstPage(fixture);
+          await fixture.finish(tester, [_drama('fresh')]);
+          expect(_ids(tester), ['fresh']);
+        }
         expect(tester.takeException(), isNull);
       },
     );

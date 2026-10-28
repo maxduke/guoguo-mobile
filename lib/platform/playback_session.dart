@@ -178,6 +178,12 @@ class PlaybackSessionController {
           drama,
           episodes[index],
           quality: _qualities[index] ?? 0,
+          // Background preparation already passed the user's network policy.
+          // This batches small model metadata, without preparing more media.
+          metadataAhead:
+              cancellation.background && drama.source == DramaSource.hongguo
+              ? 2
+              : 0,
         );
         timing.resolveMs = stage.elapsedMilliseconds;
         stage.reset();

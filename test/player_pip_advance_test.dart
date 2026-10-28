@@ -1791,7 +1791,8 @@ void main() {
       expect(provider.fallbacks, 2);
       fail();
       await tester.pumpAndSettle();
-      expect(find.text('自动恢复未成功，请重试或切换分集'), findsOneWidget);
+      expect(find.text('视频暂时无法播放，请重试或切换分集'), findsOneWidget);
+      expect(find.text('自动恢复未成功，请重试或切换分集'), findsNothing);
       expect(platform.sources, hasLength(4));
       expect(find.byTooltip('返回').hitTestable(), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
@@ -1875,7 +1876,8 @@ void main() {
       expect(provider.fallbacks, 2);
       fail();
       await tester.pumpAndSettle();
-      expect(find.text('自动恢复未成功，请重试或切换分集'), findsOneWidget);
+      expect(find.text('视频暂时无法播放，请重试或切换分集'), findsOneWidget);
+      expect(find.text('自动恢复未成功，请重试或切换分集'), findsNothing);
       expect(platform.sources, hasLength(4));
       expect(find.byTooltip('返回').hitTestable(), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
