@@ -30,6 +30,8 @@ type MobileClient struct {
 	cancelLifetime   context.CancelFunc
 	catalogReads     map[string]*mobileCatalogRead
 	canceledCatalogs map[string]mobileCatalogCancellation
+	resolveReads     map[string]*mobileResolveRead
+	canceledResolves map[string]mobileResolveCancellation
 	covers           coverImageCache
 	catalogGates     map[string]chan struct{}
 	known            []Drama
@@ -136,7 +138,7 @@ func (c *MobileClient) Call(raw string) (result string, callErr error) {
 	}
 	switch request.Method {
 	case "coreInfo":
-		value = map[string]any{"protocol": mobileProtocol, "sourceDigest": mobileSourceDigest, "version": mobileBuildVersion, "sourceDiagnostics": 1, "catalogPrefetch": 1}
+		value = map[string]any{"protocol": mobileProtocol, "sourceDigest": mobileSourceDigest, "version": mobileBuildVersion, "sourceDiagnostics": 1, "catalogPrefetch": 1, "resolveCancellation": 1}
 	case "sourceCapabilities":
 		value = map[string]any{"items": c.sourceCapabilities()}
 	case "requestDiagnostic":
@@ -346,6 +348,12 @@ func (c *MobileClient) Call(raw string) (result string, callErr error) {
 		}
 		value = map[string]any{"boardId": result.BoardID, "page": result.Page, "items": rows, "hasMore": result.HasMore, "warning": result.Warning, "kind": result.Kind, "description": result.Description, "fetchedAt": result.FetchedAt, "stale": result.Stale}
 	case "resolve":
+		resolveContext, finish, err := c.beginResolve(ctx, request)
+		if err != nil {
+			return "", publicError(err)
+		}
+		defer finish()
+		ctx = resolveContext
 		if request.MetadataAhead < 0 || request.MetadataAhead > hongguoModelLookahead {
 			return "", errors.New("播放预取范围无效")
 		}
@@ -367,7 +375,7 @@ func (c *MobileClient) Call(raw string) (result string, callErr error) {
 		if err != nil {
 			return "", publicError(err)
 		}
-		value, err = c.openMobilePlayback(choice)
+		value, err = c.openMobilePlaybackContext(ctx, choice)
 		if err != nil {
 			return "", publicError(err)
 		}
@@ -390,6 +398,9 @@ func (c *MobileClient) Call(raw string) (result string, callErr error) {
 			return "", publicError(err)
 		}
 		value = result
+	case "cancelResolve":
+		c.cancelResolve(request)
+		value = map[string]any{"ok": true}
 	case "cancelPrefetch":
 		c.cancelPlaybackPrefetch(request.ID)
 		value = map[string]any{"ok": true}
@@ -436,6 +447,11 @@ func (c *MobileClient) Close() {
 		delete(c.catalogReads, id)
 	}
 	c.canceledCatalogs = nil
+	for id, read := range c.resolveReads {
+		read.cancel()
+		delete(c.resolveReads, id)
+	}
+	c.canceledResolves = nil
 	for id, read := range c.searches {
 		read.cancel()
 		delete(c.searches, id)

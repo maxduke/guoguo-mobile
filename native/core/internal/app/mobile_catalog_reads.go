@@ -82,7 +82,7 @@ func (c *MobileClient) cancelCatalogRead(request mobileRequest) {
 		}
 		delete(c.canceledCatalogs, oldestID)
 	}
-	c.canceledCatalogs[request.RequestID] = mobileCatalogCancellation{source: request.Source, category: request.Category, page: request.Page, expires: time.Now().Add(10 * time.Second)}
+	c.canceledCatalogs[request.RequestID] = mobileCatalogCancellation{source: request.Source, category: request.Category, page: request.Page, expires: time.Now().Add(mobileCancellationRetention)}
 	if read := c.catalogReads[request.RequestID]; read != nil && read.source == request.Source && read.category == request.Category && read.page == request.Page {
 		read.cancel()
 	}

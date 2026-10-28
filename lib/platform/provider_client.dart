@@ -32,6 +32,8 @@ class NativeProviderClient implements ProviderClient {
   bool _initialized = false, _initializing = false;
   bool _sourceDiagnostics = false;
   bool _catalogPrefetch = false;
+  bool _resolveCancellation = false;
+  bool _dispatchEnvelope = false;
   int _traceSerial = 0;
 
   Future<void> get ready =>
@@ -50,7 +52,10 @@ class NativeProviderClient implements ProviderClient {
 
   Future<void> _initialize(String directory) async {
     try {
-      await _channel.invokeMethod<void>('initialize', {'directory': directory});
+      final bridge = await _channel.invokeMethod<Object?>('initialize', {
+        'directory': directory,
+      });
+      _dispatchEnvelope = bridge is Map && bridge['dispatchEnvelope'] == 1;
       try {
         final info = await _call('coreInfo');
         if (info['protocol'] != 3) {
@@ -58,6 +63,7 @@ class NativeProviderClient implements ProviderClient {
         }
         _sourceDiagnostics = info['sourceDiagnostics'] == 1;
         _catalogPrefetch = info['catalogPrefetch'] == 1;
+        _resolveCancellation = info['resolveCancellation'] == 1;
       } catch (_) {
         throw const ProviderException('站源组件版本不匹配，请安装最新完整版本');
       }
@@ -84,6 +90,7 @@ class NativeProviderClient implements ProviderClient {
     String method, [
     Map<String, dynamic> arguments = const {},
   ]) async {
+    if (method == 'cancelResolve' && !_resolveCancellation) return {};
     if (method == 'catalog' &&
         arguments['background'] == true &&
         !_catalogPrefetch) {
@@ -105,9 +112,20 @@ class NativeProviderClient implements ProviderClient {
         ? 'native-${DateTime.now().microsecondsSinceEpoch}-${++_traceSerial}'
         : null;
     try {
+      final request = jsonEncode({
+        'method': method,
+        ...arguments,
+        'traceId': ?traceId,
+      });
       final raw = await _channel.invokeMethod<String>(
         'call',
-        jsonEncode({'method': method, ...arguments, 'traceId': ?traceId}),
+        _dispatchEnvelope
+            ? {
+                'method': method,
+                'timeoutMs': arguments['timeoutMs'] ?? 0,
+                'request': request,
+              }
+            : request,
       );
       if (raw == null) throw const FormatException('站源未返回数据');
       return Map<String, dynamic>.from(jsonDecode(raw) as Map);
@@ -380,14 +398,28 @@ extension ProviderOperations on ProviderClient {
     Episode episode, {
     int quality = 0,
     int metadataAhead = 0,
+    String? requestId,
   }) async => ResolvedMedia.fromJson(
     await call('resolve', {
       'id': drama.id,
       'chapter': episode.raw,
       'quality': quality,
       if (metadataAhead > 0) 'metadataAhead': metadataAhead,
+      'requestId': ?requestId,
     }),
   );
+  Future<void> cancelResolve(
+    Drama drama,
+    Episode episode,
+    String requestId,
+  ) async {
+    await call('cancelResolve', {
+      'id': drama.id,
+      'chapter': {'id': episode.id},
+      'requestId': requestId,
+    });
+  }
+
   Future<ResolvedMedia> fallback(ResolvedMedia media) async =>
       ResolvedMedia.fromJson(await call('fallback', {'id': media.session}));
 

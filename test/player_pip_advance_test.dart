@@ -77,9 +77,6 @@ class _LocalDownloads extends DownloadStore {
 
 class _NativePlayer {
   static const channel = MethodChannel('better_player_channel');
-  static const eventChannel = MethodChannel(
-    'better_player_channel/videoEvents7',
-  );
   static const connectivity = MethodChannel(
     'dev.fluttercommunity.plus/connectivity',
   );
@@ -89,6 +86,12 @@ class _NativePlayer {
   static const airplay = MethodChannel('guoguo/airplay');
   int hlsDurationMs = 30000, positionMs = 0;
   bool followSeeks = false;
+  bool uniqueTextures = false;
+  Completer<void>? createGate;
+  int creates = 0;
+  final withheldSources = <int>{};
+  final eventTextures = <int>{7};
+  final disposals = <Object?>[];
   Future<void> Function(int)? beforeInitialized;
   Future<int> Function(int)? seekCompletion;
   final seeks = <int>[];
@@ -104,7 +107,13 @@ class _NativePlayer {
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(channel, (call) async {
       final args = call.arguments as Map?;
-      if (call.method == 'create') return {'textureId': 7};
+      if (call.method == 'create') {
+        final texture = uniqueTextures ? 7 + creates : 7;
+        creates++;
+        if (creates == 1) await createGate?.future;
+        eventTextures.add(texture);
+        return {'textureId': texture};
+      }
       if (call.method == 'setDataSource') {
         ids.add(args?['textureId']);
         final source = args?['dataSource'] as Map;
@@ -112,8 +121,9 @@ class _NativePlayer {
         formats.add(source['formatHint']);
         authors.add(source['author']);
         await beforeInitialized?.call(sources.length);
+        if (withheldSources.contains(sources.length)) return null;
         scheduleMicrotask(
-          () => emit('initialized', {
+          () => emitAt(args?['textureId'] as int, 'initialized', {
             'duration': (source['uri'] as String).endsWith('.m3u8')
                 ? hlsDurationMs
                 : 30000,
@@ -124,6 +134,7 @@ class _NativePlayer {
       }
       if (call.method == 'play') plays.add(args?['textureId']);
       if (call.method == 'pause') pauses.add(args?['textureId']);
+      if (call.method == 'dispose') disposals.add(args?['textureId']);
       if (call.method == 'isPictureInPictureSupported') return true;
       if (call.method == 'seekTo') {
         final target = args!['location'] as int;
@@ -140,17 +151,31 @@ class _NativePlayer {
       if (call.method == 'position') return positionMs;
       return null;
     });
-    messenger.setMockMethodCallHandler(eventChannel, (_) async => null);
+    for (var texture = 7; texture <= 12; texture++) {
+      eventTextures.add(texture);
+      messenger.setMockMethodCallHandler(
+        MethodChannel('better_player_channel/videoEvents$texture'),
+        (_) async => null,
+      );
+    }
     messenger.setMockMethodCallHandler(connectivity, (_) async => ['wifi']);
     messenger.setMockMethodCallHandler(connectivityStatus, (_) async => null);
     messenger.setMockMethodCallHandler(airplay, (_) async => {'routed': false});
   }
 
   void emit(String event, [Map<String, Object?> extra = const {}]) {
+    emitAt(7, event, extra);
+  }
+
+  void emitAt(
+    int texture,
+    String event, [
+    Map<String, Object?> extra = const {},
+  ]) {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.handlePlatformMessage(
-      eventChannel.name,
+      'better_player_channel/videoEvents$texture',
       const StandardMethodCodec().encodeSuccessEnvelope({
         'event': event,
         ...extra,
@@ -163,11 +188,32 @@ class _NativePlayer {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(channel, null);
-    messenger.setMockMethodCallHandler(eventChannel, null);
+    for (final texture in eventTextures) {
+      messenger.setMockMethodCallHandler(
+        MethodChannel('better_player_channel/videoEvents$texture'),
+        null,
+      );
+    }
     messenger.setMockMethodCallHandler(connectivity, null);
     messenger.setMockMethodCallHandler(connectivityStatus, null);
     messenger.setMockMethodCallHandler(airplay, null);
   }
+}
+
+Future<void> _drainNativeDisposal(
+  WidgetTester tester,
+  Future<void> cleanup,
+) async {
+  var done = false;
+  cleanup.then((_) => done = true);
+  // EventChannel cancellation crosses the real messenger and widget fake clock.
+  // Drain both queues without waiting inside runAsync on fake-zone callbacks.
+  for (var i = 0; i < 4 && !done; i++) {
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump();
+  }
+  expect(done, true);
+  await cleanup;
 }
 
 class _OnlineDownloads extends DownloadStore {
@@ -304,6 +350,180 @@ void main() {
   final originalOverrides = HttpOverrides.current;
   setUpAll(() => HttpOverrides.global = PlaylistOverrides());
   tearDownAll(() => HttpOverrides.global = originalOverrides);
+
+  testWidgets('retiring a stalled PiP player cannot resume hidden playback', (
+    tester,
+  ) async {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    final native = _NativePlayer()..uniqueTextures = true;
+    native.withheldSources.add(2);
+    native.install();
+    addTearDown(native.uninstall);
+    final store = AppStore(storage: MemoryStorage(), provider: _Routes())
+      ..preferences.prefetch = false;
+    final downloads = _OnlineDownloads(store);
+    addTearDown(() {
+      downloads.dispose();
+      store.dispose();
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlayerPage(
+          store: store,
+          downloads: downloads,
+          drama: const Drama(
+            id: 'pip-timeout',
+            source: DramaSource.huangguo,
+            title: '画中画恢复',
+          ),
+          episodes: [
+            Episode.fromJson({'id': '1'}, 0),
+            Episode.fromJson({'id': '2'}, 1),
+          ],
+          initialIndex: 0,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final old = tester
+        .widget<BetterPlayer>(find.byType(BetterPlayer))
+        .controller
+        .videoPlayerController!;
+    native.emit('pipStart');
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    native.emit('completed');
+    await tester.pump();
+    expect(native.ids, [7, 7]);
+    await tester.pump(const Duration(seconds: 31));
+    await tester.pumpAndSettle();
+    await _drainNativeDisposal(tester, old.dispose());
+    expect(native.disposals, [7]);
+    expect(native.plays, [7]);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(native.plays, [7]);
+    expect(find.text('播放器启动超时，请重试或切换分集'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '重试'));
+    await tester.pumpAndSettle();
+    expect(native.ids, [7, 7, 8]);
+    expect(native.plays, [7, 8]);
+    final current = tester
+        .widget<BetterPlayer>(find.byType(BetterPlayer))
+        .controller
+        .videoPlayerController!;
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+    await _drainNativeDisposal(tester, current.dispose());
+    await tester.pump(const Duration(milliseconds: 600));
+  });
+
+  for (final reason in [
+    'timeout',
+    'method timeout',
+    'create timeout',
+    'episode',
+    'exit',
+  ]) {
+    testWidgets(
+      'stalled native initialization safely retires its player on $reason',
+      (tester) async {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        final native = _NativePlayer()..uniqueTextures = true;
+        final held = Completer<void>();
+        if (reason == 'create timeout') {
+          native.createGate = held;
+        } else if (reason == 'method timeout') {
+          native.beforeInitialized = (number) async {
+            if (number == 1) await held.future;
+          };
+        } else {
+          native.withheldSources.add(1);
+        }
+        native.install();
+        addTearDown(native.uninstall);
+        final provider = _Routes();
+        final store = AppStore(storage: MemoryStorage(), provider: provider)
+          ..preferences.prefetch = false;
+        final downloads = _OnlineDownloads(store);
+        addTearDown(() {
+          downloads.dispose();
+          store.dispose();
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            home: PlayerPage(
+              store: store,
+              downloads: downloads,
+              drama: const Drama(
+                id: 'initialization',
+                source: DramaSource.huangguo,
+                title: '初始化恢复',
+              ),
+              episodes: [
+                Episode.fromJson({'id': '1'}, 0),
+                Episode.fromJson({'id': '2'}, 1),
+              ],
+              initialIndex: 0,
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(native.ids, reason == 'create timeout' ? isEmpty : [7]);
+        final retired = tester
+            .widget<BetterPlayer>(find.byType(BetterPlayer))
+            .controller
+            .videoPlayerController!;
+        if (reason == 'episode') {
+          await tester.drag(find.byType(EpisodePager), const Offset(0, -500));
+          await tester.pump(const Duration(milliseconds: 500));
+        } else if (reason.contains('timeout')) {
+          await tester.pump(const Duration(seconds: 31));
+        } else {
+          await tester.pumpWidget(const SizedBox());
+        }
+        await tester.pumpAndSettle();
+        if (reason == 'method timeout' || reason == 'create timeout') {
+          held.complete();
+          await tester.pump();
+        }
+        await _drainNativeDisposal(tester, retired.dispose());
+        expect(native.disposals, [7]);
+        if (reason != 'exit') {
+          expect(native.ids, reason == 'create timeout' ? [8] : [7, 8]);
+          expect(native.plays, [8]);
+          expect(find.text('正在启动播放器…'), findsNothing);
+        }
+        native.emitAt(7, 'initialized', {
+          'duration': 10000,
+          'width': 10.0,
+          'height': 10.0,
+        });
+        native.emitAt(7, 'play');
+        await tester.pump();
+        expect(native.plays, reason == 'exit' ? isEmpty : [8]);
+        if (reason != 'exit') {
+          final player = tester
+              .widget<BetterPlayer>(find.byType(BetterPlayer))
+              .controller;
+          expect(
+            player.videoPlayerController!.value.duration,
+            const Duration(seconds: 30),
+          );
+          if (reason == 'episode') expect(native.authors.last, '果果 · 第 2 集');
+          final current = player.videoPlayerController!;
+          await tester.pumpWidget(const SizedBox());
+          await tester.pumpAndSettle();
+          await _drainNativeDisposal(tester, current.dispose());
+          // Replacing the detector also schedules its one-shot detach update.
+          await tester.pump(const Duration(milliseconds: 600));
+          expect(native.disposals, [7, 8]);
+        }
+      },
+    );
+  }
 
   for (final action in [
     'pause',
@@ -674,6 +894,7 @@ void main() {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       final gate = Completer<void>();
       final platform = _NativePlayer()
+        ..uniqueTextures = mode == 'rapid selection'
         ..beforeInitialized = (number) async {
           if (number != 1) return;
           if (mode == 'failure') {
@@ -720,18 +941,20 @@ void main() {
         await tester.drag(find.byType(EpisodePager), const Offset(0, -500));
         await tester.pump(const Duration(milliseconds: 500));
         expect(provider.resolves, 3);
-        expect(platform.sources, hasLength(1));
+        expect(platform.sources, hasLength(3));
         gate.complete();
         await tester.pumpAndSettle();
-        expect(platform.authors, ['果果 · 第 1 集', '果果 · 第 3 集']);
+        expect(platform.authors, ['果果 · 第 1 集', '果果 · 第 2 集', '果果 · 第 3 集']);
+        expect(platform.ids, [7, 8, 8]);
+        expect(platform.plays, [8, 8]);
         expect(provider.releases, contains('session-1-0'));
       } else {
         await tester.pumpAndSettle();
         expect(provider.fallbacks, 1);
         expect(platform.sources.last, contains('route1.mp4'));
       }
-      expect(platform.sources, hasLength(2));
-      expect(platform.plays, hasLength(1));
+      expect(platform.sources, hasLength(mode == 'rapid selection' ? 3 : 2));
+      expect(platform.plays, hasLength(mode == 'rapid selection' ? 2 : 1));
       await tester.pumpWidget(const SizedBox());
       await tester.pumpAndSettle();
     });

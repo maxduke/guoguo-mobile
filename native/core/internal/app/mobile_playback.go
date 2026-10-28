@@ -50,6 +50,10 @@ func mobilePlaybackChoices(media providerMedia, key []byte, quality int) (mobile
 }
 
 func (c *MobileClient) openMobilePlayback(choice mobilePlaybackChoice) (map[string]any, error) {
+	return c.openMobilePlaybackContext(context.Background(), choice)
+}
+
+func (c *MobileClient) openMobilePlaybackContext(ctx context.Context, choice mobilePlaybackChoice) (map[string]any, error) {
 	if choice.index < 0 || choice.index >= len(choice.media) {
 		return nil, errors.New("没有其他可用播放线路")
 	}
@@ -65,6 +69,17 @@ func (c *MobileClient) openMobilePlayback(choice mobilePlaybackChoice) (map[stri
 	session := randomHex(16)
 	choice.prefetchCanceled = false
 	c.mu.Lock()
+	if c.closed || ctx.Err() != nil {
+		err := ctx.Err()
+		if err == nil {
+			err = context.Canceled
+		}
+		c.mu.Unlock()
+		if proxy != nil {
+			proxy.Close()
+		}
+		return nil, err
+	}
 	if c.playbacks == nil {
 		c.playbacks = make(map[string]mobilePlaybackChoice)
 	}

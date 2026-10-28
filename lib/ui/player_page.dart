@@ -101,7 +101,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   late final PageController _pages;
   late final PlaybackSessionController _session;
   late final PlaybackProgressController _progress;
-  late final BetterPlayerController _player;
+  late BetterPlayerController _player;
+  bool _closing = false;
   final GlobalKey _playerKey = GlobalKey();
   late final PlaybackRecoveryController _recovery;
   late final PlaybackLifecycleController _lifecycle;
@@ -201,16 +202,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       onPhase: _phase,
       preparerFactory: widget.preparerFactory,
     );
-    _player = BetterPlayerController(
-      BetterPlayerConfiguration(
-        autoPlay: false,
-        autoDispose: false,
-        fit: _fill ? BoxFit.cover : BoxFit.contain,
-        controlsConfiguration: const BetterPlayerControlsConfiguration(
-          showControls: false,
-        ),
-      ),
-    )..setBetterPlayerGlobalKey(_playerKey);
+    _player = _createPlayer();
     _recovery = PlaybackRecoveryController(_session, widget.store.provider);
     _lifecycle = PlaybackLifecycleController(
       session: _session,
@@ -221,7 +213,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         position: _player.videoPlayerController?.value.position,
       ),
       save: _save,
-      pause: _player.pause,
+      pause: () => _player.pause(),
       play: () {
         _health.reset();
         return _player.play();
@@ -264,7 +256,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       )..addListener(_airPlayChanged);
     }
     _actionsState = ValueNotifier(_currentActionsState);
-    _player.addEventsListener(_event);
     _healthTimer = Timer.periodic(
       const Duration(seconds: 2),
       (_) => _checkHealth(),
@@ -286,6 +277,35 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky),
     );
     unawaited(_activate(resume: true));
+  }
+
+  BetterPlayerController _createPlayer() =>
+      BetterPlayerController(
+          BetterPlayerConfiguration(
+            autoPlay: false,
+            autoDispose: false,
+            fit: _fill ? BoxFit.cover : BoxFit.contain,
+            controlsConfiguration: const BetterPlayerControlsConfiguration(
+              showControls: false,
+            ),
+          ),
+        )
+        ..setBetterPlayerGlobalKey(_playerKey)
+        ..addEventsListener(_event);
+
+  void _abandonPlayer(BetterPlayerController old) {
+    old.removeEventsListener(_event);
+    if (identical(_player, old)) {
+      if (_pipActive && !_closing) _setPipActive(false);
+      _detachTimeline();
+      final events = _nativeEvents;
+      _nativeEvents = null;
+      if (events != null) unawaited(events.cancel());
+      if (!_closing && mounted) {
+        setState(() => _player = _createPlayer());
+      }
+    }
+    old.dispose(forceDispose: true);
   }
 
   @override
@@ -559,19 +579,23 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
         ),
       );
       // Only the phone's own source is installed on BetterPlayer.
-      if (!await _session.installSource(
-        generation,
-        () => _player.setupDataSource(source),
-      )) {
+      late BetterPlayerController installing;
+      if (!await _session.installSource(generation, () {
+        installing = _player;
+        return installing.setupDataSource(source);
+      }, abandon: () => _abandonPlayer(installing))) {
         return;
       }
       item.timing.setupMs = setup.elapsedMilliseconds;
       if (!mounted || generation != _generation) return;
-      _nativeEvents ??= _player
+      final installed = _player;
+      _nativeEvents ??= installed
           .videoPlayerController
           ?.videoEventStreamController
           .stream
-          .listen(_nativeEvent);
+          .listen((event) {
+            if (identical(_player, installed)) _nativeEvent(event);
+          });
       _active = item;
       _attachTimeline(item, generation);
       _health.reset();
@@ -2368,10 +2392,13 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   );
   @override
   void dispose() {
+    _closing = true;
     _playFocus.dispose();
     _setScreenAwake(false);
     _finishAttempt(PlaybackResult.cancelled);
     _session.invalidate();
+    _session.cancelPendingResolutions();
+    _airPlayMedia?.cancelPendingResolutions();
     _save();
     _casting.removeListener(_castChanged);
     _casting.dispose();

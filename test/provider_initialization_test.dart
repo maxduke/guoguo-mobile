@@ -12,6 +12,59 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   tearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
+  test(
+    'capable native bridge dispatches an envelope and preserves resolve cancellation identity',
+    () async {
+      final calls = <Map>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'initialize') return {'dispatchEnvelope': 1};
+        final envelope = call.arguments as Map;
+        final request = jsonDecode(envelope['request'] as String) as Map;
+        expect(envelope['method'], request['method']);
+        expect(envelope['timeoutMs'], request['timeoutMs'] ?? 0);
+        calls.add(request);
+        return jsonEncode(
+          request['method'] == 'coreInfo'
+              ? {'protocol': 3, 'resolveCancellation': 1}
+              : {'ok': true},
+        );
+      });
+      final provider = NativeProviderClient();
+      await provider.initialize('/providers');
+      await provider.call('cancelResolve', {
+        'id': 'hongguo:1',
+        'chapter': {'id': '2'},
+        'requestId': 'resolve-1',
+      });
+      await provider.call('catalog', {'source': 'hongguo', 'timeoutMs': 1500});
+      expect(calls[1], {
+        'method': 'cancelResolve',
+        'id': 'hongguo:1',
+        'chapter': {'id': '2'},
+        'requestId': 'resolve-1',
+      });
+      expect(calls[2]['timeoutMs'], 1500);
+    },
+  );
+
+  test(
+    'older cores ignore unsupported resolution cancellation and keep string dispatch',
+    () async {
+      final methods = <String>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'initialize') return null;
+        final method =
+            (jsonDecode(call.arguments as String) as Map)['method'] as String;
+        methods.add(method);
+        return jsonEncode({'protocol': 3});
+      });
+      final provider = NativeProviderClient();
+      await provider.initialize('/providers');
+      await provider.call('cancelResolve', {'requestId': 'legacy'});
+      expect(methods, ['coreInfo']);
+    },
+  );
+
   for (final sample in <(String, String?)>[
     (
       'Get https://site.invalid/?token=secret: 地址指向内网或保留网络（198.18.0.1）',

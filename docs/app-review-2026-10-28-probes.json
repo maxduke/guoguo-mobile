@@ -1,0 +1,519 @@
+{
+  "baseCommit": "694c9de9fa544496f304fe3a50a54768d7c750f1",
+  "version": "0.20.5+59",
+  "recordedAt": "2026-10-28T09:33:58.769213+00:00",
+  "scope": "Read-only application behavior audit; only documentation and synthetic probe receipts added. No device playback acceptance.",
+  "probeInterpretation": "Diagnostic assertions confirm existing gaps; passing does not mean the gaps are fixed.",
+  "diagnosticProbes": [
+    {
+      "name": "missing native init blocks a later selected source",
+      "fixture": "Native setDataSource returns normally; first initialized/error event is withheld.",
+      "fakeElapsedSeconds": 131,
+      "providerResolves": 2,
+      "nativeSources": 1,
+      "nativePlayCalls": 0,
+      "loadingMessage": "正在启动播放器…",
+      "retryVisible": false,
+      "lateFirstInitializedAllowsSecondSource": true,
+      "result": "gap-confirmed",
+      "deviceReproduction": false
+    },
+    {
+      "name": "closing does not interrupt a pending provider resolution",
+      "fixture": "Hold provider resolution, close PlaybackSessionController, then return a late result.",
+      "providerCancelCallsBeforeResolutionReturns": 0,
+      "providerReleaseCallsBeforeResolutionReturns": 0,
+      "pendingAfterClose": true,
+      "lateResultReleased": true,
+      "lateResultPrepared": false,
+      "result": "gap-confirmed-with-late-result-protection-preserved",
+      "deviceReproduction": false
+    }
+  ],
+  "androidDispatchFinding": {
+    "evidence": "source-confirmed; no Android runtime probe",
+    "file": "packages/guoguo_core/android/src/main/kotlin/com/maxduke/guoguo_core/GuoguoCorePlugin.kt",
+    "workerThreads": 3,
+    "controlCallsUseSameExecutor": true,
+    "coreTimeoutStartsAfterBridgeQueue": true
+  },
+  "commands": [
+    "/tmp/guoguo-flutter-3.47.4/bin/flutter test --no-pub --concurrency=1 --reporter=expanded /tmp/guoguo-existing-audit-20261028/native_initialization_probe_test.dart /tmp/guoguo-existing-audit-20261028/resolution_cancel_probe_test.dart",
+    "GUOGUO_PERF_OUTPUT=/tmp/guoguo-existing-audit-20261028/performance.json /tmp/guoguo-flutter-3.47.4/bin/flutter test --no-pub --concurrency=1 --reporter=expanded test/performance_baseline_test.dart --plain-name 'synthetic catalog and partitioned disk baseline'"
+  ],
+  "processResults": {
+    "diagnosticProbeExitCode": 0,
+    "diagnosticCases": 2,
+    "performanceBaselineExitCode": 0,
+    "performanceCases": 1
+  },
+  "performance": {
+    "environment": {
+      "os": "Linux 6.8.0-147-generic #147-Ubuntu SMP PREEMPT_DYNAMIC Thu Sep 24 11:33:16 UTC 2026",
+      "dart": "3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+      "debug": true,
+      "logicalProcessors": 2,
+      "measuredAt": "2026-10-28T09:29:08.102942Z",
+      "samples": 5,
+      "scope": "Synthetic debug host; warm OS cache. No provider, device video, image decoding or energy measurements."
+    },
+    "data": [
+      {
+        "catalogCount": 1000,
+        "historyAndFavoritesCount": 100,
+        "cachedEpisodes": 2000,
+        "lookupFirst": {
+          "medianUsPerOperation": 1.48,
+          "samplesUsPerOperation": [
+            1.51,
+            1.48,
+            1.37,
+            1.41,
+            1.53
+          ],
+          "iterationsPerSample": 100,
+          "warmups": 1
+        },
+        "lookupLast": {
+          "medianUsPerOperation": 24.34,
+          "samplesUsPerOperation": [
+            44.86,
+            26.74,
+            23.59,
+            24.34,
+            22.43
+          ],
+          "iterationsPerSample": 100,
+          "warmups": 1
+        },
+        "lookupMissing": {
+          "medianUsPerOperation": 20.6,
+          "samplesUsPerOperation": [
+            23.66,
+            21.29,
+            20.6,
+            20.51,
+            20.35
+          ],
+          "iterationsPerSample": 100,
+          "warmups": 1
+        },
+        "cachedUnion": {
+          "medianUsPerOperation": 943.7,
+          "samplesUsPerOperation": [
+            1077.0,
+            559.8,
+            943.7,
+            1201.3,
+            531.5
+          ],
+          "iterationsPerSample": 10,
+          "warmups": 1
+        },
+        "queryEmpty": {
+          "medianUsPerOperation": 117.0,
+          "samplesUsPerOperation": [
+            170.0,
+            117.0,
+            120.0,
+            110.0,
+            108.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "queryWords": {
+          "medianUsPerOperation": 14978.0,
+          "samplesUsPerOperation": [
+            14978.0,
+            19908.0,
+            10401.0,
+            9608.0,
+            18863.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "queryTitleSort": {
+          "medianUsPerOperation": 23142.0,
+          "samplesUsPerOperation": [
+            24764.0,
+            20280.0,
+            21667.0,
+            23142.0,
+            32149.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "cacheEncode": {
+          "medianUsPerOperation": 38000.0,
+          "samplesUsPerOperation": [
+            38000.0,
+            57747.0,
+            37644.0,
+            35938.0,
+            54384.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "recordWrite": {
+          "medianUsPerOperation": 8220.0,
+          "samplesUsPerOperation": [
+            12712.0,
+            7616.0,
+            8777.0,
+            8220.0,
+            7852.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "cacheWrite": {
+          "medianUsPerOperation": 75450.0,
+          "samplesUsPerOperation": [
+            86247.0,
+            75450.0,
+            63015.0,
+            90524.0,
+            62701.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "cacheWriteBurst5": {
+          "medianUsPerOperation": 70033.0,
+          "samplesUsPerOperation": [
+            93848.0,
+            62709.0,
+            111639.0,
+            65299.0,
+            70033.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "diskReadAndRestore": {
+          "medianUsPerOperation": 60548.0,
+          "samplesUsPerOperation": [
+            60548.0,
+            66871.0,
+            67718.0,
+            52506.0,
+            51122.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "cacheFileBytes": 2629194,
+        "recordFileBytes": 263799,
+        "processRssBytes": 283881472
+      },
+      {
+        "catalogCount": 10000,
+        "historyAndFavoritesCount": 100,
+        "cachedEpisodes": 2000,
+        "lookupFirst": {
+          "medianUsPerOperation": 0.57,
+          "samplesUsPerOperation": [
+            0.57,
+            0.58,
+            0.57,
+            0.57,
+            0.58
+          ],
+          "iterationsPerSample": 100,
+          "warmups": 1
+        },
+        "lookupLast": {
+          "medianUsPerOperation": 396.16,
+          "samplesUsPerOperation": [
+            410.0,
+            386.31,
+            386.57,
+            397.19,
+            396.16
+          ],
+          "iterationsPerSample": 100,
+          "warmups": 1
+        },
+        "lookupMissing": {
+          "medianUsPerOperation": 311.63,
+          "samplesUsPerOperation": [
+            342.97,
+            311.63,
+            302.13,
+            321.02,
+            290.62
+          ],
+          "iterationsPerSample": 100,
+          "warmups": 1
+        },
+        "cachedUnion": {
+          "medianUsPerOperation": 6370.3,
+          "samplesUsPerOperation": [
+            7378.3,
+            11309.0,
+            6155.3,
+            6370.3,
+            6177.0
+          ],
+          "iterationsPerSample": 10,
+          "warmups": 1
+        },
+        "queryEmpty": {
+          "medianUsPerOperation": 372.0,
+          "samplesUsPerOperation": [
+            430.0,
+            363.0,
+            366.0,
+            392.0,
+            372.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "queryWords": {
+          "medianUsPerOperation": 96547.0,
+          "samplesUsPerOperation": [
+            100652.0,
+            96139.0,
+            96711.0,
+            95191.0,
+            96547.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "queryTitleSort": {
+          "medianUsPerOperation": 179553.0,
+          "samplesUsPerOperation": [
+            213452.0,
+            181368.0,
+            179553.0,
+            172564.0,
+            174940.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "cacheEncode": {
+          "medianUsPerOperation": 387620.0,
+          "samplesUsPerOperation": [
+            399111.0,
+            369296.0,
+            387620.0,
+            398101.0,
+            370886.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "recordWrite": {
+          "medianUsPerOperation": 16688.0,
+          "samplesUsPerOperation": [
+            17394.0,
+            31212.0,
+            16688.0,
+            9175.0,
+            7997.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "cacheWrite": {
+          "medianUsPerOperation": 628655.0,
+          "samplesUsPerOperation": [
+            531721.0,
+            628655.0,
+            566049.0,
+            664743.0,
+            655108.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "cacheWriteBurst5": {
+          "medianUsPerOperation": 639575.0,
+          "samplesUsPerOperation": [
+            738557.0,
+            647897.0,
+            567059.0,
+            587895.0,
+            639575.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "diskReadAndRestore": {
+          "medianUsPerOperation": 524610.0,
+          "samplesUsPerOperation": [
+            623311.0,
+            585895.0,
+            518090.0,
+            466718.0,
+            524610.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "cacheFileBytes": 24803396,
+        "recordFileBytes": 263799,
+        "processRssBytes": 477827072
+      },
+      {
+        "catalogCount": 10000,
+        "historyAndFavoritesCount": 1000,
+        "cachedEpisodes": 2000,
+        "lookupFirst": {
+          "medianUsPerOperation": 0.58,
+          "samplesUsPerOperation": [
+            0.85,
+            0.51,
+            0.58,
+            0.51,
+            0.62
+          ],
+          "iterationsPerSample": 100,
+          "warmups": 1
+        },
+        "lookupLast": {
+          "medianUsPerOperation": 291.97,
+          "samplesUsPerOperation": [
+            320.45,
+            288.93,
+            291.97,
+            291.45,
+            292.45
+          ],
+          "iterationsPerSample": 100,
+          "warmups": 1
+        },
+        "lookupMissing": {
+          "medianUsPerOperation": 331.99,
+          "samplesUsPerOperation": [
+            309.97,
+            331.99,
+            318.7,
+            773.53,
+            702.24
+          ],
+          "iterationsPerSample": 100,
+          "warmups": 1
+        },
+        "cachedUnion": {
+          "medianUsPerOperation": 7425.9,
+          "samplesUsPerOperation": [
+            8344.9,
+            7191.0,
+            7425.9,
+            6907.0,
+            7525.3
+          ],
+          "iterationsPerSample": 10,
+          "warmups": 1
+        },
+        "queryEmpty": {
+          "medianUsPerOperation": 417.0,
+          "samplesUsPerOperation": [
+            609.0,
+            423.0,
+            362.0,
+            417.0,
+            385.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "queryWords": {
+          "medianUsPerOperation": 97191.0,
+          "samplesUsPerOperation": [
+            108585.0,
+            103963.0,
+            94304.0,
+            94892.0,
+            97191.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "queryTitleSort": {
+          "medianUsPerOperation": 183063.0,
+          "samplesUsPerOperation": [
+            183063.0,
+            245790.0,
+            184744.0,
+            177067.0,
+            179740.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "cacheEncode": {
+          "medianUsPerOperation": 372345.0,
+          "samplesUsPerOperation": [
+            367070.0,
+            372345.0,
+            425080.0,
+            351352.0,
+            377393.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "recordWrite": {
+          "medianUsPerOperation": 56726.0,
+          "samplesUsPerOperation": [
+            51610.0,
+            56726.0,
+            60697.0,
+            52023.0,
+            122780.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "cacheWrite": {
+          "medianUsPerOperation": 650401.0,
+          "samplesUsPerOperation": [
+            746487.0,
+            491854.0,
+            653268.0,
+            597969.0,
+            650401.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "cacheWriteBurst5": {
+          "medianUsPerOperation": 654707.0,
+          "samplesUsPerOperation": [
+            827319.0,
+            818868.0,
+            540644.0,
+            587454.0,
+            654707.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "diskReadAndRestore": {
+          "medianUsPerOperation": 559752.0,
+          "samplesUsPerOperation": [
+            553706.0,
+            585885.0,
+            515550.0,
+            645257.0,
+            559752.0
+          ],
+          "iterationsPerSample": 1,
+          "warmups": 1
+        },
+        "cacheFileBytes": 24803396,
+        "recordFileBytes": 2640519,
+        "processRssBytes": 644308992
+      }
+    ]
+  }
+}
