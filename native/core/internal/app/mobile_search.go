@@ -90,7 +90,7 @@ func (c *MobileClient) searchProgress(request mobileRequest, cancel bool) map[st
 				}
 			}
 		}
-		c.canceledSearches[request.RequestID] = mobileCanceledRead{source: request.Source, query: strings.TrimSpace(request.Query), expires: time.Now().Add(10 * time.Second)}
+		c.canceledSearches[request.RequestID] = mobileCanceledRead{source: request.Source, query: strings.TrimSpace(request.Query), expires: time.Now().Add(mobileCancellationRetention)}
 	}
 	if read == nil || read.source != request.Source || read.query != strings.TrimSpace(request.Query) {
 		return map[string]any{"items": []any{}, "done": true}

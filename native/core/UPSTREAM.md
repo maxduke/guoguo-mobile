@@ -179,3 +179,12 @@ playback guidance/recovery presentation is local implementation.
 The [implementation and broader feature comparison](../../docs/hongguo-optimizations-2026-10-28.md)
 records the scope and candidate follow-ups. The existing GPL-3.0 license and
 algorithm provenance are retained; account/cloud synchronization is excluded.
+
+## October 28 mobile playback lifetime hardening
+
+Request-scoped resolve cancellation, bounded cancellation tombstones, and the
+closed/canceled playback publication guard are local mobile-facade corrections.
+They retain protocol 3 and advertise optional resolve cancellation. Provider
+parsing, model selection, signing, and retry budgets are unchanged. See the
+[playback lifetime record](../../docs/playback-reliability-2026-10-28.md) for the
+Flutter initialization guard, Android dispatch budgets, and validation boundaries.

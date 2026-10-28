@@ -16,6 +16,8 @@ class _Provider implements ProviderClient {
   final qualities = <int>[];
   final metadataAhead = <int>[];
   final releases = <String>[], cancelled = <String>[];
+  final resolveRequests = <Map<String, dynamic>>[];
+  final resolveCancellations = <Map<String, dynamic>>[];
   final plans = <String, Map<String, dynamic>>{};
   Completer<Map<String, dynamic>>? resolveGate, warmGate;
 
@@ -40,6 +42,7 @@ class _Provider implements ProviderClient {
     final id = args['id'] as String? ?? '';
     switch (method) {
       case 'resolve':
+        resolveRequests.add(args);
         resolves++;
         qualities.add(args['quality'] as int);
         metadataAhead.add(args['metadataAhead'] as int? ?? 0);
@@ -57,6 +60,9 @@ class _Provider implements ProviderClient {
         return {};
       case 'release':
         releases.add(id);
+        return {};
+      case 'cancelResolve':
+        resolveCancellations.add(args);
         return {};
       default:
         throw StateError('Unexpected method $method');
@@ -139,6 +145,121 @@ class _Fixture {
 }
 
 void main() {
+  test(
+    'eviction cancels only its pending resolution using the same identity',
+    () async {
+      final f = _Fixture();
+      final gate = f.provider.resolveGate = Completer();
+      final pending = f.session.prepare(0, ticket: f.session.generation);
+      final failed = expectLater(pending, throwsA(isA<EpisodeCancelled>()));
+      await settle();
+      f.session.evict(0);
+      await settle();
+      final request = f.provider.resolveRequests.single;
+      expect(request['requestId'], isNotEmpty);
+      expect(f.provider.resolveCancellations, [
+        {
+          'id': 'fixture',
+          'chapter': {'id': '1'},
+          'requestId': request['requestId'],
+        },
+      ]);
+      f.provider.resolveGate = null;
+      await f.session.prepare(1, ticket: f.session.generation);
+      expect(
+        f.provider.resolveRequests.last['requestId'],
+        isNot(request['requestId']),
+      );
+      expect(f.provider.resolveCancellations, hasLength(1));
+      gate.complete(f.provider.plans['session-1']);
+      await failed;
+      expect(f.provider.releases, ['session-1']);
+    },
+  );
+
+  test('promoting pending resolution preserves the shared request', () async {
+    final f = _Fixture();
+    final gate = f.provider.resolveGate = Completer();
+    final prefetch = f.session.prefetch(1);
+    await settle();
+    final selected = f.session.prepare(1, ticket: f.session.generation);
+    await settle();
+    expect(f.provider.resolveCancellations, isEmpty);
+    gate.complete(f.provider.plans['session-1']);
+    expect(await selected, same(await prefetch));
+    expect(f.provider.resolves, 1);
+  });
+
+  test(
+    'exit stops provider IO before draining already prepared media',
+    () async {
+      final f = _Fixture();
+      await f.session.prepare(0, ticket: f.session.generation);
+      final active = f.session.peek(0);
+      final gate = f.provider.resolveGate = Completer();
+      final pending = f.session.prefetch(1);
+      final failed = expectLater(pending, throwsA(isA<EpisodeCancelled>()));
+      await settle();
+      f.session.cancelPendingResolutions();
+      await settle();
+      expect(f.provider.resolveCancellations, hasLength(1));
+      expect(f.session.peek(0), same(active));
+      expect(f.jobs.first.disposed, false);
+      gate.complete(f.provider.plans['session-2']);
+      await failed;
+      expect(f.provider.releases, ['session-2']);
+      f.session.close();
+      await settle();
+      expect(f.jobs.first.disposed, true);
+    },
+  );
+
+  for (final reason in ['timeout', 'selection', 'close']) {
+    testWidgets('native setup can retire an interrupted controller: $reason', (
+      tester,
+    ) async {
+      final f = _Fixture();
+      final gate = Completer<void>();
+      var retired = 0, installed = 0;
+      final pending = f.session.installSource(
+        f.session.generation,
+        () => gate.future,
+        abandon: () => retired++,
+        timeout: const Duration(seconds: 2),
+      );
+      final failed = expectLater(
+        pending,
+        throwsA(
+          reason == 'timeout'
+              ? isA<ProviderException>()
+              : isA<EpisodeCancelled>(),
+        ),
+      );
+      await tester.pump();
+      if (reason == 'timeout') {
+        await tester.pump(const Duration(seconds: 3));
+      } else if (reason == 'selection') {
+        f.session.invalidate();
+      } else {
+        f.session.close();
+      }
+      await tester.pump();
+      await failed;
+      expect(retired, 1);
+      if (reason != 'close') {
+        expect(
+          await f.session.installSource(f.session.generation, () async {
+            installed++;
+          }),
+          true,
+        );
+        expect(installed, 1);
+      }
+      gate.completeError(StateError('late native reply'));
+      await tester.pump();
+      expect(retired, 1);
+    });
+  }
   test(
     'only Hongguo background preparation hints bounded model lookahead',
     () async {

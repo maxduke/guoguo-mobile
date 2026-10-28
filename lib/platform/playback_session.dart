@@ -33,6 +33,7 @@ class PreparedEpisode {
 /// Owns episode preparation, native session cleanup and source handoff order.
 /// UI/native events stay with the player; they invalidate tickets on changes.
 class PlaybackSessionController {
+  static int _requestSerial = 0;
   PlaybackSessionController({
     required ProviderClient provider,
     required this.drama,
@@ -73,16 +74,31 @@ class PlaybackSessionController {
   final Map<int, ResolvedMedia> _resolved = {};
   final Set<int> _forceComplete = {}, _compatibilityFallback = {};
   final Map<int, PreparationTiming> _timings = {};
+  final Set<EpisodeCancellation> _resolving = {};
   Future<void> _sourceSetup = Future.value();
+  void Function()? _interruptSource;
   bool _closed = false;
   int _generation = 0;
   int get generation => _generation;
-  int invalidate() => ++_generation;
+  int invalidate() {
+    ++_generation;
+    _interruptSource?.call();
+    return _generation;
+  }
+
   bool isCurrent(int ticket) => !_closed && ticket == _generation;
 
   PreparedEpisode? peek(int index) => _buffer.peek(index);
   bool contains(int index) => _buffer.contains(index);
   PreparationTiming? timing(int index) => _timings[index];
+
+  // Exit may still be draining a remote/native player. Stop provider IO now,
+  // keeping already prepared media alive until that player's teardown ends.
+  void cancelPendingResolutions() {
+    for (final cancellation in _resolving.toList()) {
+      cancellation.cancel();
+    }
+  }
 
   Future<PreparedEpisode> prefetch(
     int index, {
@@ -129,10 +145,42 @@ class PlaybackSessionController {
   }
 
   /// A failed setup does not poison later setups; stale queued work is skipped.
-  Future<bool> installSource(int ticket, Future<void> Function() install) {
+  Future<bool> installSource(
+    int ticket,
+    Future<void> Function() install, {
+    void Function()? abandon,
+    Duration timeout = const Duration(seconds: 30),
+  }) {
     final operation = _sourceSetup.then((_) async {
       if (!isCurrent(ticket)) return false;
-      await install();
+      if (abandon == null) {
+        await install();
+      } else {
+        final interrupted = Completer<void>();
+        void interrupt() {
+          if (!interrupted.isCompleted) {
+            interrupted.completeError(EpisodeCancelled());
+          }
+        }
+
+        _interruptSource = interrupt;
+        final timer = Timer(timeout, () {
+          if (!interrupted.isCompleted) {
+            interrupted.completeError(const ProviderException('播放器初始化超时，请重试'));
+          }
+        });
+        try {
+          // Retiring the native controller isolates any later callback. Merely
+          // timing out a shared controller would let it initialize a new source.
+          await Future.any([Future.sync(install), interrupted.future]);
+        } catch (_) {
+          if (interrupted.isCompleted) abandon();
+          rethrow;
+        } finally {
+          timer.cancel();
+          if (identical(_interruptSource, interrupt)) _interruptSource = null;
+        }
+      }
       return isCurrent(ticket);
     });
     _sourceSetup = operation.then<void>(
@@ -155,10 +203,19 @@ class PlaybackSessionController {
     var stageName = 'local';
     final preparer = _preparerFactory();
     ResolvedMedia? media = _resolved.remove(index);
+    String? resolving;
     void cancelPrefetch() =>
         unawaited(_provider.cancelPrefetch(media).catchError((Object _) {}));
     cancellation.onForeground = cancelPrefetch;
     cancellation.onCancel = () {
+      final request = resolving;
+      if (request != null) {
+        unawaited(
+          _provider
+              .cancelResolve(drama, episodes[index], request)
+              .catchError((Object _) {}),
+        );
+      }
       cancelPrefetch();
       unawaited(preparer.cancel().catchError((Object _) {}));
     };
@@ -174,17 +231,28 @@ class PlaybackSessionController {
         stageName = 'resolve';
         _phase(index, '正在获取播放资源…');
         stage.start();
-        media ??= await _provider.resolve(
-          drama,
-          episodes[index],
-          quality: _qualities[index] ?? 0,
-          // Background preparation already passed the user's network policy.
-          // This batches small model metadata, without preparing more media.
-          metadataAhead:
-              cancellation.background && drama.source == DramaSource.hongguo
-              ? 2
-              : 0,
-        );
+        if (media == null) {
+          resolving =
+              'resolve-${DateTime.now().microsecondsSinceEpoch}-${++_requestSerial}';
+          _resolving.add(cancellation);
+          try {
+            media = await _provider.resolve(
+              drama,
+              episodes[index],
+              quality: _qualities[index] ?? 0,
+              requestId: resolving,
+              // Background preparation already passed the user's network policy.
+              // This batches small model metadata, without preparing more media.
+              metadataAhead:
+                  cancellation.background && drama.source == DramaSource.hongguo
+                  ? 2
+                  : 0,
+            );
+          } finally {
+            _resolving.remove(cancellation);
+            resolving = null;
+          }
+        }
         timing.resolveMs = stage.elapsedMilliseconds;
         stage.reset();
         stageName = 'prepare';
