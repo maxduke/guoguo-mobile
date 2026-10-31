@@ -51,6 +51,7 @@ func NewMobileClient(directory string) (*MobileClient, error) {
 	cfg.OutputDir = filepath.Join(directory, "media")
 	cfg.MaxPagesPerSort = 1
 	cfg.Retries = 2
+	cfg.hongguoPlayerAttempts = hongguoPlayerMaxAttempts
 	downloader := NewDownloader(cfg)
 	var known []Drama
 	var hongguoState *hongguoCatalogState

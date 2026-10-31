@@ -44,8 +44,10 @@ func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoI
 	}
 	payload := map[string]any{
 		"biz_param": map[string]any{
-			"detail_page_version":       0,
-			"device_level":              3,
+			"detail_page_version": 0,
+			// The conservative profile keeps AVC/HEVC lower-quality renditions
+			// available instead of receiving ByteVC2-only lower tiers.
+			"device_level":              1,
 			"disable_digg_stat":         false,
 			"need_all_video_definition": true,
 			"need_mp4_align":            false,
@@ -58,13 +60,13 @@ func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoI
 			"1004": ids, // Short-drama content type.
 		},
 	}
-	attempts := downloader.hongguoRequestAttempts()
+	attempts := downloader.hongguoPlayerRequestAttempts()
 	limit := 0
 	if len(ids) > 1 {
 		limit = 1
 	}
-	fetch := func(limit int) (map[string]any, providerMedia, error) {
-		result, err := downloader.hongguoPlayerRequestWithAttempts(ctx, "/novel/player/multi_video_model/v1/", payload, limit)
+	fetch := func(limit, offset int) (map[string]any, providerMedia, error) {
+		result, err := downloader.hongguoPlayerRequestWithAttempts(ctx, "/novel/player/multi_video_model/v1/", payload, limit, offset)
 		if err != nil {
 			return nil, providerMedia{}, err
 		}
@@ -72,20 +74,20 @@ func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoI
 		media, err := parseHongguoAppMedia(nestedMap(result, "data", videoID))
 		return result, media, err
 	}
-	result, media, err := fetch(limit)
+	result, media, err := fetch(limit, 0)
 	if err != nil && len(ids) > 1 && attempts > 1 && ctx.Err() == nil {
 		var backoff *requestBackoff
 		if !errors.As(err, &backoff) && !errors.Is(err, errHongguoDeviceRegistration) {
 			// Optional lookahead must not consume the selected episode's remaining
 			// retry budget. Fall back to one ID and keep the same registered device.
 			select {
-			case <-time.After(time.Second):
+			case <-time.After(hongguoPlaybackRetryDelay(1)):
 			case <-ctx.Done():
 				return providerMedia{}, ctx.Err()
 			}
 			ids = ids[:1]
 			payload["mixed_video_id_map"] = map[string]any{"1004": ids}
-			result, media, err = fetch(attempts - 1)
+			result, media, err = fetch(attempts-1, 1)
 		}
 	}
 	if ctx.Err() != nil {
@@ -132,7 +134,8 @@ func selectHongguoAppMedia(model map[string]any) (providerMedia, error) {
 		variant, _ := row.(map[string]any)
 		meta := nestedMap(variant, "video_meta")
 		codec := strings.ToLower(mapString(meta, "codec_type"))
-		if codec == "bytevc2" || strings.Contains(strings.ToLower(mapString(variant, "gear_des_key")), "bytevc2") {
+		gear := strings.ToLower(mapString(variant, "gear_des_key"))
+		if codec == "bytevc2" || codec == "bvc2" || strings.Contains(gear, "bytevc2") || strings.Contains(gear, "bvc2") {
 			continue
 		}
 		address := mapString(variant, "main_url")

@@ -28,6 +28,32 @@ func hongguoVideoModelFixture() map[string]any {
 	}
 }
 
+func TestHongguoAppMediaRejectsByteVC2Aliases(t *testing.T) {
+	for _, label := range []string{"bytevc2", "BYTEVC2", "bvc2", "BVC2"} {
+		for _, field := range []string{"codec", "gear"} {
+			t.Run(label+"/"+field, func(t *testing.T) {
+				unsupported := map[string]any{"main_url": "https://media.example.test/unsupported.mp4"}
+				if field == "codec" {
+					unsupported["video_meta"] = map[string]any{"codec_type": label, "definition": "2160p"}
+				} else {
+					unsupported["gear_des_key"] = "video_" + label + "_2160p"
+				}
+				model := map[string]any{"video_list": []any{unsupported}}
+				if media, err := selectHongguoAppMedia(model); err == nil || media.URL != "" {
+					t.Fatal("accepted unsupported ByteVC2 media")
+				}
+				model["video_list"] = append(model["video_list"].([]any), map[string]any{
+					"main_url":   "https://media.example.test/compatible.mp4",
+					"video_meta": map[string]any{"codec_type": "h264", "definition": "720p"},
+				})
+				if media, err := selectHongguoAppMedia(model); err != nil || media.Quality != 720 || len(media.Variants) != 1 {
+					t.Fatal("unsupported media displaced the compatible rendition", err)
+				}
+			})
+		}
+	}
+}
+
 func TestHongguoAppMediaMedia(t *testing.T) {
 	const videoID = "7000000000000000011"
 	for _, encoding := range []string{"object", "JSON string"} {
@@ -62,7 +88,7 @@ func TestHongguoAppMediaMedia(t *testing.T) {
 					t.Fatal(err)
 				}
 				biz := nestedMap(payload, "biz_param")
-				if biz["video_platform"] != float64(1024) || biz["need_all_video_definition"] != true || biz["device_level"] != float64(3) || biz["detail_page_version"] != float64(0) {
+				if biz["video_platform"] != float64(1024) || biz["need_all_video_definition"] != true || biz["device_level"] != float64(1) || biz["detail_page_version"] != float64(0) {
 					t.Errorf("invalid player parameters: %+v", biz)
 				}
 				if !reflect.DeepEqual(payload["mixed_video_id_map"], map[string]any{"1004": []any{videoID}}) {

@@ -188,3 +188,25 @@ They retain protocol 3 and advertise optional resolve cancellation. Provider
 parsing, model selection, signing, and retry budgets are unchanged. See the
 [playback lifetime record](../../docs/playback-reliability-2026-10-28.md) for the
 Flutter initialization guard, Android dispatch budgets, and validation boundaries.
+
+## October 31 Hongguo playback route recovery
+
+Playback route changes and the conservative `device_level: 1` request profile
+are selectively adapted from hongguoTV at
+[`b6e018ddb941b798e0672d23186c91cc556f1ab7`](https://github.com/tsukiyo-zero/hongguoTV/tree/b6e018ddb941b798e0672d23186c91cc556f1ab7),
+specifically [`PlayRetry.kt`](https://github.com/tsukiyo-zero/hongguoTV/blob/b6e018ddb941b798e0672d23186c91cc556f1ab7/kotlin-tv/core/src/main/kotlin/com/hongguotv/core/PlayRetry.kt)
+and [`ContentRepository.kt`](https://github.com/tsukiyo-zero/hongguoTV/blob/b6e018ddb941b798e0672d23186c91cc556f1ab7/kotlin-tv/core/src/main/kotlin/com/hongguotv/core/ContentRepository.kt).
+The existing GPL-3.0 license and attribution remain applicable.
+
+The Go adaptation rotates only the fixed unsigned playback origins and retains
+the registered device identity. Mobile Hongguo playback has a dedicated four-read
+budget with 700/1500/3000 ms backoff; general provider retries retain their prior
+budget. Optional batch metadata falls back to the selected episode within the
+same four attempts and continues the route sequence.
+Retries use isolated HTTP transports with rebuilt HTTP/2 handling; shared pools,
+TLS verification, DNS and proxy settings are preserved. Codec filtering also
+recognizes the upstream `bvc2` alias. Signed requests, registration, model-cache
+policy and higher-level recovery budgets keep their existing contracts.
+
+The [repair and feature assessment](../../docs/hongguo-upstream-review-2026-10-31.md)
+records live checks and the remaining iPhone acceptance boundary.
