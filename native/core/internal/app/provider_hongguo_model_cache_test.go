@@ -87,8 +87,10 @@ func TestHongguoBatchFailureFallsBackWithinExistingBudget(t *testing.T) {
 		{http.StatusOK, `{"data":{"800002":{"video_model":{}}}}`},
 	} {
 		var requests [][]string
+		var hosts []string
 		var identity string
 		d := hongguoRegisteredMediaDownloader(t, func(request *http.Request) (*http.Response, error) {
+			hosts = append(hosts, request.URL.Host)
 			var payload struct {
 				IDs map[string][]string `json:"mixed_video_id_map"`
 			}
@@ -113,6 +115,9 @@ func TestHongguoBatchFailureFallsBackWithinExistingBudget(t *testing.T) {
 		if !reflect.DeepEqual(requests, [][]string{{"800001", "800002", "800003"}, {"800001"}}) {
 			t.Fatal("fallback exceeded the budget or retried lookahead", requests)
 		}
+		if !reflect.DeepEqual(hosts, []string{"api5-normal-sinfonlineb.fqnovel.com", "api5-normal-hl.fqnovel.com"}) {
+			t.Fatal("batch fallback restarted the failed playback route", hosts)
+		}
 		if len(d.hongguoClient().upcomingModels) != 0 {
 			t.Fatal("failed batch warmed another episode")
 		}
@@ -120,26 +125,33 @@ func TestHongguoBatchFailureFallsBackWithinExistingBudget(t *testing.T) {
 }
 
 func TestHongguoBatchFailureAndCancelDoNotExpandRetries(t *testing.T) {
-	for _, cancelFirst := range []bool{false, true} {
+	for _, scenario := range []struct {
+		attempts int
+		cancel   bool
+	}{{2, false}, {2, true}, {4, false}, {4, true}} {
 		ctx, cancel := context.WithCancel(context.Background())
 		calls := 0
+		var hosts []string
 		d := hongguoRegisteredMediaDownloader(t, func(request *http.Request) (*http.Response, error) {
 			calls++
-			if cancelFirst {
+			hosts = append(hosts, request.URL.Host)
+			if scenario.cancel {
 				cancel()
 			}
 			return rankingHTTPResponse(request, http.StatusServiceUnavailable, ""), nil
 		})
 		d.cfg.Retries = 2
-		if _, err := d.resolveHongguoAppMedia(ctx, "800001", "800002"); err == nil || cancelFirst && !errors.Is(err, context.Canceled) {
+		d.cfg.hongguoPlayerAttempts = scenario.attempts
+		if _, err := d.resolveHongguoAppMedia(ctx, "800001", "800002"); err == nil || scenario.cancel && !errors.Is(err, context.Canceled) {
 			t.Fatal("accepted failed model response")
 		}
-		want := 2
-		if cancelFirst {
+		want := scenario.attempts
+		if scenario.cancel {
 			want = 1
 		}
-		if calls != want {
-			t.Fatal("retry/cancellation budget changed", calls, want)
+		wantHosts := []string{"api5-normal-sinfonlineb.fqnovel.com", "api5-normal-hl.fqnovel.com", "api5-normal-lf.fqnovel.com", "api5-normal-sinfonlineb.fqnovel.com"}
+		if calls != want || !reflect.DeepEqual(hosts, wantHosts[:want]) {
+			t.Fatal("retry/cancellation budget or fallback route changed", calls, want, hosts)
 		}
 		cancel()
 	}

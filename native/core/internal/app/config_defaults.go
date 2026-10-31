@@ -33,6 +33,8 @@ type Config struct {
 	HuangguoVideoURL   string `json:"huangguoVideoURL,omitempty"`
 	HuangdouURL        string `json:"huangdouURL,omitempty"`
 	HongguoURL         string `json:"hongguoURL,omitempty"`
+	// Mobile playback has a separate bounded policy from catalog/download retries.
+	hongguoPlayerAttempts int
 }
 
 func defaultConfig() Config {

@@ -147,15 +147,15 @@ func hongguoCatalogHasMore(state *hongguoCatalogState) bool {
 }
 
 func (downloader *Downloader) hongguoAppRequest(ctx context.Context, method, path string, extra url.Values, payload any) (map[string]any, error) {
-	return downloader.hongguoRequest(ctx, hongguoSignedAppRequest, method, path, extra, payload, 0)
+	return downloader.hongguoRequest(ctx, hongguoSignedAppRequest, method, path, extra, payload, 0, 0)
 }
 
 func (downloader *Downloader) hongguoPlayerRequest(ctx context.Context, path string, payload any) (map[string]any, error) {
-	return downloader.hongguoPlayerRequestWithAttempts(ctx, path, payload, 0)
+	return downloader.hongguoPlayerRequestWithAttempts(ctx, path, payload, 0, 0)
 }
 
-func (downloader *Downloader) hongguoPlayerRequestWithAttempts(ctx context.Context, path string, payload any, limit int) (map[string]any, error) {
-	return downloader.hongguoRequest(ctx, hongguoUnsignedPlayerRequest, http.MethodPost, path, nil, payload, limit)
+func (downloader *Downloader) hongguoPlayerRequestWithAttempts(ctx context.Context, path string, payload any, limit, offset int) (map[string]any, error) {
+	return downloader.hongguoRequest(ctx, hongguoUnsignedPlayerRequest, http.MethodPost, path, nil, payload, limit, offset)
 }
 
 func (downloader *Downloader) hongguoRequestAttempts() int {
@@ -172,7 +172,7 @@ func hongguoAppDeviceQuery() url.Values {
 	}
 }
 
-func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRequestMode, method, path string, extra url.Values, payload any, limit int) (map[string]any, error) {
+func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRequestMode, method, path string, extra url.Values, payload any, limit, offset int) (map[string]any, error) {
 	client := downloader.hongguoClient()
 	client.mu.Lock()
 	base, deviceID, installID := client.baseURL, client.state.DeviceID, client.state.InstallID
@@ -206,22 +206,40 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRe
 		}
 	}
 	attempts := downloader.hongguoRequestAttempts()
+	if mode == hongguoUnsignedPlayerRequest {
+		attempts = downloader.hongguoPlayerRequestAttempts()
+	}
 	if limit > 0 && limit < attempts {
 		attempts = limit
 	}
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
+			delay := time.Duration(attempt) * time.Second
+			if mode == hongguoUnsignedPlayerRequest {
+				delay = hongguoPlaybackRetryDelay(offset + attempt)
+			}
 			select {
-			case <-time.After(time.Duration(attempt) * time.Second):
+			case <-time.After(delay):
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
 		}
-		request, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(base, "/")+path, bytes.NewReader(body))
+		requestBase := base
+		attemptClient := httpClient
+		if mode == hongguoUnsignedPlayerRequest {
+			requestBase = hongguoPlaybackBaseURL(base, offset+attempt)
+			if offset+attempt > 0 {
+				var release func()
+				attemptClient, release = hongguoFreshPlayerClient(httpClient)
+				defer release()
+			}
+		}
+		request, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(requestBase, "/")+path, bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
+		request.Close = mode == hongguoUnsignedPlayerRequest && offset+attempt > 0
 		request.Header.Set("User-Agent", hongguoAppUserAgent)
 		request.Header.Set("Accept", "application/json")
 		request.Header.Set("X-XS-From-Web", "0")
@@ -262,7 +280,7 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRe
 				return nil
 			}
 			return signHongguoRequest(prepared, body, now)
-		}, httpClient)
+		}, attemptClient)
 		if err != nil {
 			lastErr = err
 			var backoff *requestBackoff

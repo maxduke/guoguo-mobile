@@ -1,7 +1,7 @@
 name: guoguo_mobile
 description: 果果 — 随时接着看，独立运行的短剧应用。
 publish_to: none
-version: 0.20.6+60
+version: 0.20.7+61
 environment:
   sdk: '>=3.11.0 <4.0.0'
 dependencies:
