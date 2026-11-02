@@ -65,39 +65,78 @@ func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoI
 	if len(ids) > 1 {
 		limit = 1
 	}
-	fetch := func(limit, offset int) (map[string]any, providerMedia, error) {
+	fetch := func(limit, offset int) (hongguoPlayerResponse, providerMedia, error) {
 		result, err := downloader.hongguoPlayerRequestWithAttempts(ctx, "/novel/player/multi_video_model/v1/", payload, limit, offset)
 		if err != nil {
-			return nil, providerMedia{}, err
+			return result, providerMedia{}, err
 		}
 		// Never substitute another episode when the requested ID is missing.
-		media, err := parseHongguoAppMedia(nestedMap(result, "data", videoID))
+		media, err := parseHongguoAppMedia(nestedMap(result.data, "data", videoID))
 		return result, media, err
 	}
-	result, media, err := fetch(limit, 0)
-	if err != nil && len(ids) > 1 && attempts > 1 && ctx.Err() == nil {
-		var backoff *requestBackoff
-		if !errors.As(err, &backoff) && !errors.Is(err, errHongguoDeviceRegistration) {
-			// Optional lookahead must not consume the selected episode's remaining
-			// retry budget. Fall back to one ID and keep the same registered device.
-			select {
-			case <-time.After(hongguoPlaybackRetryDelay(1)):
-			case <-ctx.Done():
-				return providerMedia{}, ctx.Err()
+	// Two old-identity rounds and at most one replacement-identity round fit in
+	// the existing request deadline. Optional background lookahead never rotates
+	// the identity or starts additional rounds on behalf of the current player.
+	lookaheadHint, _ := ctx.Value(hongguoMetadataAheadKey{}).(int)
+	recoverIdentity := attempts == hongguoPlayerMaxAttempts && len(metadataAhead) == 0 && lookaheadHint == 0
+	for round := 0; round < 3; round++ {
+		result, media, err := fetch(limit, 0)
+		emptyAttempts := hongguoEmptyAttemptCount(err)
+		if err != nil && len(ids) > 1 && attempts > 1 && ctx.Err() == nil {
+			var backoff *requestBackoff
+			if !errors.As(err, &backoff) && !errors.Is(err, errHongguoDeviceRegistration) {
+				select {
+				case <-time.After(hongguoPlaybackRetryDelay(1)):
+				case <-ctx.Done():
+					return providerMedia{}, ctx.Err()
+				}
+				firstLease := result.lease
+				ids = ids[:1]
+				payload["mixed_video_id_map"] = map[string]any{"1004": ids}
+				result, media, err = fetch(attempts-1, 1)
+				remainingEmpty := hongguoEmptyAttemptCount(err)
+				if emptyAttempts >= 0 && remainingEmpty >= 0 && result.lease == firstLease {
+					emptyAttempts += remainingEmpty
+				} else {
+					emptyAttempts = -1
+				}
 			}
-			ids = ids[:1]
-			payload["mixed_video_id_map"] = map[string]any{"1004": ids}
-			result, media, err = fetch(attempts-1, 1)
 		}
-	}
-	if ctx.Err() != nil {
-		return providerMedia{}, ctx.Err()
-	}
-	if err != nil {
+		if ctx.Err() != nil {
+			return providerMedia{}, ctx.Err()
+		}
+		if err == nil {
+			downloader.hongguoPlaybackModelSucceeded(result.lease)
+			downloader.keepHongguoUpcomingModels(result.data, ids[1:], result.lease.identity)
+			return media, nil
+		}
+		if recoverIdentity {
+			allEmpty := emptyAttempts == attempts
+			retry, rotate := downloader.hongguoPlaybackRoundFailed(result.lease, allEmpty)
+			if retry && round < 2 {
+				if rotate {
+					changed, rotateErr := downloader.rotateHongguoPlaybackDevice(ctx, result.lease)
+					if rotateErr != nil {
+						return providerMedia{}, rotateErr
+					}
+					if !changed {
+						return providerMedia{}, errHongguoPlaybackRecoveryExhausted
+					}
+				}
+				select {
+				case <-time.After(hongguoPlaybackRetryDelay(1)):
+					continue
+				case <-ctx.Done():
+					return providerMedia{}, ctx.Err()
+				}
+			}
+			if allEmpty && downloader.hongguoPlaybackRecoveryAttempted(result.lease) {
+				return providerMedia{}, errHongguoPlaybackRecoveryExhausted
+			}
+		}
 		return providerMedia{}, err
 	}
-	downloader.keepHongguoUpcomingModels(result, ids[1:])
-	return media, nil
+	return providerMedia{}, errHongguoPlaybackRecoveryExhausted
 }
 
 func parseHongguoAppMedia(entry map[string]any) (providerMedia, error) {

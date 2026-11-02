@@ -41,11 +41,6 @@ func (downloader *Downloader) hongguoPlaybackDevice(ctx context.Context) (honggu
 			return hongguoPlayerIdentity{}, err
 		}
 		client.mu.Lock()
-		if client.player.deviceID != "" {
-			identity := client.player
-			client.mu.Unlock()
-			return identity, nil
-		}
 		if pending := client.playerPending; pending != nil {
 			client.mu.Unlock()
 			traceShared(ctx)
@@ -61,6 +56,11 @@ func (downloader *Downloader) hongguoPlaybackDevice(ctx context.Context) (honggu
 				}
 				return pending.identity, pending.err
 			}
+		}
+		if client.player.deviceID != "" {
+			identity := client.player
+			client.mu.Unlock()
+			return identity, nil
 		}
 		pending := &hongguoPlayerDeviceCall{done: make(chan struct{})}
 		client.playerPending = pending
