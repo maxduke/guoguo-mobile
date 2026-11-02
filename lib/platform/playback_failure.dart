@@ -67,6 +67,9 @@ class PlaybackFailure {
     if (error is ProviderException) {
       // Match our own bounded core messages, and never render the surrounding
       // fallback errors, response body, media URL or device identifiers.
+      if (error.message.contains('红果播放恢复后仍未返回有效数据')) {
+        return const PlaybackFailure('红果服务仍未返回播放资源，请稍后重试或切换网络');
+      }
       if (error.message.contains('红果播放设备注册失败')) {
         return const PlaybackFailure(
           '红果播放连接暂未就绪，请稍后重试',

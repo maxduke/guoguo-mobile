@@ -48,7 +48,13 @@ func TestHongguoMobilePlaybackHasBoundedDedicatedRetries(t *testing.T) {
 					t.Fatal("mobile playback did not reach the fourth permitted route", err)
 				}
 			} else {
-				_, err = d.resolveHongguoAppMedia(ctx, "800001")
+				if outcome == "exhaust" {
+					// Background metadata retains a single four-attempt budget;
+					// foreground identity recovery has separate regressions.
+					_, err = d.resolveHongguoAppMedia(ctx, "800001", "800002")
+				} else {
+					_, err = d.resolveHongguoAppMedia(ctx, "800001")
+				}
 				if err == nil || outcome == "cancel" && !errors.Is(err, context.Canceled) {
 					t.Fatal("mobile playback ignored exhaustion or cancellation", err)
 				}

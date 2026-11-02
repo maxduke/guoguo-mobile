@@ -35,6 +35,24 @@ type hongguoPlayerIdentity struct {
 	cookie    string
 }
 
+// A request retains the identity and successful-model revision it actually used.
+// Late replies must not change recovery state belonging to a newer request.
+type hongguoPlayerLease struct {
+	identity hongguoPlayerIdentity
+	revision uint64
+}
+
+type hongguoPlayerResponse struct {
+	data  map[string]any
+	lease hongguoPlayerLease
+}
+
+type hongguoPlayerHealth struct {
+	emptyRounds       int
+	rotationAttempted bool
+	revision          uint64
+}
+
 type hongguoCatalogCursor struct {
 	Offset        int       `json:"offset"`
 	SessionID     string    `json:"sessionId,omitempty"`
@@ -58,6 +76,7 @@ type hongguoAppClient struct {
 	baseURL        string
 	state          hongguoCatalogState
 	player         hongguoPlayerIdentity
+	playerHealth   hongguoPlayerHealth
 	playerPending  *hongguoPlayerDeviceCall
 	upcomingModels map[string]hongguoUpcomingModel
 	details        map[string]hongguoDetailEntry
@@ -147,15 +166,21 @@ func hongguoCatalogHasMore(state *hongguoCatalogState) bool {
 }
 
 func (downloader *Downloader) hongguoAppRequest(ctx context.Context, method, path string, extra url.Values, payload any) (map[string]any, error) {
-	return downloader.hongguoRequest(ctx, hongguoSignedAppRequest, method, path, extra, payload, 0, 0)
+	return downloader.hongguoRequest(ctx, method, path, extra, payload, 0, 0, nil)
 }
 
 func (downloader *Downloader) hongguoPlayerRequest(ctx context.Context, path string, payload any) (map[string]any, error) {
-	return downloader.hongguoPlayerRequestWithAttempts(ctx, path, payload, 0, 0)
+	response, err := downloader.hongguoPlayerRequestWithAttempts(ctx, path, payload, 0, 0)
+	return response.data, err
 }
 
-func (downloader *Downloader) hongguoPlayerRequestWithAttempts(ctx context.Context, path string, payload any, limit, offset int) (map[string]any, error) {
-	return downloader.hongguoRequest(ctx, hongguoUnsignedPlayerRequest, http.MethodPost, path, nil, payload, limit, offset)
+func (downloader *Downloader) hongguoPlayerRequestWithAttempts(ctx context.Context, path string, payload any, limit, offset int) (hongguoPlayerResponse, error) {
+	lease, err := downloader.hongguoPlaybackLease(ctx)
+	if err != nil {
+		return hongguoPlayerResponse{}, err
+	}
+	result, err := downloader.hongguoRequest(ctx, http.MethodPost, path, nil, payload, limit, offset, &lease.identity)
+	return hongguoPlayerResponse{data: result, lease: lease}, err
 }
 
 func (downloader *Downloader) hongguoRequestAttempts() int {
@@ -172,19 +197,15 @@ func hongguoAppDeviceQuery() url.Values {
 	}
 }
 
-func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRequestMode, method, path string, extra url.Values, payload any, limit, offset int) (map[string]any, error) {
+func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path string, extra url.Values, payload any, limit, offset int, player *hongguoPlayerIdentity) (map[string]any, error) {
 	client := downloader.hongguoClient()
 	client.mu.Lock()
 	base, deviceID, installID := client.baseURL, client.state.DeviceID, client.state.InstallID
 	client.mu.Unlock()
-	var player hongguoPlayerIdentity
+	mode := hongguoSignedAppRequest
 	httpClient := downloader.client
-	if mode == hongguoUnsignedPlayerRequest {
-		var err error
-		player, err = downloader.hongguoPlaybackDevice(ctx)
-		if err != nil {
-			return nil, err
-		}
+	if player != nil {
+		mode = hongguoUnsignedPlayerRequest
 		deviceID, installID = player.deviceID, player.installID
 		httpClient = hongguoAnonymousClient(httpClient)
 	}
@@ -213,6 +234,7 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRe
 		attempts = limit
 	}
 	var lastErr error
+	emptyResponses := 0
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
 			delay := time.Duration(attempt) * time.Second
@@ -308,6 +330,7 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRe
 		if len(content) == 0 || mode == hongguoUnsignedPlayerRequest && len(bytes.TrimSpace(content)) == 0 {
 			lastErr = errors.New("红果 App 接口未返回有效数据")
 			if mode == hongguoUnsignedPlayerRequest {
+				emptyResponses++
 				// Transient empty models share the existing retry budget and identity.
 				continue
 			}
@@ -324,6 +347,9 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, mode hongguoRe
 			return nil, fmt.Errorf("红果 App 接口暂不可用（%s）", truncate(code, 20))
 		}
 		return result, nil
+	}
+	if mode == hongguoUnsignedPlayerRequest && emptyResponses == attempts {
+		return nil, &hongguoEmptyPlaybackError{attempts: attempts}
 	}
 	return nil, lastErr
 }

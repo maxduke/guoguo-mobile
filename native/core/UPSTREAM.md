@@ -210,3 +210,29 @@ policy and higher-level recovery budgets keep their existing contracts.
 
 The [repair and feature assessment](../../docs/hongguo-upstream-review-2026-10-31.md)
 records live checks and the remaining iPhone acceptance boundary.
+
+## November 2 Hongguo selective identity recovery
+
+Bounded anonymous identity recovery is selectively adapted from
+[hongguoTV PR #42](https://github.com/tsukiyo-zero/hongguoTV/pull/42), pinned at
+[`3e2db1b75126c804d6b1e1dc6acb5e8c6f365766`](https://github.com/tsukiyo-zero/hongguoTV/tree/3e2db1b75126c804d6b1e1dc6acb5e8c6f365766),
+particularly `ContentRepository.kt` and `PlaybackDeviceSession.kt`. The existing
+GPL-3.0 license and attribution apply.
+
+Two complete all-empty four-read rounds can trigger one replacement registration
+through the existing anonymous protocol. The Go adaptation performs at most two
+old-identity rounds and one replacement-identity round within the original mobile
+request deadline; background metadata keeps its single-round budget. Failed
+replacement registration retains the old identity. Successful current-episode
+models reset the failure period; canceled registration publishes no replacement.
+
+Registration is claimed under the client mutex and coalesced with cancelable
+waiters. Request identity/revision snapshots prevent stale replies from changing
+current recovery state or warming a cache invalidated by replacement. Account
+cookies, catalog identity, persistence and active media are unchanged. These
+concurrency and cache guards are local adaptations rather than a direct port.
+
+The [investigation and validation record](../../docs/hongguo-identity-recovery-2026-11-02.md)
+also preserves the live failure where a replacement identity still received empty
+models. Identity-specific and broader service/network failures remain distinct;
+this change does not promise availability during every server incident.

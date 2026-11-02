@@ -76,7 +76,7 @@ func (client *hongguoAppClient) expireHongguoUpcomingModels(now time.Time) {
 	}
 }
 
-func (downloader *Downloader) keepHongguoUpcomingModels(result map[string]any, ids []string) {
+func (downloader *Downloader) keepHongguoUpcomingModels(result map[string]any, ids []string, identity hongguoPlayerIdentity) {
 	entries := make(map[string]json.RawMessage, len(ids))
 	for _, id := range ids {
 		entry := nestedMap(result, "data", id)
@@ -95,6 +95,9 @@ func (downloader *Downloader) keepHongguoUpcomingModels(result map[string]any, i
 	client := downloader.hongguoClient()
 	client.mu.Lock()
 	defer client.mu.Unlock()
+	if client.player != identity {
+		return
+	}
 	now := time.Now()
 	client.expireHongguoUpcomingModels(now)
 	if client.upcomingModels == nil {
