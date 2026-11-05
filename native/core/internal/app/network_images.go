@@ -100,8 +100,17 @@ func (transport *imageTransport) RoundTrip(request *http.Request) (*http.Respons
 	if request.Context().Value(coverRequestKey{}) != true {
 		return transport.base.RoundTrip(request)
 	}
-	if !validImageURL(request.URL) || request.Method != http.MethodGet {
+	// The Huangguo edge endpoint wraps an anonymous GET in a POST. Only this
+	// internal caller may reuse the public-DNS pinned transport for a POST.
+	envelopeRead := request.Context().Value(huangguoAPIRequestKey{}) == true && request.Method == http.MethodPost && request.URL.Path == "/api/edge/request"
+	if !validImageURL(request.URL) || request.Method != http.MethodGet && !envelopeRead {
 		return nil, errors.New("封面地址不受支持")
+	}
+	if envelopeRead {
+		if request.GetBody == nil {
+			return nil, errors.New("黄果接口请求无法重放")
+		}
+		defer request.Body.Close()
 	}
 	host := strings.TrimSuffix(request.URL.Hostname(), ".")
 	fallbackUsed := false
@@ -147,6 +156,12 @@ func (transport *imageTransport) RoundTrip(request *http.Request) (*http.Respons
 			tried[address] = true
 			pinned := transport.pinned(host, address, proxyURL)
 			upstream := request.Clone(request.Context())
+			if envelopeRead {
+				upstream.Body, err = request.GetBody()
+				if err != nil {
+					return nil, err
+				}
+			}
 			upstream.Host = request.URL.Host
 			upstream.URL.Host = net.JoinHostPort(address, "443")
 			response, roundTripErr := pinned.RoundTrip(upstream)

@@ -53,6 +53,7 @@ func NewMobileClient(directory string) (*MobileClient, error) {
 	cfg.Retries = 2
 	cfg.hongguoPlayerAttempts = hongguoPlayerMaxAttempts
 	downloader := NewDownloader(cfg)
+	downloader.restoreHuangguoLine()
 	var known []Drama
 	var hongguoState *hongguoCatalogState
 	var huangguo map[string]mobileHuangguoCursor
@@ -142,6 +143,20 @@ func (c *MobileClient) Call(raw string) (result string, callErr error) {
 		value = map[string]any{"protocol": mobileProtocol, "sourceDigest": mobileSourceDigest, "version": mobileBuildVersion, "sourceDiagnostics": 1, "catalogPrefetch": 1, "resolveCancellation": 1}
 	case "sourceCapabilities":
 		value = map[string]any{"items": c.sourceCapabilities()}
+	case "huangguoLines":
+		value = c.downloader.huangguoLines(ctx, request.Refresh)
+	case "huangguoLineSelect":
+		result, err := c.downloader.selectHuangguoLine(ctx, request.URL)
+		if err != nil {
+			return "", publicError(err)
+		}
+		value = result
+	case "huangguoLineProbe":
+		result, err := c.downloader.probeHuangguoLine(ctx, request.URL)
+		if err != nil {
+			return "", publicError(err)
+		}
+		value = result
 	case "requestDiagnostic":
 		c.mu.Lock()
 		diagnostic, exists := c.diagnostics[request.TraceID]

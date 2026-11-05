@@ -30,9 +30,21 @@ func (d *Downloader) fetchDramaMetadata(ctx context.Context, drama Drama) (Drama
 		patch.CategoryName = mapString(row, "category", "category_name", "categoryName")
 		return patch, nil
 	case sourceHuangguoAI, sourceHuangguoVideo:
+		if source == sourceHuangguoAI {
+			metadata, _, err := d.fetchHuangguoAPIMetadata(ctx, id)
+			if err == nil {
+				return metadata, nil
+			}
+			if !huangguoAPICanFallback(ctx, err) {
+				return Drama{}, err
+			}
+		}
 		pageURL, err := huangguoSortDetailURL(source, id)
 		if err != nil {
 			return Drama{}, err
+		}
+		if source == sourceHuangguoAI {
+			pageURL = huangguoAIPlaybackPageURL(d.huangguoAIContentBaseURL(ctx), id, "1")
 		}
 		body, err := d.fetchProviderText(ctx, pageURL, providerRefererForURL(pageURL, ""))
 		if err != nil {

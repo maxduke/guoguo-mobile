@@ -1599,7 +1599,7 @@ func providerReferer(source string) string {
 	return huangguoAIBaseURL + "/"
 }
 
-func (d *Downloader) fetchHuangguoAIDetail(ctx context.Context, sourceID string) (Drama, []Chapter, error) {
+func (d *Downloader) fetchHuangguoAIHTMLDetail(ctx context.Context, sourceID string) (Drama, []Chapter, error) {
 	sourceID = strings.Trim(strings.TrimSpace(sourceID), "/")
 	sourceID = strings.TrimPrefix(sourceID, "detail/")
 	sourceID = strings.TrimPrefix(sourceID, "video/")
@@ -1701,6 +1701,12 @@ func (d *Downloader) discoverHuangguoAIRoutes(ctx context.Context, force bool) [
 }
 
 func (d *Downloader) huangguoAIContentBaseURL(ctx context.Context) string {
+	d.providerMu.Lock()
+	selected := d.huangguoLine
+	d.providerMu.Unlock()
+	if selected != "" {
+		return selected
+	}
 	configured := strings.TrimRight(strings.TrimSpace(d.cfg.HuangguoAIURL), "/")
 	if configured != "" && !huangguoAIIsDeprecatedRoute(configured) && !huangguoAIIsProviderRoute(configured) {
 		return configured
@@ -1857,7 +1863,7 @@ func huangguoAISearchResultHTML(rawHTML string) string {
 	return rawHTML
 }
 
-func (d *Downloader) searchHuangguoAI(ctx context.Context, query string, page int) ([]Drama, bool, error) {
+func (d *Downloader) searchHuangguoAIHTML(ctx context.Context, query string, page int) ([]Drama, bool, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, false, errors.New("搜索关键词不能为空")

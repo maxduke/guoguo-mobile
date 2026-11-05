@@ -21,12 +21,15 @@ func TestMobileHuangguoColdRequestsRecoverFromReservedDNS(t *testing.T) {
 	for _, operation := range []string{"ranking", "catalog"} {
 		t.Run(operation, func(t *testing.T) {
 			const route = "https://cold-huangguo.example.org"
-			var entries, rankings, categories, fallbacks atomic.Int32
+			var entries, rankings, categories, fallbacks, edgeCalls atomic.Int32
 			target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Host != r.TLS.ServerName {
 					t.Error("pinned request lost its original Host or TLS name")
 				}
 				switch {
+				case r.Host == "cold-huangguo.example.org" && r.URL.Path == "/api/edge/request":
+					edgeCalls.Add(1)
+					http.NotFound(w, r)
 				case r.Host == "huangguoai.ai" && r.URL.Path == "/":
 					entries.Add(1)
 					io.WriteString(w, `<a data-url="`+route+`"></a>`)
@@ -70,7 +73,7 @@ func TestMobileHuangguoColdRequestsRecoverFromReservedDNS(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 				defer cancel()
 				rows, more, err := d.mobileAICatalogPage(ctx, 1)
-				if err != nil || len(rows) != 4 || more || entries.Load() != 1 || categories.Load() != 4 || fallbacks.Load() != 5 {
+				if err != nil || len(rows) != 4 || more || entries.Load() != 1 || categories.Load() != 4 || edgeCalls.Load() < 1 || edgeCalls.Load() > 2 || fallbacks.Load() != 5+edgeCalls.Load() {
 					t.Fatalf("cold catalog never reached the site: rows=%d entry=%d categories=%d fallback=%d err=%v", len(rows), entries.Load(), categories.Load(), fallbacks.Load(), err)
 				}
 				return
@@ -89,7 +92,7 @@ func TestMobileHuangguoColdRequestsRecoverFromReservedDNS(t *testing.T) {
 					t.Fatalf("invalid ranking response: %s err=%v", raw, err)
 				}
 			}
-			if entries.Load() != 1 || rankings.Load() != 2 || fallbacks.Load() != 3 {
+			if entries.Load() != 1 || rankings.Load() != 2 || edgeCalls.Load() != 1 || fallbacks.Load() != 4 {
 				t.Fatalf("refresh did not perform a second site request: entry=%d ranking=%d fallback=%d", entries.Load(), rankings.Load(), fallbacks.Load())
 			}
 		})

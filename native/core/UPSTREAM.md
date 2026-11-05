@@ -12,6 +12,23 @@ Provider parsing is invoked through a linked gomobile library. Mobile media proc
 
 No new license grant is asserted for the copied source. This repository is intended for the user's private development and distribution workflow.
 
+## November 5 Huangguo API and line selection
+
+The anonymous edge-request protocol and response fields were compared with
+[Minireel/HGhub `8665ffcaa553bc6eb1b52629fd91b35cc6e02678`](https://github.com/Minireel/HGhub/tree/8665ffcaa553bc6eb1b52629fd91b35cc6e02678)
+and checked against the provider's current public responses. HGhub's referenced
+revision uses [PolyForm Noncommercial 1.0.0](https://github.com/Minireel/HGhub/blob/8665ffcaa553bc6eb1b52629fd91b35cc6e02678/LICENSE).
+No Rust, React, player, media-proxy or cryptography source is copied from HGhub.
+The Go adapter is implemented against the observed protocol using this core's
+existing request limiter, public-DNS validation, cancellation and media handling.
+
+The adapter preserves `huangguoai:<id>` and the existing chapter keys (`1`,
+`ep-2`, ...), keeps legacy HTML/direct-JSON fallbacks for unsupported endpoints,
+and uses no account cookies or tokens. The Flutter line picker uses the existing
+official discovery path; its catalog check does not claim media or device
+playback acceptance. Details and validation are recorded in
+[the adoption record](../../docs/hghub-adoption-2026-11-05.md).
+
 ## September 2026 selective refresh
 
 Provider/search/recommendation/ranking, cover decoding and public image transport,
