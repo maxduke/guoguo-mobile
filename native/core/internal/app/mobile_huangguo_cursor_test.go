@@ -15,6 +15,9 @@ func TestMobileHuangguoRetriesFailedProviderAndStopsExhaustedProviders(t *testin
 	var videoCalls atomic.Int32
 	var expectedAI atomic.Int32
 	d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/api/edge/request" {
+			return rankingHTTPResponse(r, 404, "legacy fixture has no edge API"), nil
+		}
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 		if strings.HasPrefix(r.URL.Path, "/api/videos/category/") {
 			if page != int(expectedAI.Load()) {

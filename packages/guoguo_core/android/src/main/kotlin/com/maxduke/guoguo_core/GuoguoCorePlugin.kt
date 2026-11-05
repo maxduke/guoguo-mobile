@@ -44,7 +44,7 @@ class GuoguoCorePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val method = envelope?.get("method") as? String ?: legacy?.optString("method")
         val control = method in setOf(
             "cancelResolve", "cancelSearch", "cancelCatalog", "cancelPrefetch",
-            "release", "requestDiagnostic", "searchProgress", "coreInfo"
+            "release", "requestDiagnostic", "searchProgress", "coreInfo", "huangguoLineSelect"
         )
         owner.dispatcher.execute(control, budget, { remaining ->
             if (!owner.active) return@execute null

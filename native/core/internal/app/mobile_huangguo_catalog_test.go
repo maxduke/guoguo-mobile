@@ -30,6 +30,8 @@ func TestMobileHuangguoCatalogPassesPagesAndKeepsIdentities(t *testing.T) {
 	d.client.Transport = rankingTransport(func(r *http.Request) (*http.Response, error) {
 		current := int(page.Load())
 		switch {
+		case r.URL.Path == "/api/edge/request":
+			return rankingHTTPResponse(r, 404, "legacy fixture has no edge API"), nil
 		case r.URL.Path == "/api/app/playlet-tab/all":
 			return legacyFixtureResponse(r, []Tab{{ID: "fixture", Name: "分类"}}), nil
 		case r.URL.Path == "/api/app/playlet/home/tab/fixture":
@@ -109,6 +111,9 @@ func TestMobileAIPageValidation(t *testing.T) {
 
 func TestMobileHuangguoPartialFailureKeepsSuccessfulRows(t *testing.T) {
 	d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/api/edge/request" {
+			return rankingHTTPResponse(r, 404, "legacy fixture has no edge API"), nil
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/videos/category/") {
 			return rankingHTTPResponse(r, 200, `{"data":{"items":[{"id":"1","title":"成功剧集"}],"pagination":{"pages":2}}}`), nil
 		}

@@ -35,6 +35,11 @@ type Downloader struct {
 	legacy                 *legacyAPIClient
 	rankings               rankingCache
 	diagnostics            *diagnosticLog
+
+	huangguoAIUnsupported      string
+	huangguoAIUnsupportedUntil time.Time
+	huangguoLineMu             sync.Mutex
+	huangguoLine               string
 }
 
 func NewDownloader(cfg Config) *Downloader {

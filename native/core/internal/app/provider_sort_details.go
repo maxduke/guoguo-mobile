@@ -147,6 +147,15 @@ func (d *Downloader) fetchDramaSortMetadata(ctx context.Context, drama Drama) (D
 		}
 		return patch, nil
 	case sourceHuangguoAI, sourceHuangguoVideo:
+		if source == sourceHuangguoAI {
+			metadata, _, err := d.fetchHuangguoAPIMetadata(ctx, id)
+			if err == nil {
+				return metadata, nil
+			}
+			if !huangguoAPICanFallback(ctx, err) {
+				return patch, err
+			}
+		}
 		pageURL, err := huangguoSortDetailURL(source, id)
 		if source == sourceHuangguoAI {
 			pageURL = huangguoAIPlaybackPageURL(d.huangguoAIContentBaseURL(ctx), id, "1")

@@ -140,6 +140,16 @@ func (d *Downloader) mobileAICatalogPage(ctx context.Context, page int) ([]Drama
 				return
 			}
 			address := fmt.Sprintf("%s/api/videos/category/%s?sort=hot&page=%d&size=24", base, category, page)
+			reply, apiErr := d.requestHuangguoAPI(ctx, base, strings.TrimPrefix(address, base), false)
+			if apiErr == nil {
+				rows, more, err := parseHuangguoAPIPage(reply.data, base, huangguoAITypeName(category), page)
+				results[index] = mobileCatalogPage{rows, more, err}
+				return
+			}
+			if !huangguoAPICanFallback(ctx, apiErr) {
+				results[index].err = apiErr
+				return
+			}
 			work := context.WithValue(ctx, providerTextValidatorKey{}, providerTextValidator(func(body, effectiveURL string) error {
 				_, _, err := parseMobileAIPage(body, effectiveURL, category, page)
 				return err

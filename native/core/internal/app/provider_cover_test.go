@@ -45,6 +45,9 @@ func TestHuangguoCoverClickUsesScopedPageMetadata(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
+				if request.URL.Path == "/api/edge/request" {
+					return rankingHTTPResponse(request, 404, "legacy fixture has no edge API"), nil
+				}
 				if request.URL.Path != "/video/501/" {
 					t.Error("only textual detail pages should be requested", request.URL.Path)
 				}

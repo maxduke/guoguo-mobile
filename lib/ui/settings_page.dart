@@ -13,6 +13,7 @@ import '../data/download_store.dart';
 import '../platform/cover_probe.dart';
 import '../domain/user_input_exception.dart';
 import 'components.dart';
+import 'huangguo_lines_page.dart';
 import 'playback_diagnostics_page.dart';
 import 'source_diagnostics_page.dart';
 import 'storage_page.dart';
@@ -399,6 +400,22 @@ class _SettingsPageState extends State<SettingsPage> {
                                 store.catalog.library.first,
                               ),
                       ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.alt_route),
+                  title: const Text('黄果线路'),
+                  subtitle: const Text('检测目录接口，选择黄果 AI 子站线路'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) =>
+                          HuangguoLinesPage(provider: store.provider),
                     ),
                   ),
                 ),

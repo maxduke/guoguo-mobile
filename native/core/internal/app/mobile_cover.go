@@ -92,6 +92,15 @@ func (d *Downloader) mobileCoverAddress(ctx context.Context, dramaID string) (st
 		}
 		address = bestDramaCover(drama)
 	case sourceHuangguoAI, sourceHuangguoVideo:
+		if source == sourceHuangguoAI {
+			metadata, _, err := d.fetchHuangguoAPIMetadata(ctx, id)
+			if err == nil && bestDramaCover(metadata) != "" {
+				return bestDramaCover(metadata), nil
+			}
+			if err != nil && !huangguoAPICanFallback(ctx, err) {
+				return "", err
+			}
+		}
 		base, path := d.huangguoAIContentBaseURL(ctx), "/video/"+url.PathEscape(id)+"/"
 		if source == sourceHuangguoVideo {
 			base = huangguoVideoBaseURL

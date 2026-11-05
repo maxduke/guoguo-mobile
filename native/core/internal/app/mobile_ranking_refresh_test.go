@@ -13,6 +13,9 @@ const huangguoRankingRefreshFixture = `<script type="application/ld+json">{"@gra
 
 func TestHuangguoRankingAllowsSlowConnectionBeforeTryingOtherRoutes(t *testing.T) {
 	d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/api/edge/request" {
+			return rankingHTTPResponse(r, 404, "legacy fixture has no edge API"), nil
+		}
 		select {
 		case <-time.After(3200 * time.Millisecond):
 			return rankingHTTPResponse(r, 200, huangguoRankingRefreshFixture), nil
@@ -31,6 +34,9 @@ func TestHuangguoRankingAllowsSlowConnectionBeforeTryingOtherRoutes(t *testing.T
 func TestMobileRankingRefreshBypassesCacheAndKeepsStaleTimestamp(t *testing.T) {
 	calls, fail := 0, false
 	d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/api/edge/request" {
+			return rankingHTTPResponse(r, 404, "legacy fixture has no edge API"), nil
+		}
 		calls++
 		if calls > 1 && r.Header.Get("Cache-Control") != "no-cache" {
 			t.Error("manual refresh reused the upstream cache")
@@ -76,6 +82,9 @@ func TestHuangguoRankingRediscoversRoutesAfterInvalidCachedPage(t *testing.T) {
 	parseHuangguoAIRoutes(`<a data-url="` + oldRoute + `"></a>`)
 	oldCalls, entryCalls, newCalls := 0, 0, 0
 	d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/api/edge/request" {
+			return rankingHTTPResponse(r, 404, "legacy fixture has no edge API"), nil
+		}
 		switch {
 		case strings.HasPrefix(r.URL.String(), oldRoute):
 			oldCalls++
