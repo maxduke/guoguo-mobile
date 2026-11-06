@@ -85,6 +85,15 @@ class WorkflowTest(unittest.TestCase):
         self.assertNotIn('contents: write', job(self.release, 'checks'))
         self.assertNotIn('gh release ', self.ci)
 
+    def test_ios_source_shares_the_existing_guarded_release_upload(self):
+        publish = job(self.release, 'release')
+        source = publish.index('python3 scripts/ios_source.py')
+        self.assertLess(publish.index('Refusing to overwrite a published release'), source)
+        self.assertLess(source, publish.index('gh release upload'))
+        self.assertLess(publish.index('gh release upload'), publish.index('--draft=false'))
+        self.assertNotIn('IOS_SOURCE_TOKEN', self.release)
+        self.assertFalse((WORKFLOWS / 'ios-source.yml').exists())
+
     def test_android_builds_are_required_and_only_download_storage_is_optional(self):
         android = job(self.ci, 'android')
         self.assertIn('needs: checks', android)

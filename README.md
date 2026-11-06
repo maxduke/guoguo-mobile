@@ -40,12 +40,20 @@ Android TV 界面布局示例（2026-10-26，合成内容，主机渲染；[遥�
 
 IPA 未签名，不能直接点击安装。签名工具、账号与证书均由使用者管理，不存入仓库。自签后需实测本地网络发现、画中画及后台下载。
 
+LiveContainer、SideStore、AltStore Classic 共用安装源：
+
+```text
+https://github.com/maxduke/guoguo-mobile/releases/latest/download/apps.json
+```
+
+每次 Release 自动生成。私有期间需要 GitHub 访问权限，通用工具直接订阅需等待仓库公开；维护者自行转为 public 后地址保持不变。详见 [iOS 安装源](docs/ios-app-source.md)。
+
 ## 发布新版
 
 1. 更新 `pubspec.yaml` 中的版本和递增构建号，新增 `releases/v版本.md` 更新说明。
 2. 提交并推送源码，等待常规 CI 检查通过后合并到 `main`。
 3. 对需要发布的提交创建并推送版本标签，例如 `git tag v0.3.0`、`git push origin v0.3.0`。
-4. 标签触发 `Release`，先执行与普通 CI 相同的源码检查，再在同一个 macOS 任务中构建 iOS 包及已启用签名配置的 Android APK，核对版本、提交、签名及校验和，直接上传本次构建的文件。全部附件上传完成前保持草稿状态，发布不依赖 Actions 中转产物或历史 main CI 包。
+4. 标签触发 `Release`，先执行与普通 CI 相同的源码检查，再在同一个 macOS 任务中构建 iOS 包及已启用签名配置的 Android APK，核对版本、提交、签名及校验和，生成 iOS 安装源与图标，直接上传本次构建的文件。全部附件上传完成前保持草稿状态，发布不依赖 Actions 中转产物或历史 main CI 包。
 
 构建或上传失败可重跑失败的发布任务；它会重新构建并校验同一标签的安装包，再继续上传草稿附件，不会回退到其他运行或提交的安装包。新流程仅对包含新工作流的提交生效，旧提交上的 tag 仍使用当时的工作流。
 
