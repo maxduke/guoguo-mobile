@@ -40,6 +40,8 @@ Android TV 界面布局示例（2026-10-26，合成内容，主机渲染；[遥�
 
 IPA 未签名，不能直接点击安装。签名工具、账号与证书均由使用者管理，不存入仓库。自签后需实测本地网络发现、画中画及后台下载。
 
+LiveContainer、SideStore、AltStore Classic 共用安装源的添加方法、公开分发范围与自动同步配置见 [iOS 安装源](docs/ios-app-source.md)。
+
 ## 发布新版
 
 1. 更新 `pubspec.yaml` 中的版本和递增构建号，新增 `releases/v版本.md` 更新说明。

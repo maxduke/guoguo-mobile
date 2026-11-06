@@ -1,0 +1,51 @@
+name: Update iOS installation source
+on:
+  # Releases created with GITHUB_TOKEN do not trigger another `release` workflow.
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published vX.Y.Z release to synchronize (empty means latest)
+        required: false
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: ios-installation-source
+  cancel-in-progress: false
+jobs:
+  publish:
+    name: Verify IPA and update installation source
+    if: >-
+      vars.IOS_SOURCE_REPOSITORY != '' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      IOS_SOURCE_TOKEN: ${{ secrets.IOS_SOURCE_TOKEN }}
+      IOS_SOURCE_REPOSITORY: ${{ vars.IOS_SOURCE_REPOSITORY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check publishing configuration
+        run: |
+          if [[ -z "$IOS_SOURCE_TOKEN" ]]; then
+            echo '::error::Configure IOS_SOURCE_TOKEN with Contents read/write access to only the public distribution repository.'
+            exit 1
+          fi
+      - name: Check source generation and publication safeguards
+        run: python3 -m unittest discover -s scripts -p 'test_ios_source.py'
+      - name: Publish verified iOS source
+        env:
+          IOS_SOURCE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.workflow_run.head_branch }}
+        run: |
+          publish_args=(--target "$IOS_SOURCE_REPOSITORY")
+          if [[ -n "$IOS_SOURCE_TAG" ]]; then
+            publish_args+=(--tag "$IOS_SOURCE_TAG")
+          fi
+          python3 scripts/publish_ios_source.py "${publish_args[@]}"
