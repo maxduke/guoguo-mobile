@@ -9,6 +9,7 @@ import '../data/download_store.dart';
 import '../domain/models.dart';
 import '../domain/episode_queue.dart';
 import '../domain/watch_resume.dart';
+import '../domain/catalog_topic.dart';
 import 'components.dart';
 import 'episode_grid.dart';
 import 'player_page.dart';
@@ -16,6 +17,7 @@ import 'download_range_sheet.dart';
 import 'related_series_section.dart';
 import 'television_scope.dart';
 import 'record_actions.dart';
+import 'topic_browser.dart';
 
 Future<void> openDrama(
   BuildContext context,
@@ -395,6 +397,12 @@ class _DetailPageState extends State<DetailPage> {
         drama.tags.isNotEmpty ||
         drama.date.isNotEmpty ||
         compact && drama.category.isNotEmpty;
+    final topics = catalogTopics(
+      drama.source,
+      [drama],
+      categories:
+          widget.store.catalog.sourceCategories[drama.source] ?? const [],
+    );
     final favoriteButton = OutlinedButton.icon(
       style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
       onPressed: () =>
@@ -403,7 +411,24 @@ class _DetailPageState extends State<DetailPage> {
       label: Text(favorite ? '已收藏' : '收藏'),
     );
     final detailsButton = TextButton(
-      onPressed: () => setState(() => _expanded = !_expanded),
+      onPressed: () {
+        final collapsing = _expanded;
+        setState(() => _expanded = !_expanded);
+        if (collapsing) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            final episodes = _episodesKey.currentContext;
+            if (mounted && !_expanded && episodes != null) {
+              unawaited(
+                Scrollable.ensureVisible(
+                  episodes,
+                  alignmentPolicy:
+                      ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+                ),
+              );
+            }
+          });
+        }
+      },
       child: Text(_expanded ? '收起资料' : '展开资料'),
     );
     final heading = Column(
@@ -476,13 +501,46 @@ class _DetailPageState extends State<DetailPage> {
           const SizedBox(height: 8),
           Text('上线 ${drama.date}', style: const TextStyle(fontSize: 12)),
         ],
-        if (drama.tags.isNotEmpty && (!compact || _expanded)) ...[
+        if (topics.isNotEmpty && (!compact || _expanded)) ...[
           const SizedBox(height: 8),
-          Text(
-            drama.tags.join(' · '),
-            maxLines: _expanded ? null : 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodySmall,
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              for (final topic
+                  in topics
+                      .where((topic) => topic.matches(drama))
+                      .take(_expanded ? topics.length : 3))
+                ActionChip(
+                  backgroundColor: Theme.of(
+                    context,
+                  ).colorScheme.primary.withValues(alpha: .08),
+                  side: BorderSide(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.outlineVariant.withValues(alpha: .5),
+                  ),
+                  tooltip: '浏览题材：${topic.name}',
+                  label: Text(
+                    topic.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  onPressed: () => openTopicBrowser(
+                    context,
+                    store: widget.store,
+                    source: drama.source,
+                    topic: topic,
+                    seed: drama,
+                    onOpen: (selected) => openDrama(
+                      context,
+                      widget.store,
+                      widget.downloads,
+                      selected,
+                    ),
+                  ),
+                ),
+            ],
           ),
         ],
         if (compact) ...[

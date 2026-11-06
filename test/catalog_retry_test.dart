@@ -202,9 +202,13 @@ void main() {
       provider.categories = Completer();
       final request = store.catalog.loadCategories();
       expect(store.catalog.categoriesLoading, isTrue);
-      await store.catalog.loadCategories();
+      final joined = store.catalog.loadCategories();
+      var joinedCompleted = false;
+      unawaited(joined.then((_) => joinedCompleted = true));
+      await Future<void>.delayed(Duration.zero);
+      expect(joinedCompleted, isFalse);
       provider.categories!.completeError(StateError('secret'));
-      await request;
+      await Future.wait([request, joined]);
       expect(store.catalog.categoryErrors[DramaSource.huangju], '分类暂时无法加载，请重试');
       expect(
         store.catalog.sourceCategories[DramaSource.huangju]!.last.name,

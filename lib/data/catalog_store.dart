@@ -211,7 +211,7 @@ class CatalogStore extends ChangeNotifier {
 
   final Map<DramaSource, String> categoryErrors = {};
 
-  final Set<DramaSource> _loadingCategories = {};
+  final Map<DramaSource, Future<void>> _categoryRequests = {};
 
   String get selectedCategory => selectedCategories[source] ?? '';
 
@@ -249,7 +249,7 @@ class CatalogStore extends ChangeNotifier {
       ? _activeSlice?.retryMore != null
       : _retryCatalogMore.containsKey(source);
 
-  bool get categoriesLoading => _loadingCategories.contains(source);
+  bool get categoriesLoading => categoriesLoadingFor(source);
 
   Future<void> retryLibrary() async {
     final target = source;
@@ -263,12 +263,28 @@ class CatalogStore extends ChangeNotifier {
     }
   }
 
-  Future<void> loadCategories([DramaSource? selected]) async {
+  Future<void> loadCategories([DramaSource? selected]) {
     final target = selected ?? source;
-    if (_closed ||
-        !target.remoteCategories ||
-        isOffline() ||
-        !_loadingCategories.add(target)) {
+    if (_closed || !target.remoteCategories || isOffline()) {
+      return Future.value();
+    }
+    final pending = _categoryRequests[target];
+    if (pending != null) return pending;
+    final completed = Completer<void>();
+    _categoryRequests[target] = completed.future;
+    unawaited(
+      _readCategories(target).then<void>(
+        (_) => completed.complete(),
+        onError: (Object error, StackTrace stack) =>
+            completed.completeError(error, stack),
+      ),
+    );
+    return completed.future;
+  }
+
+  Future<void> _readCategories(DramaSource target) async {
+    if (_closed) {
+      _categoryRequests.remove(target);
       return;
     }
     notifyListeners();
@@ -283,10 +299,13 @@ class CatalogStore extends ChangeNotifier {
         categoryErrors[target] = providerFailureMessage(error, '分类暂时无法加载，请重试');
       }
     } finally {
-      _loadingCategories.remove(target);
-      notifyListeners();
+      _categoryRequests.remove(target);
+      if (!_closed) notifyListeners();
     }
   }
+
+  bool categoriesLoadingFor(DramaSource target) =>
+      _categoryRequests.containsKey(target);
 
   Future<void> selectCategory(String category) async {
     cancelLibraryPrefetch();

@@ -10,6 +10,20 @@ class SourceDiagnostics extends ChangeNotifier {
   bool _closed = false;
   List<SourceDiagnostic> get samples => List.unmodifiable(_samples);
 
+  SourceDiagnostic? latestFor(DramaSource source) {
+    SourceDiagnostic? latest;
+    for (final sample in _samples) {
+      if (sample.source != source ||
+          sample.background ||
+          sample.result == 'cancelled' ||
+          sample.method == 'suggestions') {
+        continue;
+      }
+      if (latest == null || sample.at.isAfter(latest.at)) latest = sample;
+    }
+    return latest;
+  }
+
   void add(SourceDiagnostic sample) {
     if (_closed) return;
     _samples.insert(0, sample);
@@ -31,9 +45,13 @@ class SourceDiagnostics extends ChangeNotifier {
     ),
   );
 
-  void clear() {
+  void clear({DramaSource? source}) {
     if (_closed) return;
-    _samples.clear();
+    if (source == null) {
+      _samples.clear();
+    } else {
+      _samples.removeWhere((sample) => sample.source == source);
+    }
     notifyListeners();
   }
 

@@ -83,10 +83,17 @@ jobs:
     name: Android phone and TV build
     if: ${{ !inputs.checks-only }}
     needs: checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare Android build disk space
+        run: |
+          free -h
+          df -h .
+          # This Android job does not use the runner's preinstalled .NET, Haskell, or CodeQL.
+          sudo rm -rf -- /usr/share/dotnet /usr/local/.ghcup /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h .
       - uses: ./.github/actions/build-android
       - uses: actions/upload-artifact@v4
         id: android-arm32

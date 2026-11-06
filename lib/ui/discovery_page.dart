@@ -14,6 +14,7 @@ import 'source_selector.dart';
 import 'television_grid.dart';
 import 'television_scope.dart';
 import 'record_actions.dart';
+import 'topic_browser.dart';
 
 /// A finite preview; directory and full-feed pagination belong to their pages.
 class DiscoveryPage extends StatefulWidget {
@@ -282,6 +283,28 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                             onPressed: widget.onLibrary,
                             icon: const Icon(Icons.grid_view_outlined),
                             label: const Text('完整剧库'),
+                          ),
+                        if (compact)
+                          IconButton(
+                            tooltip: '按题材找剧',
+                            onPressed: () => showTopicPicker(
+                              context,
+                              store: store,
+                              source: widget.source,
+                              onOpen: widget.onOpen,
+                            ),
+                            icon: const Icon(Icons.explore_outlined),
+                          )
+                        else
+                          TextButton.icon(
+                            onPressed: () => showTopicPicker(
+                              context,
+                              store: store,
+                              source: widget.source,
+                              onOpen: widget.onOpen,
+                            ),
+                            icon: const Icon(Icons.explore_outlined),
+                            label: const Text('题材'),
                           ),
                       ],
                     ),
