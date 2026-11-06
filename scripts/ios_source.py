@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Generate the shared LiveContainer / AltStore / SideStore iOS source."""
-import copy
-from datetime import datetime
+import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
+import os
+from pathlib import Path
 import plistlib
 import re
 from urllib.parse import quote
@@ -12,6 +14,7 @@ import zipfile
 
 BUNDLE_ID = "com.maxduke.guoguoMobile"
 TINT = "#235849"
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def repository(value):
@@ -25,15 +28,10 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def verify_package(artifacts, release, commit):
-    """Verify the published bytes and the identity inside the unsigned IPA."""
-    tag = release["tag_name"]
-    if not re.fullmatch(r"v\d+\.\d+\.\d+", tag) or release.get("draft") or release.get("prerelease"):
-        raise ValueError("Only a published stable release can enter the source")
-    published = release.get("published_at")
-    if not published:
-        raise ValueError("Release publication date is missing")
-    datetime.fromisoformat(published.replace("Z", "+00:00"))
+def verify_package(artifacts, tag, commit):
+    """Verify checksums and the identity inside the exact tagged unsigned IPA."""
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+        raise ValueError("Expected a stable vX.Y.Z release tag")
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("Expected the exact source commit")
     info = json.loads((artifacts / "build-info.json").read_text())
@@ -52,14 +50,10 @@ def verify_package(artifacts, release, commit):
         checksums[item] = checksum
     if set(checksums) != expected:
         raise ValueError("Incomplete iOS checksums")
-    assets = {asset["name"]: asset for asset in release["assets"]}
     for item, checksum in checksums.items():
         path = artifacts / item
         if digest(path) != checksum:
             raise ValueError(f"Checksum mismatch: {item}")
-        asset = assets[item]
-        if asset.get("digest") != f"sha256:{checksum}" or asset["size"] != path.stat().st_size:
-            raise ValueError(f"Published asset does not match the verified bytes: {item}")
     archive = artifacts / filename
     with zipfile.ZipFile(archive) as ipa:
         plists = [item for item in ipa.namelist() if re.fullmatch(r"Payload/[^/]+\.app/Info.plist", item)]
@@ -78,14 +72,6 @@ def verify_package(artifacts, release, commit):
     return app, filename
 
 
-def version_key(item):
-    version = item.get("version", "")
-    build = item.get("buildVersion", "")
-    if not re.fullmatch(r"\d+\.\d+\.\d+", version) or not re.fullmatch(r"\d+", build):
-        raise ValueError("Source contains an unsupported version/build")
-    return (*map(int, version.split(".")), int(build))
-
-
 def release_notes(release):
     """Use the user-facing change list rather than internal validation footnotes."""
     body = (release.get("body") or "").strip()
@@ -98,18 +84,22 @@ def release_notes(release):
     return "\n\n".join(changes) or body or f"果果 {release['tag_name']}"
 
 
-def generate(target, release, app, filename, size, previous=None):
-    repository(target)
-    base = f"https://raw.githubusercontent.com/{target}/main"
-    website = f"https://github.com/{target}"
+def generate(repo, release, app, filename, size):
+    repository(repo)
+    date = release["published_at"]
+    if not date or datetime.fromisoformat(date.replace("Z", "+00:00")).tzinfo is None:
+        raise ValueError("Expected a release date with a timezone")
+    website = f"https://github.com/{repo}"
+    downloads = f"{website}/releases/download/{quote(release['tag_name'], safe='')}"
+    icon = f"{downloads}/icon.png"
     version = {
         "version": app["CFBundleShortVersionString"],
         "buildVersion": app["CFBundleVersion"],
         # LiveContainer 3.7/3.8 reads buildNumber; AltStore reads buildVersion.
         "buildNumber": app["CFBundleVersion"],
-        "date": release["published_at"],
+        "date": date,
         "localizedDescription": release_notes(release),
-        "downloadURL": f"{website}/releases/download/{quote(release['tag_name'], safe='')}/{quote(filename, safe='')}",
+        "downloadURL": f"{downloads}/{quote(filename, safe='')}",
         "size": size,
         "minOSVersion": app["MinimumOSVersion"],
     }
@@ -123,8 +113,8 @@ def generate(target, release, app, filename, size, previous=None):
         "subtitle": "果果 iPhone / iPad 安装与更新",
         "description": "添加一次，之后在工具中刷新此源即可获取果果新版。",
         "website": website,
-        "sourceURL": f"{base}/apps.json",
-        "iconURL": f"{base}/icon.png",
+        "sourceURL": f"{website}/releases/latest/download/apps.json",
+        "iconURL": icon,
         "tintColor": TINT,
         "apps": [{
             "name": "果果",
@@ -132,37 +122,47 @@ def generate(target, release, app, filename, size, previous=None):
             "developerName": "maxduke",
             "subtitle": "短剧发现、追剧与离线观看",
             "localizedDescription": "支持 iPhone 和 iPad，提供短剧发现、搜索、收藏、观看进度、离线下载和电视投屏。安装与更新由你选择的侧载工具完成。",
-            "iconURL": f"{base}/icon.png",
+            "iconURL": icon,
             "tintColor": TINT,
             "category": "entertainment",
-            "versions": [],
+            "versions": [version],
             "appPermissions": permissions,
         }],
         "news": [],
     }
     entry = source["apps"][0]
-    versions = []
-    if previous is not None:
-        if previous.get("identifier") != source["identifier"] or previous.get("sourceURL") != source["sourceURL"]:
-            raise ValueError("Existing source identity or URL does not match")
-        old_apps = previous.get("apps", [])
-        if len(old_apps) != 1 or old_apps[0].get("bundleIdentifier") != BUNDLE_ID:
-            raise ValueError("Existing source is not the single Guoguo app")
-        versions = copy.deepcopy(old_apps[0].get("versions", []))
-        if versions and version_key(versions[0]) > version_key(version):
-            # Backfilling an older release must not change the newest app permissions.
-            entry["appPermissions"] = copy.deepcopy(old_apps[0]["appPermissions"])
-    found = [item for item in versions if version_key(item) == version_key(version)]
-    if found and found != [version]:
-        raise ValueError("Refusing to change a version already present in the source")
-    if not found:
-        versions.append(version)
-    versions.sort(key=version_key, reverse=True)
-    entry["versions"] = versions
-    latest = versions[0]
     # Legacy fields keep older source readers and Feather compatible.
     for key in ("version", "downloadURL", "size", "minOSVersion"):
-        entry[key] = latest[key]
-    entry["versionDate"] = latest["date"]
-    entry["versionDescription"] = latest["localizedDescription"]
+        entry[key] = version[key]
+    entry["versionDate"] = version["date"]
+    entry["versionDescription"] = version["localizedDescription"]
     return source
+
+
+def write_source(artifacts, repo, tag, commit, date=None, root=ROOT):
+    app, filename = verify_package(artifacts, tag, commit)
+    release = {
+        "tag_name": tag,
+        "published_at": date or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "body": (root / "releases" / f"{tag}.md").read_text(),
+    }
+    feed = generate(repo, release, app, filename, (artifacts / filename).stat().st_size)
+    icon = root / "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png"
+    (artifacts / "icon.png").write_bytes(icon.read_bytes())
+    (artifacts / "apps.json").write_text(json.dumps(feed, ensure_ascii=False, indent=2) + "\n")
+    print(f"Generated {app['CFBundleShortVersionString']}+{app['CFBundleVersion']}: {feed['sourceURL']}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--artifacts", type=Path, default=Path("build/release"))
+    parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY"), required="GITHUB_REPOSITORY" not in os.environ)
+    parser.add_argument("--tag", default=os.environ.get("GITHUB_REF_NAME"), required="GITHUB_REF_NAME" not in os.environ)
+    parser.add_argument("--commit", default=os.environ.get("GITHUB_SHA"), required="GITHUB_SHA" not in os.environ)
+    parser.add_argument("--date", help="Existing release publication timestamp when adding a source to an older release")
+    args = parser.parse_args()
+    write_source(args.artifacts, args.repository, args.tag, args.commit, args.date)
+
+
+if __name__ == "__main__":
+    main()
