@@ -55,6 +55,19 @@ runs:
             ;;
           *) exit 2 ;;
         esac
+        if [[ "${RUNNER_OS:-}" == Linux ]]; then
+          (
+            while true; do
+              date --utc +%FT%TZ
+              free -m
+              df -m .
+              ps -eo pid,rss,comm --sort=-rss | sed -n '1,8p'
+              sleep 60 > /dev/null 2>&1
+            done
+          ) &
+          android_resource_monitor_pid=$!
+          trap 'kill "$android_resource_monitor_pid" 2>/dev/null || true' EXIT
+        fi
         flutter build apk "--$android_compilation_mode" --split-per-abi --no-pub
         python3 scripts/core_identity.py verify --artifact packages/guoguo_core/android/libs/guoguo.aar --manifest packages/guoguo_core/android/libs/guoguo.aar.manifest.json --platform android
         python3 scripts/android_package.py --split-per-abi \
