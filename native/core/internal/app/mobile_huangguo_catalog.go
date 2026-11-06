@@ -25,6 +25,57 @@ type mobileHuangguoCursor struct {
 	Done bool `json:"done"`
 }
 
+var huangguoAICategoryIDs = []string{"ai-duanju", "ai-manju", "ai-huanlian", "ai-mogai"}
+
+func huangguoAICategories() []nativeCategory {
+	items := make([]nativeCategory, 0, len(huangguoAICategoryIDs))
+	for _, id := range huangguoAICategoryIDs {
+		items = append(items, nativeCategory{ID: id, Name: huangguoAITypeName(id)})
+	}
+	return items
+}
+
+func validHuangguoAICategory(category string) bool {
+	for _, id := range huangguoAICategoryIDs {
+		if category == id {
+			return true
+		}
+	}
+	return false
+}
+
+// Category reads are independent of the three-provider aggregate cursor.
+func (d *Downloader) mobileAICategoryPage(ctx context.Context, category string, page int) ([]Drama, bool, error) {
+	if !validHuangguoAICategory(category) || page < 1 || page > 200 {
+		return nil, false, errors.New("黄果分类或页码无效")
+	}
+	path := fmt.Sprintf("/api/videos/category/%s?sort=hot&page=%d&size=24", category, page)
+	var rows []Drama
+	var more bool
+	reply, err := d.readHuangguoAPI(ctx, path, func(raw []byte, base string) error {
+		var err error
+		rows, more, err = parseHuangguoAPIPage(raw, base, huangguoAITypeName(category), page)
+		return err
+	})
+	if err == nil || !huangguoAPICanFallback(ctx, err) {
+		return rows, more, err
+	}
+	base := reply.base
+	if base == "" {
+		base = d.huangguoAIContentBaseURL(ctx)
+	}
+	address := base + path
+	work := context.WithValue(ctx, providerTextValidatorKey{}, providerTextValidator(func(body, effectiveURL string) error {
+		_, _, err := parseMobileAIPage(body, effectiveURL, category, page)
+		return err
+	}))
+	body, effective, err := d.fetchProviderTextURL(work, address, base+"/"+category+"/")
+	if err != nil {
+		return nil, false, err
+	}
+	return parseMobileAIPage(body, effective, category, page)
+}
+
 // Keep the three Huangguo identities, but fetch only one page of each. A slow
 // provider must not consume the whole bridge deadline or discard other results.
 func (d *Downloader) mobileHuangguoCatalog(ctx context.Context, page int, cursors map[string]mobileHuangguoCursor) ([]Drama, bool, error) {
@@ -125,8 +176,10 @@ func (d *Downloader) mobileLegacyCatalogPage(ctx context.Context, page int) ([]D
 }
 
 func (d *Downloader) mobileAICatalogPage(ctx context.Context, page int) ([]Drama, bool, error) {
-	base := d.huangguoAIContentBaseURL(ctx)
-	categories := []string{"ai-duanju", "ai-manju", "ai-huanlian", "ai-mogai"}
+	// Discover once before the category workers, retaining the cold-start
+	// request budget when the official entry only serves the legacy API.
+	d.huangguoAIContentBaseURL(ctx)
+	categories := huangguoAICategoryIDs
 	results := make([]mobileCatalogPage, len(categories))
 	slots := make(chan struct{}, 2)
 	var group sync.WaitGroup
@@ -139,27 +192,7 @@ func (d *Downloader) mobileAICatalogPage(ctx context.Context, page int) ([]Drama
 				results[index].err = ctx.Err()
 				return
 			}
-			address := fmt.Sprintf("%s/api/videos/category/%s?sort=hot&page=%d&size=24", base, category, page)
-			reply, apiErr := d.requestHuangguoAPI(ctx, base, strings.TrimPrefix(address, base), false)
-			if apiErr == nil {
-				rows, more, err := parseHuangguoAPIPage(reply.data, base, huangguoAITypeName(category), page)
-				results[index] = mobileCatalogPage{rows, more, err}
-				return
-			}
-			if !huangguoAPICanFallback(ctx, apiErr) {
-				results[index].err = apiErr
-				return
-			}
-			work := context.WithValue(ctx, providerTextValidatorKey{}, providerTextValidator(func(body, effectiveURL string) error {
-				_, _, err := parseMobileAIPage(body, effectiveURL, category, page)
-				return err
-			}))
-			body, effective, err := d.fetchProviderTextURL(work, address, base+"/"+category+"/")
-			if err != nil {
-				results[index].err = err
-				return
-			}
-			rows, more, err := parseMobileAIPage(body, effective, category, page)
+			rows, more, err := d.mobileAICategoryPage(ctx, category, page)
 			results[index] = mobileCatalogPage{rows, more, err}
 		})
 	}

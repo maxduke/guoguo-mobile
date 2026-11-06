@@ -136,6 +136,7 @@ func (d *Downloader) selectHuangguoLine(ctx context.Context, raw string) (map[st
 	}
 	d.providerMu.Lock()
 	d.huangguoLine = selected
+	d.huangguoLineRevision++
 	d.huangguoAIUnsupported, d.huangguoAIUnsupportedUntil = "", time.Time{}
 	d.providerMu.Unlock()
 	return d.huangguoLines(ctx, false), nil

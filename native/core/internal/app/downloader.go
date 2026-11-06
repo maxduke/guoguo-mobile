@@ -40,6 +40,7 @@ type Downloader struct {
 	huangguoAIUnsupportedUntil time.Time
 	huangguoLineMu             sync.Mutex
 	huangguoLine               string
+	huangguoLineRevision       uint64
 }
 
 func NewDownloader(cfg Config) *Downloader {

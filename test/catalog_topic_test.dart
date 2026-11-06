@@ -35,7 +35,7 @@ void main() {
         expect(topics.map((topic) => topic.name), ['都市', '治愈']);
         expect(
           topics.first.categoryId,
-          source.remoteCategories ? 'city-id' : null,
+          source.topicCategories ? 'city-id' : null,
         );
         expect(topics.last.remote, isFalse);
       }

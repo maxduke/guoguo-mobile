@@ -10,10 +10,14 @@ import (
 )
 
 func (d *Downloader) fetchHuangguoRankingPage(ctx context.Context, board rankingBoard) (rankingPage, error) {
-	base := d.huangguoAIContentBaseURL(ctx)
-	reply, err := d.requestHuangguoAPI(ctx, base, "/api/ranks/"+board.path, false)
+	var result rankingPage
+	_, err := d.readHuangguoAPI(ctx, "/api/ranks/"+board.path, func(raw []byte, base string) error {
+		var err error
+		result, err = parseHuangguoAPIRanking(raw, base, board.path)
+		return err
+	})
 	if err == nil {
-		return parseHuangguoAPIRanking(reply.data, base, board.path)
+		return result, nil
 	}
 	if !huangguoAPICanFallback(ctx, err) {
 		return rankingPage{}, err
@@ -57,8 +61,7 @@ func (d *Downloader) fetchHuangguoHTMLRankingPage(ctx context.Context, board ran
 	discoveryCtx, discoveryCancel := context.WithTimeout(ctx, 8*time.Second)
 	base := d.huangguoAIContentBaseURL(discoveryCtx)
 	discoveryCancel()
-	configured := strings.TrimSpace(d.cfg.HuangguoAIURL)
-	custom := configured != "" && !huangguoAIIsProviderRoute(configured) && !huangguoAIIsDeprecatedRoute(configured)
+	custom := d.huangguoAIPinned()
 	seen := map[string]bool{}
 	var lastErr error
 	for pass := 0; pass < 2; pass++ {

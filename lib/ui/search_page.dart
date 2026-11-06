@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../data/app_store.dart';
 import '../domain/catalog_query.dart';
@@ -30,6 +31,8 @@ class _SearchPageState extends State<SearchPage> {
   late CatalogSearchController _search;
   final _scroll = ScrollController();
   final _results = GlobalKey<TelevisionGridState>();
+  final _localResults = GlobalKey<TelevisionGridState>();
+  final _paging = FocusNode(debugLabel: 'search-paging');
 
   @override
   void initState() {
@@ -50,6 +53,7 @@ class _SearchPageState extends State<SearchPage> {
   void dispose() {
     _search.dispose();
     _scroll.dispose();
+    _paging.dispose();
     super.dispose();
   }
 
@@ -65,10 +69,36 @@ class _SearchPageState extends State<SearchPage> {
           source == widget.store.catalog.source &&
           search.query == text.trim() &&
           FocusManager.instance.primaryFocus is FocusScopeNode) {
-        _results.currentState?.focusItem(0);
+        final grid = _results.currentState;
+        if (grid != null && grid.widget.itemKeys.isNotEmpty) {
+          grid.focusItem(0);
+        } else {
+          _localResults.currentState?.focusItem(0);
+        }
       }
     });
     WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  KeyEventResult _moveFromPaging(KeyEvent event) {
+    if (!TelevisionScope.of(context) ||
+        (event is! KeyDownEvent && event is! KeyRepeatEvent)) {
+      return KeyEventResult.ignored;
+    }
+    final grid = switch (event.logicalKey) {
+      LogicalKeyboardKey.arrowUp => _results.currentState,
+      LogicalKeyboardKey.arrowDown => _localResults.currentState,
+      _ => null,
+    };
+    if (grid == null || grid.widget.itemKeys.isEmpty) {
+      return KeyEventResult.ignored;
+    }
+    grid.focusItem(
+      event.logicalKey == LogicalKeyboardKey.arrowUp
+          ? grid.widget.itemKeys.length - 1
+          : 0,
+    );
+    return KeyEventResult.handled;
   }
 
   @override
@@ -84,13 +114,40 @@ class _SearchPageState extends State<SearchPage> {
       final source = store.catalog.source;
       final online = source.onlineSearch && !store.offline;
       final awaitingSearch = online && !_search.submitted;
+      final huangguoSearch =
+          source == DramaSource.huangguo && online && _search.submitted;
+      final showPaging =
+          _search.query.isNotEmpty &&
+          (_search.hasMore || _search.error != null);
       final rows = _search.query.isEmpty
           ? const <Drama>[]
           : queryCatalog(
-              _search.results ?? store.catalog.cachedDramas(source),
+              _search.results ??
+                  (huangguoSearch
+                      ? const <Drama>[]
+                      : store.catalog.cachedDramas(source)),
               query: _search.results == null ? _search.query : '',
               hideVip: source == DramaSource.huangdou && store.catalog.hideVip,
             );
+      final onlineKeys = {for (final drama in rows) drama.key};
+      final localRows = huangguoSearch
+          ? queryCatalog(
+              store.catalog.cachedDramas(source),
+              query: _search.query,
+            ).where((drama) => !onlineKeys.contains(drama.key)).toList()
+          : const <Drama>[];
+      final scopedEmptyTitle = _search.error != null
+          ? '黄果 AI 搜索未完成'
+          : _search.loading
+          ? '正在搜索黄果 AI…'
+          : '黄果 AI 暂无匹配';
+      final scopedEmptyMessage = localRows.isNotEmpty
+          ? '下方仍可查看本地已找到的剧集'
+          : _search.error != null
+          ? '可重试黄果 AI 搜索，或从分类和榜单继续查找'
+          : _search.loading
+          ? '正在联网查找，请稍候'
+          : '可换个关键词，或从分类和榜单继续查找';
       return Scaffold(
         appBar: AppBar(title: const Text('搜索')),
         body: SafeArea(
@@ -163,7 +220,9 @@ class _SearchPageState extends State<SearchPage> {
                           ),
                           Text(
                             online
-                                ? '联网搜索当前站源'
+                                ? source == DramaSource.huangguo
+                                      ? '联网搜索仅覆盖黄果 AI'
+                                      : '联网搜索当前站源'
                                 : store.offline
                                 ? '离线搜索 · 仅查找已保存的剧集资料'
                                 : '当前站源仅支持本地搜索',
@@ -246,13 +305,19 @@ class _SearchPageState extends State<SearchPage> {
                           (!awaitingSearch || rows.isNotEmpty)) ...[
                         const SizedBox(height: 18),
                         Text(
-                          _search.results == null ? '本地匹配' : '搜索结果',
+                          huangguoSearch
+                              ? '黄果 AI 线上结果'
+                              : _search.results == null
+                              ? '本地匹配'
+                              : '搜索结果',
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                         if (_search.fromCache)
-                          const Padding(
-                            padding: EdgeInsets.only(top: 8),
-                            child: Text('本页来自缓存'),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                              huangguoSearch ? '本页线上结果来自缓存' : '本页来自缓存',
+                            ),
                           ),
                       ],
                       if (_search.notice != null)
@@ -286,94 +351,153 @@ class _SearchPageState extends State<SearchPage> {
               ),
               if (_search.query.isNotEmpty && rows.isEmpty)
                 SliverToBoxAdapter(
-                  child: EmptyState(
-                    icon: _search.error != null
-                        ? Icons.cloud_off_outlined
-                        : _search.loading || awaitingSearch
-                        ? Icons.travel_explore
-                        : Icons.search_off,
-                    title: _search.error != null
-                        ? '搜索未完成'
-                        : _search.loading
-                        ? '正在搜索…'
-                        : awaitingSearch
-                        ? '搜索当前站源'
-                        : '暂时没有找到',
-                    message: _search.error != null
-                        ? '请重试搜索，或切换站源继续查找'
-                        : _search.loading
-                        ? '正在查找当前站源，结果会陆续显示'
-                        : awaitingSearch
-                        ? '点击搜索查找${source.label}，也可选择联想词'
-                        : online
-                        ? '换个关键词，或点击搜索继续查找'
-                        : '换个关键词，仅查找已保存的剧集资料',
-                  ),
-                ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(22, 0, 22, 24),
-                sliver: SliverLayoutBuilder(
-                  builder: (context, constraints) {
-                    final layout = dramaGridLayout(
-                      context,
-                      constraints.crossAxisExtent,
-                    );
-                    return TelevisionGrid(
-                      key: _results,
-                      itemKeys: [for (final drama in rows) drama.key],
-                      columns: layout.columns,
-                      mainAxisExtent: layout.extent,
-                      itemBuilder: (context, index) {
-                        final drama = store.catalog.currentDrama(rows[index]);
-                        return DramaCard(
-                          drama: drama,
-                          onTap: () {
-                            if (!TelevisionScope.of(context)) {
-                              FocusScope.of(context).unfocus();
-                            }
-                            widget.onOpen(drama);
-                          },
-                          favorite: store.records.favorites.containsKey(
-                            drama.key,
+                  child: huangguoSearch && localRows.isNotEmpty
+                      ? Padding(
+                          padding: const EdgeInsets.fromLTRB(22, 0, 22, 24),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(scopedEmptyTitle),
+                              const SizedBox(height: 8),
+                              Text(scopedEmptyMessage),
+                            ],
                           ),
-                          onFavorite: () => toggleFavoriteWithUndo(
-                            context,
-                            store.records,
-                            drama,
-                          ),
-                        );
-                      },
-                    );
-                  },
+                        )
+                      : EmptyState(
+                          icon: _search.error != null
+                              ? Icons.cloud_off_outlined
+                              : _search.loading || awaitingSearch
+                              ? Icons.travel_explore
+                              : Icons.search_off,
+                          title: huangguoSearch
+                              ? scopedEmptyTitle
+                              : _search.error != null
+                              ? '搜索未完成'
+                              : _search.loading
+                              ? '正在搜索…'
+                              : awaitingSearch
+                              ? source == DramaSource.huangguo
+                                    ? '搜索黄果 AI'
+                                    : '搜索当前站源'
+                              : '暂时没有找到',
+                          message: huangguoSearch
+                              ? scopedEmptyMessage
+                              : _search.error != null
+                              ? '请重试搜索，或切换站源继续查找'
+                              : _search.loading
+                              ? '正在查找当前站源，结果会陆续显示'
+                              : awaitingSearch
+                              ? source == DramaSource.huangguo
+                                    ? '点击搜索查找黄果 AI，或浏览分类和榜单'
+                                    : '点击搜索查找${source.label}，也可选择联想词'
+                              : online
+                              ? '换个关键词，或点击搜索继续查找'
+                              : '换个关键词，仅查找已保存的剧集资料',
+                        ),
                 ),
+              _dramaGrid(
+                rows,
+                _results,
+                below: huangguoSearch && showPaging ? _paging : null,
               ),
-              if (_search.query.isNotEmpty &&
-                  (_search.hasMore || _search.error != null))
+              if (showPaging)
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.only(bottom: 24),
                     child: Center(
-                      child: OutlinedButton(
-                        onPressed: _search.loading
-                            ? null
-                            : _search.error != null
-                            ? _search.retry
-                            : _search.loadMore,
-                        child: Text(
-                          _search.loading
-                              ? '正在搜索…'
+                      child: Focus(
+                        canRequestFocus: false,
+                        skipTraversal: true,
+                        onKeyEvent: huangguoSearch
+                            ? (_, event) => _moveFromPaging(event)
+                            : null,
+                        child: OutlinedButton(
+                          focusNode: _paging,
+                          onPressed: _search.loading
+                              ? null
                               : _search.error != null
-                              ? '重试搜索'
-                              : '加载更多结果',
+                              ? _search.retry
+                              : _search.loadMore,
+                          child: Text(
+                            _search.loading
+                                ? '正在搜索…'
+                                : _search.error != null
+                                ? '重试搜索'
+                                : '加载更多结果',
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
+              if (localRows.isNotEmpty) ...[
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(22, 0, 22, 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '本地已找到',
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '来自已保存的剧集资料',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                _dramaGrid(
+                  localRows,
+                  _localResults,
+                  above: showPaging ? _paging : null,
+                ),
+              ],
             ],
           ),
         ),
       );
     },
+  );
+
+  Widget _dramaGrid(
+    List<Drama> rows,
+    GlobalKey<TelevisionGridState> key, {
+    FocusNode? above,
+    FocusNode? below,
+  }) => SliverPadding(
+    padding: const EdgeInsets.fromLTRB(22, 0, 22, 24),
+    sliver: SliverLayoutBuilder(
+      builder: (context, constraints) {
+        final store = widget.store;
+        final layout = dramaGridLayout(context, constraints.crossAxisExtent);
+        return TelevisionGrid(
+          key: key,
+          itemKeys: [for (final drama in rows) drama.key],
+          columns: layout.columns,
+          mainAxisExtent: layout.extent,
+          above: above,
+          below: below,
+          itemBuilder: (context, index) {
+            final drama = store.catalog.currentDrama(rows[index]);
+            return DramaCard(
+              drama: drama,
+              onTap: () {
+                if (!TelevisionScope.of(context)) {
+                  FocusScope.of(context).unfocus();
+                }
+                widget.onOpen(drama);
+              },
+              favorite: store.records.favorites.containsKey(drama.key),
+              onFavorite: () =>
+                  toggleFavoriteWithUndo(context, store.records, drama),
+            );
+          },
+        );
+      },
+    ),
   );
 }

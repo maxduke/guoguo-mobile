@@ -36,6 +36,8 @@ enum DramaSource {
     hongguo || huangguo || huangdou => false,
     _ => true,
   };
+  // Huangguo keeps its aggregate library while exposing real AI topic channels.
+  bool get topicCategories => this == huangguo || remoteCategories;
   bool get onlineSearch =>
       this != shuangguo &&
       (this == hongguo || this == huangguo || remoteCategories);

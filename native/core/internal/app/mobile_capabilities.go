@@ -13,6 +13,8 @@ func (c *MobileClient) sourceCapabilities() []mobileSourceCapability {
 	items := make([]mobileSourceCapability, 0, len(sources))
 	for _, source := range sources {
 		_, categories := c.downloader.mobileSource(source)
+		background := categories
+		categories = categories || source == "huangguo"
 		search := source != sourceHuangdou
 		if spec, found := duanjuSourcesByName[source]; found {
 			search = spec.Searcher
@@ -23,7 +25,7 @@ func (c *MobileClient) sourceCapabilities() []mobileSourceCapability {
 		} else if !search {
 			scope = "local"
 		}
-		items = append(items, mobileSourceCapability{Source: source, Categories: categories, Search: search, SearchScope: scope, BackgroundCatalog: categories})
+		items = append(items, mobileSourceCapability{Source: source, Categories: categories, Search: search, SearchScope: scope, BackgroundCatalog: background})
 	}
 	return items
 }

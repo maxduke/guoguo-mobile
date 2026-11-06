@@ -61,6 +61,73 @@ class _CacheFailure extends MemoryStorage implements PartitionedStorage {
 }
 
 void main() {
+  test(
+    'Huangguo topic metadata does not replace or advance its aggregate page',
+    () async {
+      final provider = _Provider();
+      final store = AppStore(storage: MemoryStorage(), provider: provider);
+      addTearDown(store.dispose);
+      await store.catalog.selectSource(DramaSource.huangguo);
+      final initial = store.catalog.refresh();
+      provider.pending.last.complete(_page(DramaSource.huangguo, 'aggregate'));
+      await initial;
+      expect(
+        await store.catalog.prefetchLibrary(isActive: () => true),
+        isFalse,
+      );
+      expect(provider.requests, hasLength(1));
+      await store.catalog.saveTopicResults(DramaSource.huangguo, const [
+        Drama(
+          id: 'huangguoai:501',
+          source: DramaSource.huangguo,
+          title: 'comic',
+        ),
+      ]);
+      expect(store.catalog.library.single.title, 'aggregate');
+      expect(store.catalog.selectedCategories, isEmpty);
+      expect(store.catalog.cachedDramas(DramaSource.huangguo), hasLength(2));
+      final next = store.catalog.loadMore();
+      expect(provider.requests.last['page'], 2);
+      provider.pending.last.complete(
+        _page(DramaSource.huangguo, 'aggregate-next'),
+      );
+      await next;
+      expect(store.catalog.library.map((row) => row.title), [
+        'aggregate',
+        'aggregate-next',
+      ]);
+      expect(provider.requests, hasLength(2));
+    },
+  );
+
+  test(
+    'adding Huangguo topic channels preserves its older offline aggregate cache',
+    () async {
+      final provider = _Provider();
+      final store = AppStore(storage: MemoryStorage(), provider: provider)
+        ..offline = true;
+      addTearDown(store.dispose);
+      const drama = Drama(
+        id: 'old',
+        source: DramaSource.huangguo,
+        title: '已保存的故事',
+      );
+      expect(
+        store.catalog.restoreCache({
+          'catalogs': {
+            'huangguo': [drama.toJson()],
+          },
+        }),
+        isNull,
+      );
+      await store.catalog.selectSource(DramaSource.huangguo);
+      expect(store.catalog.library.single.id, 'old');
+      await store.catalog.loadCategories(DramaSource.huangguo);
+      expect(store.catalog.library.single.id, 'old');
+      expect(provider.requests, isEmpty);
+    },
+  );
+
   for (final source in [DramaSource.hongguo, DramaSource.huangju]) {
     test(
       '${source.name} malformed tags preserve the installed page and cursor',

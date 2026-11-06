@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guoguo_mobile/data/app_store.dart';
 import 'package:guoguo_mobile/data/download_store.dart';
@@ -14,6 +15,9 @@ import 'package:guoguo_mobile/ui/home_page.dart';
 import 'package:guoguo_mobile/ui/search_page.dart';
 import 'package:guoguo_mobile/ui/source_selector.dart';
 import 'package:guoguo_mobile/ui/detail_page.dart';
+import 'package:guoguo_mobile/ui/television_grid.dart';
+import 'package:guoguo_mobile/ui/television_scope.dart';
+import 'package:guoguo_mobile/ui/theme.dart';
 
 Drama _drama(
   String id, {
@@ -92,6 +96,7 @@ Future<({AppStore store, _Provider provider})> _mount(
   bool offline = false,
   Size size = const Size(1400, 1800),
   LocalStorage? storage,
+  bool television = false,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -117,6 +122,12 @@ Future<({AppStore store, _Provider provider})> _mount(
   });
   await tester.pumpWidget(
     MaterialApp(
+      theme: television
+          ? guoguoTheme(Brightness.light, television: true)
+          : null,
+      builder: television
+          ? (_, child) => TelevisionScope(enabled: true, child: child!)
+          : null,
       home: SearchPage(store: store, onOpen: (_) {}, autofocus: false),
     ),
   );
@@ -146,6 +157,267 @@ List<String> _ids(WidgetTester tester) => tester
     .toList();
 
 void main() {
+  testWidgets('huangguo local hits survive an empty AI online search', (
+    tester,
+  ) async {
+    final (:provider, :store) = await _mount(
+      tester,
+      source: DramaSource.huangguo,
+    );
+    store.catalog.catalogs[DramaSource.huangguo] = [
+      _drama('cloudfront', source: DramaSource.huangguo, title: '目标云端剧'),
+      _drama('video', source: DramaSource.huangguo, title: '目标视频剧'),
+    ];
+    await tester.enterText(find.byType(TextField), '目标');
+    await tester.pump();
+    expect(_ids(tester), ['cloudfront', 'video']);
+    expect(find.text('本地匹配'), findsOneWidget);
+    expect(find.text('联网搜索仅覆盖黄果 AI'), findsOneWidget);
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pump();
+    expect(_ids(tester), ['cloudfront', 'video']);
+    expect(find.text('本地已找到'), findsOneWidget);
+    expect(find.text('黄果 AI 线上结果'), findsOneWidget);
+    await _finish(tester, provider.searches.single, []);
+    expect(_ids(tester), ['cloudfront', 'video']);
+    expect(find.text('黄果 AI 暂无匹配'), findsOneWidget);
+    expect(find.text('暂时没有找到'), findsNothing);
+    expect(find.text('来自已保存的剧集资料'), findsOneWidget);
+    expect(find.text('加载更多结果'), findsNothing);
+    expect(provider.searches, hasLength(1));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'huangguo online order and pagination remain separate from deduplicated local matches',
+    (tester) async {
+      final (:provider, :store) = await _mount(
+        tester,
+        source: DramaSource.huangguo,
+      );
+      final cloud = _drama(
+        'cloudfront',
+        source: DramaSource.huangguo,
+        title: '目标云端剧',
+      );
+      final video = _drama(
+        'video',
+        source: DramaSource.huangguo,
+        title: '目标视频剧',
+      );
+      store.catalog.catalogs[DramaSource.huangguo] = [cloud, video];
+      await _submit(tester, '目标');
+      final ai = _drama('ai', source: DramaSource.huangguo, title: '线上扩展结果');
+      await _finish(tester, provider.searches.single, [ai, cloud], more: true);
+      expect(_ids(tester), ['ai', 'cloudfront', 'video']);
+      expect(
+        tester
+            .widgetList<TelevisionGrid>(find.byType(TelevisionGrid))
+            .map((grid) => grid.itemKeys),
+        [
+          [ai.key, cloud.key],
+          [video.key],
+        ],
+      );
+      expect(find.text('本地已找到'), findsOneWidget);
+      await tester.tap(find.text('加载更多结果'));
+      await tester.pump();
+      expect(_ids(tester), ['ai', 'cloudfront', 'video']);
+      await _finish(tester, provider.searches.last, [cloud, video]);
+      expect(_ids(tester), ['ai', 'cloudfront', 'video']);
+      expect(find.text('本地已找到'), findsNothing);
+      expect(find.byType(TelevisionGrid), findsOneWidget);
+      expect(find.text('加载更多结果'), findsNothing);
+      expect(provider.searches.map((request) => request.args['page']), [1, 2]);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'huangguo cached partial results and failure preserve local matches with scoped copy',
+    (tester) async {
+      final (:provider, :store) = await _mount(
+        tester,
+        source: DramaSource.huangguo,
+      );
+      store.catalog.searchCache.put(
+        'huangguo|目标|1',
+        CatalogSearchResult([
+          _drama('ai', source: DramaSource.huangguo, title: '目标 AI 剧'),
+        ]),
+        store.now().subtract(const Duration(hours: 1)),
+      );
+      await _submit(tester, '目标');
+      expect(_ids(tester), ['ai', 'local']);
+      expect(find.text('本页线上结果来自缓存'), findsOneWidget);
+      expect(find.text('本地已找到'), findsOneWidget);
+      provider.searches.single.result.completeError(StateError('unavailable'));
+      await tester.pumpAndSettle();
+      expect(_ids(tester), ['ai', 'local']);
+      expect(find.text('重试搜索'), findsOneWidget);
+      await tester.tap(find.byTooltip('清空搜索'));
+      await tester.pumpAndSettle();
+      await _submit(tester, '缓存');
+      provider.searches.last.result.completeError(StateError('unavailable'));
+      await tester.pumpAndSettle();
+      expect(_ids(tester), ['local']);
+      expect(find.text('黄果 AI 搜索未完成'), findsOneWidget);
+      expect(find.text('暂时没有找到'), findsNothing);
+      expect(find.text('本地已找到'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('huangguo sections reset with query and source changes', (
+    tester,
+  ) async {
+    final (:provider, :store) = await _mount(
+      tester,
+      source: DramaSource.huangguo,
+    );
+    await _submit(tester, '目标');
+    await _finish(tester, provider.searches.single, [
+      _drama('old-ai', source: DramaSource.huangguo, title: '目标 AI 剧'),
+    ], more: true);
+    expect(find.text('本地已找到'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '另一部');
+    await tester.pump();
+    expect(_ids(tester), isEmpty);
+    expect(find.text('搜索黄果 AI'), findsOneWidget);
+    expect(find.textContaining('联想词'), findsNothing);
+    expect(find.text('黄果 AI 线上结果'), findsNothing);
+    expect(find.text('本地已找到'), findsNothing);
+    expect(find.text('加载更多结果'), findsNothing);
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pump();
+    store.catalog.catalogs[DramaSource.hongguo] = [
+      _drama('hongguo-local', title: '另一部红果剧'),
+    ];
+    await store.catalog.selectSource(DramaSource.hongguo);
+    await tester.pump();
+    await _finish(tester, provider.searches.last, [
+      _drama('late-ai', source: DramaSource.huangguo, title: '另一部 AI 剧'),
+    ]);
+    expect(_ids(tester), ['hongguo-local']);
+    expect(find.text('本地匹配'), findsOneWidget);
+    expect(find.text('黄果 AI 线上结果'), findsNothing);
+    expect(find.text('本地已找到'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final brightness in Brightness.values) {
+    testWidgets('huangguo sections fit small keyboard layouts in $brightness', (
+      tester,
+    ) async {
+      final (:provider, :store) = await _mount(
+        tester,
+        source: DramaSource.huangguo,
+        size: const Size(320, 640),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: guoguoTheme(brightness),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              textScaler: TextScaler.linear(2),
+              viewInsets: const EdgeInsets.only(bottom: 280),
+            ),
+            child: child!,
+          ),
+          home: SearchPage(store: store, onOpen: (_) {}, autofocus: false),
+        ),
+      );
+      await _submit(tester, '目标');
+      await _finish(tester, provider.searches.single, [
+        _drama('ai', source: DramaSource.huangguo, title: '很长的黄果 AI 线上扩展剧名'),
+      ], more: true);
+      await tester.scrollUntilVisible(
+        find.text('本地已找到'),
+        180,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.scrollUntilVisible(
+        find.byWidgetPredicate(
+          (widget) => widget is DramaCard && widget.drama.id == 'local',
+        ),
+        180,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(_ids(tester), contains('local'));
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final more in [false, true]) {
+    testWidgets('TV directions traverse huangguo sections with paging $more', (
+      tester,
+    ) async {
+      final (:provider, :store) = await _mount(
+        tester,
+        source: DramaSource.huangguo,
+        television: true,
+        size: const Size(1280, 720),
+      );
+      await _submit(tester, '目标');
+      final count = more ? 15 : 1;
+      await _finish(tester, provider.searches.single, [
+        for (var index = 0; index < count; index++)
+          _drama(
+            'ai-$index',
+            source: DramaSource.huangguo,
+            title: '目标 AI 剧 $index',
+          ),
+      ], more: more);
+      final grids = tester.stateList<TelevisionGridState>(
+        find.byType(TelevisionGrid),
+      );
+      grids.first.focusItem(0);
+      await tester.pumpAndSettle();
+      bool focused(String id) {
+        final card = find.byWidgetPredicate(
+          (widget) => widget is DramaCard && widget.drama.id == id,
+        );
+        final poster = find.descendant(of: card, matching: find.byType(Poster));
+        return Focus.of(tester.element(poster)).hasPrimaryFocus;
+      }
+
+      expect(focused('ai-0'), isTrue);
+      for (
+        var row = 0;
+        row < (count - 1) ~/ grids.first.widget.columns;
+        row++
+      ) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+        await tester.pumpAndSettle();
+      }
+      expect(focused('ai-${count - 1}'), isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+      if (more) {
+        expect(
+          Focus.of(tester.element(find.text('加载更多结果'))).hasPrimaryFocus,
+          isTrue,
+        );
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+        await tester.pumpAndSettle();
+      }
+      expect(focused('local'), isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pumpAndSettle();
+      if (more) {
+        expect(
+          Focus.of(tester.element(find.text('加载更多结果'))).hasPrimaryFocus,
+          isTrue,
+        );
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+        await tester.pumpAndSettle();
+      }
+      expect(focused('ai-${count - 1}'), isTrue);
+      expect(store.catalog.source, DramaSource.huangguo);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets(
     'online input waits for submission and distinguishes failure from no results',
     (tester) async {
@@ -846,7 +1118,7 @@ void main() {
         ),
       );
       expect(provider.searches, hasLength(1));
-      expect(find.text('搜索当前站源'), findsOneWidget);
+      expect(find.text('搜索黄果 AI'), findsOneWidget);
       await tester.tap(find.byTooltip('联网搜索'));
       await tester.pump();
       expect(provider.searches.last.args['source'], 'huangguo');
