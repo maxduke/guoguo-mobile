@@ -23,6 +23,7 @@ var errHuangguoAPIInvalid = errors.New("黄果接口数据无效")
 type huangguoAPIReply struct {
 	data   json.RawMessage
 	status int
+	base   string
 }
 
 type huangguoAPIRequestKey struct{}
@@ -30,7 +31,7 @@ type huangguoAPIRequestKey struct{}
 // Only anonymous reads use this envelope. Account cookies, tokens and redirect
 // destinations cannot become part of the provider or media session.
 func (d *Downloader) requestHuangguoAPI(ctx context.Context, base, path string, force bool) (huangguoAPIReply, error) {
-	var reply huangguoAPIReply
+	reply := huangguoAPIReply{base: base}
 	if err := ctx.Err(); err != nil {
 		return reply, err
 	}
@@ -187,11 +188,16 @@ func (d *Downloader) searchHuangguoAI(ctx context.Context, query string, page in
 		return nil, false, errors.New("搜索关键词不能为空")
 	}
 	page = max(1, page)
-	base := d.huangguoAIContentBaseURL(ctx)
 	path := "/api/search?" + url.Values{"q": {query}, "page": {strconv.Itoa(page)}, "size": {"24"}}.Encode()
-	reply, err := d.requestHuangguoAPI(ctx, base, path, false)
+	var rows []Drama
+	var more bool
+	_, err := d.readHuangguoAPI(ctx, path, func(data []byte, base string) error {
+		var err error
+		rows, more, err = parseHuangguoAPIPage(data, base, "", page)
+		return err
+	})
 	if err == nil {
-		return parseHuangguoAPIPage(reply.data, base, "", page)
+		return rows, more, nil
 	}
 	if !huangguoAPICanFallback(ctx, err) {
 		return nil, false, err
@@ -246,35 +252,43 @@ func (d *Downloader) fetchHuangguoAPIMetadata(ctx context.Context, sourceID stri
 	if !huangguoAPIID(sourceID) {
 		return Drama{}, nil, errHuangguoAPIUnavailable
 	}
-	base := d.huangguoAIContentBaseURL(ctx)
-	reply, err := d.requestHuangguoAPI(ctx, base, "/api/videos/"+sourceID, false)
+	var drama Drama
+	reply, err := d.readHuangguoAPI(ctx, "/api/videos/"+sourceID, func(raw []byte, base string) error {
+		data, err := decodeHuangguoAPIMap(raw)
+		if err != nil {
+			return err
+		}
+		if mapString(data, "id") != sourceID {
+			return fmt.Errorf("%w：作品身份不符", errHuangguoAPIInvalid)
+		}
+		var ok bool
+		drama, ok = huangguoAPIDrama(data, base, "")
+		if !ok {
+			return fmt.Errorf("%w：详情资料不完整", errHuangguoAPIInvalid)
+		}
+		return nil
+	})
 	if err != nil {
 		return Drama{}, nil, err
-	}
-	data, err := decodeHuangguoAPIMap(reply.data)
-	if err != nil || mapString(data, "id") != sourceID {
-		return Drama{}, nil, fmt.Errorf("%w：作品身份不符", errHuangguoAPIInvalid)
-	}
-	drama, ok := huangguoAPIDrama(data, base, "")
-	if !ok {
-		return Drama{}, nil, fmt.Errorf("%w：详情资料不完整", errHuangguoAPIInvalid)
 	}
 	return drama, reply.data, nil
 }
 
 func (d *Downloader) huangguoAPIPlayback(ctx context.Context, sourceID, episode string) (string, string, error) {
-	base := d.huangguoAIContentBaseURL(ctx)
-	reply, err := d.requestHuangguoAPI(ctx, base, "/api/videos/"+sourceID+"/play?ep="+url.QueryEscape(episode)+"&page_texts=0", false)
-	if err != nil {
-		return "", base, err
-	}
-	data, err := decodeHuangguoAPIMap(reply.data)
-	if err != nil || mapString(data, "id") != sourceID || mapString(data, "ep_num") != episode {
-		return "", base, fmt.Errorf("%w：作品或分集身份不符", errHuangguoAPIInvalid)
-	}
-	media := normalizeProviderMediaURL(base+"/", mapString(data, "video_url"))
-	if media == "" {
-		return "", base, fmt.Errorf("%w：缺少有效播放地址", errHuangguoAPIInvalid)
-	}
-	return media, base, nil
+	media := ""
+	reply, err := d.readHuangguoAPI(ctx, "/api/videos/"+sourceID+"/play?ep="+url.QueryEscape(episode)+"&page_texts=0", func(raw []byte, base string) error {
+		data, err := decodeHuangguoAPIMap(raw)
+		if err != nil {
+			return err
+		}
+		if mapString(data, "id") != sourceID || mapString(data, "ep_num") != episode {
+			return fmt.Errorf("%w：作品或分集身份不符", errHuangguoAPIInvalid)
+		}
+		media = normalizeProviderMediaURL(base+"/", mapString(data, "video_url"))
+		if media == "" {
+			return fmt.Errorf("%w：缺少有效播放地址", errHuangguoAPIInvalid)
+		}
+		return nil
+	})
+	return media, reply.base, err
 }

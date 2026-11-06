@@ -19,11 +19,16 @@ type mobileCatalogCancellation struct {
 }
 
 func (c *MobileClient) beginCatalogRead(ctx context.Context, request mobileRequest) (context.Context, func(), error) {
-	if !request.Background {
+	if !request.Background && request.RequestID == "" {
 		return ctx, func() {}, nil
 	}
 	if _, supported := c.downloader.mobileSource(request.Source); !supported {
-		return ctx, nil, errors.New("聚合目录使用按需加载")
+		if request.Source != "huangguo" || !validHuangguoAICategory(request.Category) {
+			if !request.Background {
+				return ctx, func() {}, nil
+			}
+			return ctx, nil, errors.New("聚合目录使用按需加载")
+		}
 	}
 	if !diagnosticID.MatchString(request.RequestID) {
 		return ctx, nil, errors.New("缺少目录预取请求标识")
@@ -47,7 +52,12 @@ func (c *MobileClient) beginCatalogRead(ctx context.Context, request mobileReque
 	if c.catalogReads[request.RequestID] != nil || len(c.catalogReads) >= 8 {
 		return ctx, nil, errors.New("目录预取请求过多")
 	}
-	ctx, cancel := context.WithTimeout(context.WithValue(ctx, backgroundCatalogKey{}, true), 8*time.Second)
+	var cancel context.CancelFunc
+	if request.Background {
+		ctx, cancel = context.WithTimeout(context.WithValue(ctx, backgroundCatalogKey{}, true), 8*time.Second)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
 	read := &mobileCatalogRead{source: request.Source, category: request.Category, page: request.Page, cancel: cancel}
 	c.catalogReads[request.RequestID] = read
 	return ctx, func() {

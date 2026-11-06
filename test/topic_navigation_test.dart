@@ -69,6 +69,9 @@ void main() {
     (tester) async {
       final f = await fixture(tester);
       await f.store.catalog.selectSource(DramaSource.huangguo);
+      f.store.catalog.sourceCategories[DramaSource.huangguo] = const [
+        SourceCategory('ai-duanju', 'AI成人短剧'),
+      ];
       f.store.catalog.catalogs[DramaSource.huangguo] = const [
         Drama(
           id: '1',
@@ -146,6 +149,71 @@ void main() {
       expect(find.text('站源分类 · 已加载 2 部'), findsOneWidget);
       expect(f.store.catalog.source, DramaSource.hongguo);
       expect(f.store.catalog.selectedCategories, isEmpty);
+      expect(
+        f.store.catalog.cachedDramas(DramaSource.yeguo).map((row) => row.id),
+        ['1', '2'],
+      );
+    },
+  );
+
+  testWidgets(
+    'Huangguo exposes real online channels and remembers browsed metadata',
+    (tester) async {
+      final f = await fixture(tester);
+      await f.store.catalog.selectSource(DramaSource.huangguo);
+      await tester.pumpWidget(
+        app(SearchPage(store: f.store, onOpen: (_) {}, autofocus: false)),
+      );
+      await tester.pumpAndSettle();
+      expect(f.provider.requests, isEmpty);
+      await tester.tap(find.text('浏览站源分类'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final categories = f.provider.requests.single;
+      expect(categories.method, 'categories');
+      expect(categories.args['source'], 'huangguo');
+      categories.result.complete({
+        'items': [
+          {'id': '', 'name': '全部'},
+          {'id': 'ai-manju', 'name': 'AI成人漫剧'},
+        ],
+      });
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ListTile, 'AI成人漫剧'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final catalog = f.provider.requests.last;
+      expect(catalog.method, 'catalog');
+      expect(catalog.args['source'], 'huangguo');
+      expect(catalog.args['category'], 'ai-manju');
+      expect(catalog.args['page'], 1);
+      const drama = Drama(
+        id: 'huangguoai:501',
+        source: DramaSource.huangguo,
+        title: '山海来信',
+        category: 'AI成人漫剧',
+        tags: ['都市'],
+      );
+      catalog.result.complete(_page([drama], more: true));
+      await tester.pumpAndSettle();
+      expect(find.text('站源分类 · 已加载 1 部'), findsOneWidget);
+      expect(f.store.catalog.source, DramaSource.huangguo);
+      expect(f.store.catalog.selectedCategories, isEmpty);
+      expect(
+        f.store.catalog.cachedDramas(DramaSource.huangguo).single.id,
+        drama.id,
+      );
+      expect(f.store.catalog.cacheSnapshot()['catalogs'], contains('huangguo'));
+      f.store.offline = true;
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ActionChip, 'AI成人漫剧'));
+      await tester.pumpAndSettle();
+      expect(find.text('已保存资料 · 1 部'), findsOneWidget);
+      expect(
+        f.provider.requests.where((r) => r.method == 'catalog'),
+        hasLength(1),
+      );
     },
   );
 

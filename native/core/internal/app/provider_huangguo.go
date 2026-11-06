@@ -62,6 +62,7 @@ var (
 type providerTextValidator func(string, string) error
 type providerTextValidatorKey struct{}
 type providerTextExactURLKey struct{}
+type providerTextRouteDiscoveryKey struct{}
 
 func (d *Downloader) fetchHuangguoDetailText(ctx context.Context, pageURL, referer, source, sourceID string) (string, string, error) {
 	if source == sourceHuangguoAI {
@@ -586,7 +587,8 @@ func (d *Downloader) fetchProviderTextURL(ctx context.Context, rawURL, referer s
 					continue
 				}
 			}
-			if source := providerSourceForURL(rawURL); source != "" {
+			discovering, _ := ctx.Value(providerTextRouteDiscoveryKey{}).(bool)
+			if source := providerSourceForURL(rawURL); source != "" && !discovering {
 				d.providerMu.Lock()
 				d.providerHosts[source] = effectiveURL.Scheme + "://" + effectiveURL.Host
 				d.providerMu.Unlock()
@@ -1613,7 +1615,7 @@ func (d *Downloader) fetchHuangguoAIHTMLDetail(ctx context.Context, sourceID str
 	}))
 	detailCtx = context.WithValue(detailCtx, providerTextExactURLKey{}, true)
 	body, detailURL, err := d.fetchProviderTextURL(detailCtx, detailURL, base+"/")
-	if err != nil && ctx.Err() == nil {
+	if err != nil && ctx.Err() == nil && !d.huangguoAIPinned() {
 		for _, route := range d.discoverHuangguoAIRoutes(ctx, true) {
 			if route == base {
 				continue
@@ -1682,6 +1684,7 @@ func (d *Downloader) discoverHuangguoAIRoutes(ctx context.Context, force bool) [
 	}
 	requestCtx := ctx
 	requestCtx = context.WithValue(requestCtx, providerTextExactURLKey{}, true)
+	requestCtx = context.WithValue(requestCtx, providerTextRouteDiscoveryKey{}, true)
 	if force {
 		requestCtx = context.WithValue(requestCtx, providerTextNoCacheKey{}, true)
 	}
@@ -1694,7 +1697,13 @@ func (d *Downloader) discoverHuangguoAIRoutes(ctx context.Context, force bool) [
 	d.huangguoAIRouteChecked = true
 	if len(routes) > 0 {
 		d.huangguoAIRoutes = append([]string(nil), routes...)
-		d.providerHosts[sourceHuangguoAI] = routes[0]
+		keepPreferred := false
+		for _, route := range routes {
+			keepPreferred = keepPreferred || route == d.providerHosts[sourceHuangguoAI]
+		}
+		if !keepPreferred {
+			d.providerHosts[sourceHuangguoAI] = routes[0]
+		}
 	}
 	d.providerMu.Unlock()
 	return routes
@@ -1883,15 +1892,21 @@ func (d *Downloader) searchHuangguoAIHTML(ctx context.Context, query string, pag
 	var lastErr error
 	var empty []Drama
 	var emptyMore bool
+	pinned := d.huangguoAIPinned()
 	for pass := 0; pass < 2; pass++ {
 		seen := map[string]bool{}
 		var bases []string
 		d.providerMu.Lock()
 		cachedRoutes := append([]string(nil), d.huangguoAIRoutes...)
 		d.providerMu.Unlock()
-		addRoute(cachedRoutes, seen, &bases)
+		if !pinned {
+			addRoute(cachedRoutes, seen, &bases)
+		}
 		addRoute([]string{d.huangguoAIContentBaseURL(ctx)}, seen, &bases)
 		if pass == 1 {
+			if pinned {
+				break
+			}
 			bases = nil
 			seen = map[string]bool{}
 			addRoute(d.discoverHuangguoAIRoutes(ctx, true), seen, &bases)

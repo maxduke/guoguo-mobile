@@ -265,7 +265,7 @@ class CatalogStore extends ChangeNotifier {
 
   Future<void> loadCategories([DramaSource? selected]) {
     final target = selected ?? source;
-    if (_closed || !target.remoteCategories || isOffline()) {
+    if (_closed || !target.topicCategories || isOffline()) {
       return Future.value();
     }
     final pending = _categoryRequests[target];
@@ -699,6 +699,13 @@ class CatalogStore extends ChangeNotifier {
   Future<void> saveRecommendations(List<Drama> incoming) async {
     if (_closed) return;
     _mergeCatalog(DramaSource.hongguo, incoming);
+    await _saveCache();
+    if (!_closed) notifyListeners();
+  }
+
+  Future<void> saveTopicResults(DramaSource source, List<Drama> rows) async {
+    if (_closed) return;
+    _mergeCatalog(source, rows);
     await _saveCache();
     if (!_closed) notifyListeners();
   }

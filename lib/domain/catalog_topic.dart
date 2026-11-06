@@ -25,7 +25,7 @@ List<CatalogTopic> catalogTopics(
   Iterable<SourceCategory> categories = const [],
 }) {
   final topics = <String, CatalogTopic>{};
-  if (source.remoteCategories) {
+  if (source.topicCategories) {
     for (final category in categories) {
       if (category.id.isNotEmpty && _meaningful(category.name)) {
         topics.putIfAbsent(

@@ -9,10 +9,19 @@ import 'package:guoguo_mobile/data/app_store.dart';
 import 'package:guoguo_mobile/data/cover_cache.dart';
 import 'package:guoguo_mobile/data/storage.dart';
 import 'package:guoguo_mobile/domain/models.dart';
+import 'package:guoguo_mobile/platform/provider_client.dart';
 import 'package:guoguo_mobile/ui/search_page.dart';
 import 'package:guoguo_mobile/ui/theme.dart';
 
 import 'widget_test.dart' show NoNetwork;
+
+class _EmptyHuangguoSearch implements ProviderClient {
+  @override
+  Future<Map<String, dynamic>> call(
+    String method, [
+    Map<String, dynamic> args = const {},
+  ]) async => {'items': <dynamic>[], 'scope': 'huangguoai', 'hasMore': false};
+}
 
 void main() {
   final font = Platform.environment['GUOGUO_PREVIEW_FONT'];
@@ -47,21 +56,62 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     for (final sample in [
-      (const Size(390, 844), 1.0, 0.0, '', 'phone-history'),
-      (const Size(1024, 768), 1.0, 0.0, '归期', 'tablet-results'),
-      (const Size(320, 640), 1.6, 280.0, '归期', 'small-keyboard'),
+      (
+        const Size(390, 844),
+        1.0,
+        0.0,
+        '',
+        'phone-history',
+        DramaSource.hongguo,
+      ),
+      (
+        const Size(1024, 768),
+        1.0,
+        0.0,
+        '归期',
+        'tablet-results',
+        DramaSource.hongguo,
+      ),
+      (
+        const Size(320, 640),
+        1.6,
+        280.0,
+        '归期',
+        'small-keyboard',
+        DramaSource.hongguo,
+      ),
+      (
+        const Size(390, 844),
+        1.0,
+        0.0,
+        '归期',
+        'huangguo-local',
+        DramaSource.huangguo,
+      ),
+      (
+        const Size(320, 640),
+        2.0,
+        280.0,
+        '归期',
+        'huangguo-keyboard',
+        DramaSource.huangguo,
+      ),
     ]) {
       for (final brightness in Brightness.values) {
         tester.view.physicalSize = sample.$1;
         tester.view.devicePixelRatio = 1;
-        final store = AppStore(storage: MemoryStorage(), provider: NoNetwork())
-          ..offline = true;
+        final huangguo = sample.$6 == DramaSource.huangguo;
+        final store = AppStore(
+          storage: MemoryStorage(),
+          provider: huangguo ? _EmptyHuangguoSearch() : NoNetwork(),
+        )..offline = !huangguo;
+        store.catalog.source = sample.$6;
         store.catalog.recentSearches.addAll(['山海有归期', '故乡的来信', '一路向北']);
-        store.catalog.catalogs[DramaSource.hongguo] = List.generate(
+        store.catalog.catalogs[sample.$6] = List.generate(
           12,
           (index) => Drama(
             id: 'preview-$index',
-            source: DramaSource.hongguo,
+            source: sample.$6,
             title: index == 0 ? '山海有归期：故乡与远方的故事' : '山海有归期 ${index + 1}',
             category: '合成示例',
             episodes: 60,
@@ -87,6 +137,9 @@ void main() {
         );
         if (sample.$4.isNotEmpty) {
           await tester.enterText(find.byType(TextField), sample.$4);
+          if (huangguo) {
+            await tester.testTextInput.receiveAction(TextInputAction.search);
+          }
         }
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);

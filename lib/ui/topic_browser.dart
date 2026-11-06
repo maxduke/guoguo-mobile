@@ -79,7 +79,7 @@ class TopicShortcuts extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final topics = _topics(store, source);
-    if (topics.isEmpty && !source.remoteCategories) return const SizedBox();
+    if (topics.isEmpty && !source.topicCategories) return const SizedBox();
     final scheme = Theme.of(context).colorScheme;
     return Card(
       margin: EdgeInsets.zero,
@@ -102,7 +102,7 @@ class TopicShortcuts extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              source.remoteCategories ? '浏览站源分类，也可发现已保存的题材' : '来自已保存资料的分类与标签',
+              source.topicCategories ? '浏览站源分类，也可发现已保存的题材' : '来自已保存资料的分类与标签',
               style: Theme.of(
                 context,
               ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
@@ -349,7 +349,7 @@ class _TopicBrowserPageState extends State<TopicBrowserPage> {
 
   Future<void> _resolve() async {
     if (!mounted || widget.store.offline) return;
-    if (!_topic.remote && widget.source.remoteCategories) {
+    if (!_topic.remote && widget.source.topicCategories) {
       final generation = _generation;
       setState(() => _resolving = true);
       if (!widget.store.catalog.sourceCategories.containsKey(widget.source)) {
@@ -441,6 +441,7 @@ class _TopicBrowserPageState extends State<TopicBrowserPage> {
         _failedMore = false;
         _error = result.warning.isEmpty ? null : result.warning;
       });
+      await widget.store.catalog.saveTopicResults(widget.source, result.items);
     } catch (error) {
       if (!mounted || generation != _generation) return;
       setState(() {

@@ -215,6 +215,10 @@ func (c *MobileClient) Call(raw string) (result string, callErr error) {
 		}
 		value = plan
 	case "categories":
+		if request.Source == "huangguo" {
+			value = map[string]any{"items": append([]nativeCategory{{ID: "", Name: "全部"}}, huangguoAICategories()...)}
+			break
+		}
 		adapter, ok := c.downloader.mobileSource(request.Source)
 		if !ok {
 			return "", errors.New("当前站源没有在线分类")
@@ -231,6 +235,18 @@ func (c *MobileClient) Call(raw string) (result string, callErr error) {
 		}
 		ctx = readCtx
 		defer finishRead()
+		if request.Source == "huangguo" && request.Category != "" {
+			page := request.Page
+			if page == 0 {
+				page = 1
+			}
+			items, more, err := c.downloader.mobileAICategoryPage(ctx, request.Category, page)
+			if err != nil {
+				return "", publicError(err)
+			}
+			value = map[string]any{"items": mobileDramas(items), "hasMore": more, "page": page, "catalogScope": "page"}
+			break
+		}
 		if adapter, ok := c.downloader.mobileSource(request.Source); ok {
 			result, err := c.sourcePage(ctx, request, adapter)
 			if err != nil {
