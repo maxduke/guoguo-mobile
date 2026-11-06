@@ -94,6 +94,17 @@ jobs:
           # This Android job does not use the runner's preinstalled .NET, Haskell, or CodeQL.
           sudo rm -rf -- /usr/share/dotnet /usr/local/.ghcup /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h .
+      - name: Budget Android build memory
+        run: |
+          # Private Linux runners have 8 GB shared by Gradle, Kotlin, Dart and the runner.
+          android_ci_gradle_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          mkdir -p "$android_ci_gradle_home"
+          cat >> "$android_ci_gradle_home/gradle.properties" <<'PROPERTIES'
+
+          org.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=768m -XX:ReservedCodeCacheSize=256m -XX:+HeapDumpOnOutOfMemoryError
+          org.gradle.workers.max=2
+          kotlin.daemon.jvmargs=-Xmx512m -XX:MaxMetaspaceSize=384m -XX:ReservedCodeCacheSize=128m
+          PROPERTIES
       - uses: ./.github/actions/build-android
       - uses: actions/upload-artifact@v4
         id: android-arm32
