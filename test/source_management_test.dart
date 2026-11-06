@@ -468,25 +468,28 @@ void main() {
         await _open(tester, manage: manage);
         await tester.pumpWidget(_app(next, choices));
         await tester.pumpAndSettle();
-        await tester.tap(
-          manage
-              ? find.byTooltip('收藏站源红果')
-              : find.widgetWithText(ChoiceChip, '伍果'),
-        );
+        final action = manage
+            ? find.byTooltip('收藏站源红果')
+            : find.widgetWithText(ChoiceChip, '伍果');
+        await tester.ensureVisible(action);
+        await tester.tap(action);
         await tester.pumpAndSettle();
         expect(find.text('页面已更新，请关闭后重新选择站源'), findsOneWidget);
         expect(choices, isEmpty);
         expect(old.preferences.favoriteSources, isEmpty);
         expect(next.preferences.favoriteSources, isEmpty);
         expect(next.catalog.source, DramaSource.hongguo);
+        await tester.ensureVisible(find.byTooltip('关闭站源选择'));
+        await tester.pumpAndSettle();
         await tester.tap(find.byTooltip('关闭站源选择'));
         await tester.pumpAndSettle();
         await _open(tester, manage: manage);
-        await tester.tap(
-          manage
-              ? find.byTooltip('收藏站源红果')
-              : find.widgetWithText(ChoiceChip, '伍果'),
-        );
+        final nextAction = manage
+            ? find.byTooltip('收藏站源红果')
+            : find.widgetWithText(ChoiceChip, '伍果');
+        await tester.ensureVisible(nextAction);
+        await tester.pumpAndSettle();
+        await tester.tap(nextAction);
         await tester.pumpAndSettle();
         if (manage) {
           expect(next.preferences.favoriteSources, {DramaSource.hongguo});

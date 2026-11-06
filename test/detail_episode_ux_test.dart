@@ -162,7 +162,10 @@ void main() {
       await tester.tap(find.text('展开资料'));
       await tester.pumpAndSettle();
       expect(find.text(_metadataDrama.description), findsOneWidget);
-      expect(find.text(_metadataDrama.tags.join(' · ')), findsOneWidget);
+      for (final tag in _metadataDrama.tags) {
+        expect(find.widgetWithText(ActionChip, tag), findsOneWidget);
+        expect(find.byTooltip('浏览题材：$tag'), findsOneWidget);
+      }
       expect(
         find.byKey(const ValueKey('detail-primary-play')).hitTestable(),
         findsOneWidget,
@@ -190,11 +193,13 @@ void main() {
       await tester.tap(find.text('展开资料'));
       await tester.pump();
       expect(find.text('上线 2026-10-01'), findsOneWidget);
-      expect(find.text(_metadataDrama.tags.join(' · ')), findsOneWidget);
+      for (final tag in _metadataDrama.tags) {
+        expect(find.widgetWithText(ActionChip, tag), findsOneWidget);
+      }
       expect(primary.hitTestable(), findsOneWidget);
       await tester.ensureVisible(find.text('收起资料'));
       await tester.tap(find.text('收起资料'));
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(find.text('2–60 集').hitTestable(), findsOneWidget);
       expect(find.text('上线 2026-10-01'), findsNothing);
       expect(tester.takeException(), isNull);

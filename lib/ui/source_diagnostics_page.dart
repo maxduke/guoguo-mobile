@@ -2,15 +2,18 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../data/source_diagnostics.dart';
+import '../domain/models.dart';
 
 class SourceDiagnosticsPage extends StatefulWidget {
   const SourceDiagnosticsPage({
     super.key,
     required this.diagnostics,
     this.coverProbe,
+    this.source,
   });
   final SourceDiagnostics diagnostics;
   final Future<void> Function()? coverProbe;
+  final DramaSource? source;
   @override
   State<SourceDiagnosticsPage> createState() => _SourceDiagnosticsPageState();
 }
@@ -35,16 +38,34 @@ class _SourceDiagnosticsPageState extends State<SourceDiagnosticsPage> {
     listenable: diagnostics,
     builder: (context, _) => Scaffold(
       appBar: AppBar(
-        title: const Text('站源诊断'),
+        title: Text(
+          widget.source == null ? '站源诊断' : '${widget.source!.label} · 请求记录',
+        ),
         actions: [
           IconButton(
             tooltip: '清空站源诊断',
-            onPressed: diagnostics.samples.isEmpty ? null : diagnostics.clear,
+            onPressed:
+                diagnostics.samples
+                    .where(
+                      (sample) =>
+                          widget.source == null ||
+                          sample.source == widget.source,
+                    )
+                    .isEmpty
+                ? null
+                : () => diagnostics.clear(source: widget.source),
             icon: const Icon(Icons.delete_outline),
           ),
           IconButton(
             tooltip: '复制站源诊断',
-            onPressed: diagnostics.samples.isEmpty
+            onPressed:
+                diagnostics.samples
+                    .where(
+                      (sample) =>
+                          widget.source == null ||
+                          sample.source == widget.source,
+                    )
+                    .isEmpty
                 ? null
                 : () async {
                     await Clipboard.setData(
@@ -53,6 +74,11 @@ class _SourceDiagnosticsPageState extends State<SourceDiagnosticsPage> {
                           'format': 'guoguo.source-diagnostics',
                           'version': 1,
                           'samples': diagnostics.samples
+                              .where(
+                                (sample) =>
+                                    widget.source == null ||
+                                    sample.source == widget.source,
+                              )
                               .map((row) => row.toJson())
                               .toList(),
                         }),
@@ -83,8 +109,16 @@ class _SourceDiagnosticsPageState extends State<SourceDiagnosticsPage> {
           const SizedBox(height: 12),
           const Text('保留本次运行最近 64 条记录。联网尝试包含连接失败，不能代表站点已收到请求；未知表示没有取得该项统计。'),
           const SizedBox(height: 16),
-          if (diagnostics.samples.isEmpty) const Text('暂无记录，刷新栏目或搜索后可在这里查看。'),
-          for (final sample in diagnostics.samples)
+          if (diagnostics.samples
+              .where(
+                (sample) =>
+                    widget.source == null || sample.source == widget.source,
+              )
+              .isEmpty)
+            const Text('暂无记录，刷新栏目或搜索后可在这里查看。'),
+          for (final sample in diagnostics.samples.where(
+            (sample) => widget.source == null || sample.source == widget.source,
+          ))
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(14),

@@ -9,6 +9,7 @@ import 'source_selector.dart';
 import 'television_grid.dart';
 import 'television_scope.dart';
 import 'record_actions.dart';
+import 'topic_browser.dart';
 
 class SearchPage extends StatefulWidget {
   const SearchPage({
@@ -231,6 +232,14 @@ class _SearchPageState extends State<SearchPage> {
                                 onPressed: () => _submit(query),
                               ),
                           ],
+                        ),
+                      ],
+                      if (_search.query.isEmpty) ...[
+                        const SizedBox(height: 18),
+                        TopicShortcuts(
+                          store: store,
+                          source: source,
+                          onOpen: widget.onOpen,
                         ),
                       ],
                       if (_search.query.isNotEmpty &&

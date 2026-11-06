@@ -112,10 +112,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.widgetWithText(ChoiceChip, '帝果'), findsOneWidget);
       final lastSource = find.widgetWithText(ChoiceChip, '伍果');
+      await tester.ensureVisible(lastSource);
+      await tester.pumpAndSettle();
       expect(lastSource.hitTestable(), findsOneWidget);
       for (final label in ['超果', '爽果']) {
         expect(find.widgetWithText(ChoiceChip, label), findsNothing);
       }
+      await tester.ensureVisible(find.byType(TextField));
       for (final label in ['超果', '米果', '爽果']) {
         await tester.enterText(find.byType(TextField), label);
         await tester.pumpAndSettle();
@@ -184,6 +187,8 @@ void main() {
       );
       // The old search spinner remains active while the sheet animates in.
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.ensureVisible(find.widgetWithText(ChoiceChip, '伍果'));
       await tester.pump(const Duration(milliseconds: 350));
       await tester.tap(find.widgetWithText(ChoiceChip, '伍果'));
       await tester.pump(const Duration(milliseconds: 350));
