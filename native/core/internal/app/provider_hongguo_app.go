@@ -282,21 +282,30 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path s
 			lastErr = err
 			var backoff *requestBackoff
 			if errors.As(err, &backoff) || ctx.Err() != nil {
+				if mode == hongguoAnonymousPlayerRequest && backoff != nil {
+					return nil, hongguoHTTPRefusal(ctx, backoff.status, err)
+				}
 				return nil, err
 			}
 			continue
 		}
 		content, readErr := io.ReadAll(io.LimitReader(response.Body, providerMaxBodyBytes+1))
 		response.Body.Close()
-		if readErr != nil {
-			lastErr = readErr
-			continue
+		if mode == hongguoAnonymousPlayerRequest {
+			traceUpdate(ctx, func(v *mobileDiagnostic) { v.ResponseBytes = int64(len(content)) })
 		}
 		if response.StatusCode != http.StatusOK {
 			lastErr = fmt.Errorf("红果 App 接口 HTTP %d", response.StatusCode)
 			if response.StatusCode >= 400 && response.StatusCode < 500 {
+				if mode == hongguoAnonymousPlayerRequest {
+					return nil, hongguoHTTPRefusal(ctx, response.StatusCode, lastErr)
+				}
 				return nil, lastErr
 			}
+			continue
+		}
+		if readErr != nil {
+			lastErr = readErr
 			continue
 		}
 		if len(content) > providerMaxBodyBytes {
@@ -315,15 +324,22 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path s
 		decoder := json.NewDecoder(bytes.NewReader(content))
 		decoder.UseNumber()
 		if err := decoder.Decode(&result); err != nil || result == nil {
+			if mode == hongguoAnonymousPlayerRequest {
+				traceHongguoFailure(ctx, "invalid_response")
+			}
 			return nil, errors.New("红果 App 接口返回格式异常")
 		}
 		code := firstNonEmpty(mapString(result, "code", "Code", "status_code"), mapString(nestedMap(result, "BaseResp"), "StatusCode"))
 		if code != "" && code != "0" {
+			if mode == hongguoAnonymousPlayerRequest {
+				traceHongguoFailure(ctx, "business_rejected")
+			}
 			return nil, fmt.Errorf("红果 App 接口暂不可用（%s）", truncate(code, 20))
 		}
 		return result, nil
 	}
 	if mode == hongguoAnonymousPlayerRequest && emptyResponses == attempts {
+		traceHongguoFailure(ctx, "empty_model")
 		return nil, &hongguoEmptyPlaybackError{attempts: attempts}
 	}
 	return nil, lastErr

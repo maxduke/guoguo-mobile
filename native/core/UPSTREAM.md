@@ -305,3 +305,30 @@ family are retained; all available quality tiers remain represented. ByteVC2 and
 unknown codecs are excluded. This does not add model/network retries or change
 anonymous identity/cache lifetimes. See
 [the implementation and validation record](../../docs/hongguo-model-compatibility-2026-11-08.md).
+
+## November 8 constrained Hongguo model recovery and source refusals
+
+Recovery policy and encrypted URL handling are selectively adapted from
+[jackotom/hongguo-drama `b2b81cec61159ae788c723b21ad1015ac40296f6`](https://github.com/jackotom/hongguo-drama/tree/b2b81cec61159ae788c723b21ad1015ac40296f6),
+`src/native/app-source.js` (`fetchAppPlayUrl`, `decryptSpadeUrl`) and
+`src/native/app-source-inline-fallback.test.cjs`. The constrained fallback
+contribution is credited there to roytjus (PR #92); GPL-3.0-only provenance and
+the existing retained license continue to apply. Independent synthetic Node
+fixtures for the SHA-512/AES-CBC URL wrapper are retained in
+`internal/app/testdata/hongguo_spade_urls.json`.
+
+The local scope is one model-provided fallback request only for inline models
+missing encryption metadata, with verified identity, complete duration and actual
+rendition dimensions. Every recovered candidate must preserve the original
+resolution floor and pass its own key/plaintext and fixed-origin URL checks.
+The request inherits cancellation/deadline, adds an eight-second subdeadline,
+and sends no device/account cookies or signatures. The local implementation
+rejects redirects and malformed cipher blocks/padding instead of copying the
+reference's permissive truncation. Complete inline models take the original path.
+
+The reference's `scripts/check-download-source-rejection.cjs` informed the narrow
+source-refusal distinction: registration/model failures may stop later batch
+lookups, while media-CDN errors and ordinary episode failures do not. The existing
+mobile diagnostic query carries fixed reason/stage metadata; native bridge
+signatures, ongoing transfers and user files remain unchanged. See
+[the implementation and validation record](../../docs/hongguo-bounded-model-recovery-2026-11-08.md).

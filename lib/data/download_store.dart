@@ -599,6 +599,7 @@ class DownloadStore extends ChangeNotifier with WidgetsBindingObserver {
         }
         if (!_disposed) notifyListeners();
       }
+      if (e is ProviderException) rethrow;
       throw ProviderException(message);
     } finally {
       try {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,16 +68,26 @@ func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoI
 		limit = 1
 	}
 	// Allocate after the cache check: a cached upcoming model needs no new device.
-	identity, err := downloader.registerHongguoPlaybackDevice(ctx)
+	register := func() (hongguoPlayerIdentity, error) {
+		traceHongguoStage(ctx, "registration")
+		identity, err := downloader.registerHongguoPlaybackDevice(ctx)
+		if err != nil && ctx.Err() == nil {
+			return identity, hongguoRefused(ctx, "registration_failed", err)
+		}
+		return identity, err
+	}
+	identity, err := register()
 	if err != nil {
 		return providerMedia{}, err
 	}
+	fallbackAttempted := false
 	fetch := func(limit, offset int) (map[string]any, providerMedia, error) {
+		traceHongguoStage(ctx, "model")
 		result, err := downloader.hongguoRequest(ctx, "POST", "/novel/player/multi_video_model/v1/", nil, payload, limit, offset, &identity)
 		if err != nil {
 			return result, providerMedia{}, err
 		}
-		media, err := parseHongguoAppMedia(nestedMap(result, "data", videoID))
+		media, err := downloader.resolveHongguoAppModel(ctx, nestedMap(result, "data", videoID), &fallbackAttempted)
 		return result, media, err
 	}
 	// One optional fresh-identity round on all-empty foreground failure. Each
@@ -88,7 +99,7 @@ func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoI
 		emptyAttempts := hongguoEmptyAttemptCount(err)
 		if err != nil && len(ids) > 1 && attempts > 1 && ctx.Err() == nil {
 			var backoff *requestBackoff
-			if !errors.As(err, &backoff) && !errors.Is(err, errHongguoDeviceRegistration) {
+			if !errors.As(err, &backoff) && !errors.Is(err, errHongguoDeviceRegistration) && !isHongguoSourceRefusal(err) && !fallbackAttempted {
 				select {
 				case <-time.After(hongguoPlaybackRetryDelay(1)):
 				case <-ctx.Done():
@@ -118,7 +129,7 @@ func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoI
 		if round == 1 {
 			return providerMedia{}, errHongguoPlaybackRecoveryExhausted
 		}
-		identity, err = downloader.registerHongguoPlaybackDevice(ctx)
+		identity, err = register()
 		if err != nil {
 			return providerMedia{}, err
 		}
@@ -126,30 +137,29 @@ func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoI
 	return providerMedia{}, errHongguoPlaybackRecoveryExhausted
 }
 
-func parseHongguoAppMedia(entry map[string]any) (providerMedia, error) {
+func decodeHongguoAppModel(entry map[string]any) (map[string]any, error) {
 	model, _ := entry["video_model"].(map[string]any)
 	if encoded, ok := entry["video_model"].(string); ok {
 		decoder := json.NewDecoder(strings.NewReader(encoded))
 		decoder.UseNumber()
-		if err := decoder.Decode(&model); err != nil {
-			return providerMedia{}, errors.New("红果 App 播放信息格式异常")
+		var extra any
+		if decoder.Decode(&model) != nil || decoder.Decode(&extra) != io.EOF {
+			return nil, errors.New("红果 App 播放信息格式异常")
 		}
+	}
+	return model, nil
+}
+
+func parseHongguoAppMedia(entry map[string]any) (providerMedia, error) {
+	model, err := decodeHongguoAppModel(entry)
+	if err != nil {
+		return providerMedia{}, err
 	}
 	return selectHongguoAppMedia(model)
 }
 
 func selectHongguoAppMedia(model map[string]any) (providerMedia, error) {
-	variants := anyList(model["video_list"])
-	if rows, ok := model["video_list"].(map[string]any); ok && len(variants) == 0 {
-		keys := make([]string, 0, len(rows))
-		for key := range rows {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			variants = append(variants, rows[key])
-		}
-	}
+	variants := hongguoModelVariants(model)
 	duration, _ := strconv.ParseFloat(mapString(model, "video_duration", "duration"), 64)
 	type candidate struct {
 		media         providerMedia

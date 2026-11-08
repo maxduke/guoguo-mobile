@@ -413,4 +413,42 @@ void main() {
       expect(diagnostics.samples.last.networkAttempts, 7);
     },
   );
+  test(
+    'source lookup failures are copied with closed stage metadata and no raw error',
+    () async {
+      final provider = _Provider()
+        ..error = ProviderException(
+          'https://secret.invalid/?token=private',
+          diagnostic: {
+            ..._sample(method: 'downloadPlan', result: 'failed'),
+            'source': 'hongguo',
+            'sourceStage': 'model',
+            'sourceFailure': 'rate_limited',
+            'httpStatus': 429,
+            'responseBytes': 0,
+          },
+        );
+      final observed = ObservedProviderClient(provider, diagnostics);
+      await expectLater(
+        observed.call('downloadPlan', {'id': 'hongguo:1'}),
+        throwsA(isA<ProviderException>()),
+      );
+      final sample = diagnostics.samples.single;
+      expect(sample.methodLabel, '下载取源');
+      expect(sample.sourceStageLabel, '读取播放资料');
+      expect(sample.sourceFailureLabel, '站源限制取源，请稍后重试');
+      final copy = sample.toJson();
+      expect(copy['sourceFailure'], 'rate_limited');
+      expect(jsonEncode(copy), isNot(contains('private')));
+      expect(SourceDiagnostic.fromJson(copy).sourceStage, 'model');
+      expect(
+        () => SourceDiagnostic.fromJson({
+          ...copy,
+          'sourceFailure': 'https://secret.invalid',
+        }),
+        throwsFormatException,
+      );
+      expect(SourceDiagnostic.fromJson(_sample()).sourceStage, isEmpty);
+    },
+  );
 }

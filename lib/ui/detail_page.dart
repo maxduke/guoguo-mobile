@@ -7,6 +7,7 @@ import 'package:background_downloader/background_downloader.dart';
 import '../data/app_store.dart';
 import '../data/download_store.dart';
 import '../domain/models.dart';
+import '../platform/provider_client.dart';
 import '../domain/episode_queue.dart';
 import '../domain/watch_resume.dart';
 import '../domain/catalog_topic.dart';
@@ -196,11 +197,18 @@ class _DetailPageState extends State<DetailPage> {
         _enqueueing = true;
       });
       var failed = 0;
+      int? unattempted;
       for (var i = range.$1; i <= range.$2; i++) {
         try {
           await widget.downloads.enqueue(selected, rows[i], i);
-        } catch (_) {
+        } catch (error) {
           failed++;
+          if (selected.source == DramaSource.hongguo &&
+              error is ProviderException &&
+              error.stopsSourceBatch) {
+            unattempted = range.$2 - i;
+            break;
+          }
         }
         if (!mounted) break;
       }
@@ -208,7 +216,11 @@ class _DetailPageState extends State<DetailPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              failed == 0
+              unattempted != null
+                  ? (unattempted > 0
+                        ? '红果暂时无法取源，已停止后续 $unattempted 集的取源尝试；已加入的下载会继续'
+                        : '红果暂时无法取源，请稍后重试；已加入的下载会继续')
+                  : failed == 0
                   ? '所选分集已加入队列，已有下载自动跳过'
                   : '$failed 集未加入队列，请检查网络和设备空间后重试',
             ),

@@ -5,11 +5,14 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
 )
 
 const hongguoAddressesPerQualityCodec = 4
+
+var errHongguoEncryptionMetadataMissing = errors.New("红果媒体未明确提供加密信息")
 
 func hongguoAppCodecPriority(variant map[string]any) (int, bool) {
 	meta := nestedMap(variant, "video_meta")
@@ -48,7 +51,7 @@ func hongguoAppVariantKey(variant map[string]any) ([]byte, error) {
 		clear = true
 	}
 	if !clear {
-		return nil, errors.New("红果媒体未明确提供加密信息")
+		return nil, errHongguoEncryptionMetadataMissing
 	}
 	return nil, nil
 }
@@ -71,7 +74,7 @@ func hongguoAppPlaintextFlag(value any) bool {
 	return false
 }
 
-func hongguoAppVariantQuality(variant map[string]any) int {
+func hongguoAppVariantDimensions(variant map[string]any) (int, int) {
 	meta := nestedMap(variant, "video_meta")
 	for _, pair := range [][2]string{
 		{mapString(variant, "vwidth"), mapString(variant, "vheight")},
@@ -82,9 +85,17 @@ func hongguoAppVariantQuality(variant map[string]any) int {
 		width, e1 := strconv.Atoi(pair[0])
 		height, e2 := strconv.Atoi(pair[1])
 		if e1 == nil && e2 == nil && width > 0 && height > 0 {
-			return min(width, height)
+			return width, height
 		}
 	}
+	return 0, 0
+}
+
+func hongguoAppVariantQuality(variant map[string]any) int {
+	if width, height := hongguoAppVariantDimensions(variant); width > 0 && height > 0 {
+		return min(width, height)
+	}
+	meta := nestedMap(variant, "video_meta")
 	definition := firstNonEmpty(mapString(variant, "definition", "quality_desc"), mapString(meta, "definition", "quality_desc"))
 	quality, _ := strconv.Atoi(hongguoQualityNumber.FindString(definition))
 	return quality
@@ -98,4 +109,21 @@ func hongguoAppVariantAddresses(variant map[string]any) []string {
 		}
 	}
 	return addresses
+}
+
+func hongguoModelVariants(model map[string]any) []any {
+	if rows, ok := model["video_list"].(map[string]any); ok {
+		keys := make([]string, 0, len(rows))
+		for key := range rows {
+			keys = append(keys, key)
+		}
+		// Preserve deterministic model ordering, as in the ordinary parser.
+		sort.Strings(keys)
+		out := make([]any, 0, len(rows))
+		for _, key := range keys {
+			out = append(out, rows[key])
+		}
+		return out
+	}
+	return anyList(model["video_list"])
 }
