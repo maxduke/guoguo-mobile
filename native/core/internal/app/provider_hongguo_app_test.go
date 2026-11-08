@@ -107,9 +107,9 @@ func TestHongguoAppDetailAndCompatibleMediaMetadata(t *testing.T) {
 		t.Fatal("accepted an incomplete episode list")
 	}
 	model := map[string]any{"video_list": []any{
-		map[string]any{"main_url": "https://media.example.test/high.mp4", "video_meta": map[string]any{"codec_type": "bytevc2", "definition": "2160p"}},
-		map[string]any{"main_url": "https://media.example.test/low.mp4", "video_meta": map[string]any{"codec_type": "h264", "definition": "720p"}},
-		map[string]any{"main_url": "https://media.example.test/compatible.mp4", "video_meta": map[string]any{"codec_type": "hevc", "definition": "1080p"}},
+		map[string]any{"encrypt": false, "main_url": "https://media.example.test/high.mp4", "video_meta": map[string]any{"codec_type": "bytevc2", "definition": "2160p"}},
+		map[string]any{"encrypt": false, "main_url": "https://media.example.test/low.mp4", "video_meta": map[string]any{"codec_type": "h264", "definition": "720p"}},
+		map[string]any{"encrypt": false, "main_url": "https://media.example.test/compatible.mp4", "video_meta": map[string]any{"codec_type": "hevc", "definition": "1080p"}},
 	}}
 	media, err := selectHongguoAppMedia(model)
 	if err != nil || media.URL != "https://media.example.test/compatible.mp4" {

@@ -48,6 +48,7 @@ func TestHongguoAppMediaRejectsByteVC2Aliases(t *testing.T) {
 				}
 				model["video_list"] = append(model["video_list"].([]any), map[string]any{
 					"main_url":   "https://media.example.test/compatible.mp4",
+					"encrypt":    false,
 					"video_meta": map[string]any{"codec_type": "h264", "definition": "720p"},
 				})
 				if media, err := selectHongguoAppMedia(model); err != nil || media.Quality != 720 || len(media.Variants) != 1 {

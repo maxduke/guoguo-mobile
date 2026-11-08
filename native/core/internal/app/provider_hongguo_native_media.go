@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -150,57 +151,63 @@ func selectHongguoAppMedia(model map[string]any) (providerMedia, error) {
 		}
 	}
 	duration, _ := strconv.ParseFloat(mapString(model, "video_duration", "duration"), 64)
-	var selected providerMedia
-	bestQuality := -1
+	type candidate struct {
+		media         providerMedia
+		codecPriority int
+	}
+	var candidates []candidate
 	var keyErr error
-	choices := make(map[int]providerMedia)
-	scores := make(map[int]int)
 	for _, row := range variants {
 		variant, _ := row.(map[string]any)
-		meta := nestedMap(variant, "video_meta")
-		codec := strings.ToLower(mapString(meta, "codec_type"))
-		gear := strings.ToLower(mapString(variant, "gear_des_key"))
-		if codec == "bytevc2" || codec == "bvc2" || strings.Contains(gear, "bytevc2") || strings.Contains(gear, "bvc2") {
+		priority, compatible := hongguoAppCodecPriority(variant)
+		if !compatible {
 			continue
 		}
-		address := mapString(variant, "main_url")
-		if len(address) > 8192 || !isProviderHTTPMediaURL(address) {
+		key, err := hongguoAppVariantKey(variant)
+		if err != nil {
+			keyErr = err
 			continue
 		}
-		media := providerMedia{URL: address, Referer: "https://novel.snssdk.com/", Duration: time.Duration(duration * float64(time.Second))}
-		encryption := nestedMap(variant, "encrypt_info")
-		spade := mapString(encryption, "spade_a")
-		if spade != "" || encryption["encrypt"] == true || mapString(encryption, "encryption_method") == "cenc-aes-ctr" {
-			var err error
-			media.CENCKey, err = hongguoContentKey(spade)
-			if err != nil {
-				keyErr = err
+		quality := hongguoAppVariantQuality(variant)
+		seen := map[string]bool{}
+		for _, address := range hongguoAppVariantAddresses(variant) {
+			if len(address) > 8192 || !isProviderHTTPMediaURL(address) || seen[address] {
 				continue
 			}
-		}
-		height, _ := strconv.Atoi(mapString(meta, "vheight"))
-		if definition, err := strconv.Atoi(hongguoQualityNumber.FindString(mapString(meta, "definition"))); err == nil && definition > 0 {
-			height = definition
-		} else if width, _ := strconv.Atoi(mapString(meta, "vwidth")); width > 0 && (height == 0 || width < height) {
-			height = width
-		}
-		media.Quality = height
-		quality := height * 10
-		if codec == "h264" || codec == "avc1" {
-			quality++
-		}
-		if previous, exists := scores[height]; !exists || quality > previous {
-			choices[height], scores[height] = media, quality
-		}
-		if selected.URL == "" || quality > bestQuality {
-			selected, bestQuality = media, quality
+			seen[address] = true
+			candidates = append(candidates, candidate{media: providerMedia{
+				URL: address, Referer: "https://novel.snssdk.com/", Duration: time.Duration(duration * float64(time.Second)), CENCKey: key, Quality: quality,
+			}, codecPriority: priority})
+			if len(seen) == hongguoAddressesPerQualityCodec {
+				break
+			}
 		}
 	}
-	if selected.URL != "" {
-		for _, media := range choices {
-			selected.Variants = append(selected.Variants, media)
+	// Preserve the existing highest-quality choice, preferring AVC within a tier.
+	// Equal-tier alternatives stay ahead of lower-quality fallback in the player.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].media.Quality != candidates[j].media.Quality {
+			return candidates[i].media.Quality > candidates[j].media.Quality
 		}
-		sort.Slice(selected.Variants, func(i, j int) bool { return selected.Variants[i].Quality > selected.Variants[j].Quality })
+		return candidates[i].codecPriority < candidates[j].codecPriority
+	})
+	var options []providerMedia
+	seen := map[string]bool{}
+	counts := map[[2]int]int{}
+	for _, candidate := range candidates {
+		media := candidate.media
+		identity := media.URL + "\x00" + hex.EncodeToString(media.CENCKey)
+		bucket := [2]int{media.Quality, candidate.codecPriority}
+		if seen[identity] || counts[bucket] >= hongguoAddressesPerQualityCodec {
+			continue
+		}
+		seen[identity] = true
+		counts[bucket]++
+		options = append(options, media)
+	}
+	if len(options) > 0 {
+		selected := options[0]
+		selected.Variants = options
 		return selected, nil
 	}
 	if keyErr != nil {
