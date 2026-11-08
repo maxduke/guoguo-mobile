@@ -69,7 +69,7 @@ func hongguoModelBatchFixture(ids ...string) string {
 	data := map[string]any{}
 	for _, id := range ids {
 		data[id] = map[string]any{"video_model": map[string]any{"video_list": []any{
-			map[string]any{"main_url": "https://media.example.test/" + id + ".mp4", "video_meta": map[string]any{"codec_type": "h264", "definition": "720p"}},
+			map[string]any{"encrypt": false, "main_url": "https://media.example.test/" + id + ".mp4", "video_meta": map[string]any{"codec_type": "h264", "definition": "720p"}},
 		}}}
 	}
 	body, _ := json.Marshal(map[string]any{"code": 0, "data": data})

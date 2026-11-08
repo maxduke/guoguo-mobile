@@ -287,3 +287,21 @@ Same-episode unsigned/signed controls and single-use identity behavior were
 observed on this host; three sequential mobile resolves passed. See
 [the adoption and validation record](../../docs/hongguo-drama-review-2026-11-08.md)
 for evidence, selective follow-up ideas, and the outstanding iOS acceptance.
+
+## November 8 Hongguo model fields and equal-quality alternatives
+
+Model field normalization and candidate retention are selectively adapted from
+[jackotom/hongguo-drama `b2b81cec61159ae788c723b21ad1015ac40296f6`](https://github.com/jackotom/hongguo-drama/tree/b2b81cec61159ae788c723b21ad1015ac40296f6),
+`src/native/app-source.js:parseAppPlayModel` and its
+`src/native/app-source-inline-fallback.test.cjs` cases, GPL-3.0-only.
+Existing cryptographic attribution and the retained GPL license apply.
+
+The local parser accepts top-level and nested codec/encryption/dimension fields,
+requires a valid key or an explicit plaintext marker, prioritizes actual short-edge
+dimensions, and retains validated main/backup addresses with their own metadata.
+AVC and HEVC alternatives at the same quality survive deduplication and flow into
+the existing mobile fallback contract. At most four addresses per quality/codec
+family are retained; all available quality tiers remain represented. ByteVC2 and
+unknown codecs are excluded. This does not add model/network retries or change
+anonymous identity/cache lifetimes. See
+[the implementation and validation record](../../docs/hongguo-model-compatibility-2026-11-08.md).

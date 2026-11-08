@@ -134,7 +134,7 @@ func TestHongguoPlaybackDeviceRegistrationIsScopedToResolve(t *testing.T) {
 		if models == 1 {
 			return rankingHTTPResponse(request, http.StatusServiceUnavailable, ""), nil
 		}
-		return rankingHTTPResponse(request, http.StatusOK, `{"data":{"800001":{"video_model":{"video_list":[{"main_url":"https://media.example.test/episode.mp4"}]}}}}`), nil
+		return rankingHTTPResponse(request, http.StatusOK, `{"data":{"800001":{"video_model":{"video_list":[{"main_url":"https://media.example.test/episode.mp4","codec_type":"h264","encrypt":false}]}}}}`), nil
 	})
 	d.cfg.Retries = 2
 	d.client.Jar, _ = cookiejar.New(nil)
@@ -181,7 +181,7 @@ func TestHongguoPlaybackDeviceRegistrationFailureCanRetry(t *testing.T) {
 			}
 			return rankingHTTPResponse(request, http.StatusOK, hongguoDeviceFixture), nil
 		}
-		return rankingHTTPResponse(request, http.StatusOK, `{"data":{"800001":{"video_model":{"video_list":[{"main_url":"https://media.example.test/episode.mp4"}]}}}}`), nil
+		return rankingHTTPResponse(request, http.StatusOK, `{"data":{"800001":{"video_model":{"video_list":[{"main_url":"https://media.example.test/episode.mp4","codec_type":"h264","encrypt":false}]}}}}`), nil
 	})
 	if _, err := d.resolveHongguoAppMedia(context.Background(), "800001"); err == nil || !strings.Contains(err.Error(), "播放设备注册失败") || strings.Contains(err.Error(), "private-response-details") {
 		t.Fatal("registration failure did not retain a safe error", err)
@@ -289,7 +289,7 @@ func TestHongguoPlaybackEmptyResponseRetriesWithinExistingBudget(t *testing.T) {
 				if models == 1 {
 					return rankingHTTPResponse(request, http.StatusOK, body), nil
 				}
-				return rankingHTTPResponse(request, http.StatusOK, `{"data":{"800001":{"video_model":{"video_list":[{"main_url":"https://media.example.test/episode.mp4"}]}}}}`), nil
+				return rankingHTTPResponse(request, http.StatusOK, `{"data":{"800001":{"video_model":{"video_list":[{"main_url":"https://media.example.test/episode.mp4","codec_type":"h264","encrypt":false}]}}}}`), nil
 			})
 			d.cfg.Retries = 2
 			if _, err := d.resolveHongguoAppMedia(context.Background(), "800001"); err != nil {
