@@ -310,3 +310,45 @@ func TestHongguoFallbackNetworkFailureDoesNotBorrowInlineHTTPStatus(t *testing.T
 		t.Fatalf("stale inline response leaked into fallback diagnostic: %+v", result)
 	}
 }
+
+func TestHongguoFallbackRespectsRequestedOriginalQualityTier(t *testing.T) {
+	for _, quality := range []int{0, 720, 480} {
+		t.Run(fmt.Sprint(quality), func(t *testing.T) {
+			inline := hongguoFallbackFixtureModel(false)
+			inline["video_list"] = append(inline["video_list"].([]any), map[string]any{"codec_type": "h264", "vwidth": 720, "vheight": 1280, "main_url": "https://qznovelvod.com/low.mp4"})
+			backup := hongguoFallbackFixtureModel(true)
+			row := backup["video_list"].([]any)[0].(map[string]any)
+			row["vwidth"], row["vheight"] = 720, 1280
+			d, _, backups := hongguoFallbackFixtureDownloader(t, inline, backup, 200)
+			c, err := NewMobileClient(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			c.downloader = d
+			raw, err := c.Call(hongguoJSON(map[string]any{"method": "resolve", "id": "hongguo:700001", "chapter": map[string]any{"id": "1", "videoUrl": "hongguo-cenc://800001"}, "quality": quality}))
+			if quality == 720 {
+				if err != nil {
+					t.Fatal("matching original manual quality tier was rejected")
+				}
+				var result struct {
+					Quality int `json:"quality"`
+				}
+				if json.Unmarshal([]byte(raw), &result) != nil || result.Quality != 720 || *backups != 1 {
+					t.Fatal("manual quality was not preserved")
+				}
+			} else {
+				if err == nil {
+					t.Fatal("automatic quality downgraded or unavailable manual tier invented")
+				}
+				want := 1
+				if quality == 480 {
+					want = 0
+				}
+				if *backups != want {
+					t.Fatal("incorrect fallback eligibility", *backups)
+				}
+			}
+		})
+	}
+}

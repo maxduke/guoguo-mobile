@@ -395,6 +395,9 @@ func (c *MobileClient) Call(raw string) (result string, callErr error) {
 		if request.Chapter.ID == "" {
 			return "", errors.New("缺少分集 ID")
 		}
+		if request.Quality > 0 {
+			ctx = context.WithValue(ctx, playbackQualityKey{}, request.Quality)
+		}
 		media, key, err := c.downloader.resolvePlaybackMedia(ctx, Task{DramaID: request.ID, Chapter: request.Chapter})
 		if err != nil {
 			return "", publicError(err)

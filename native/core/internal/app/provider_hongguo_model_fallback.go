@@ -49,6 +49,7 @@ func (d *Downloader) resolveHongguoAppModel(ctx context.Context, entry map[strin
 		return providerMedia{}, parseErr
 	}
 	floor := 0
+	requested, _ := ctx.Value(playbackQualityKey{}).(int)
 	for _, value := range hongguoModelVariants(model) {
 		row, _ := value.(map[string]any)
 		if _, ok := hongguoAppCodecPriority(row); !ok {
@@ -58,7 +59,7 @@ func (d *Downloader) resolveHongguoAppModel(ctx context.Context, entry map[strin
 			continue
 		}
 		width, height := hongguoAppVariantDimensions(row)
-		if width <= 0 || height <= 0 {
+		if width <= 0 || height <= 0 || requested > 0 && min(width, height) != requested {
 			continue
 		}
 		for _, address := range hongguoAppVariantAddresses(row) {

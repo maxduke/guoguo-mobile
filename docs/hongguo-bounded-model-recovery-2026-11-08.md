@@ -6,10 +6,10 @@
 
 完整内联模型直接返回，增加的备用请求数为零。只有外层 `data[请求分集ID]` 下的内联模型因为缺少加密资料而无法产生可用媒体，且同时具备字符串内部视频 ID、正的有限完整时长、兼容编码和有效实际尺寸时，才考虑模型提供的 `fallback_api`。明确加密却没有密钥、无效密钥、错集、格式错误或只有清晰度标签都不能启用此恢复。
 
-- 每次逻辑取流最多一次备用模型 GET。备用请求失败后不重新发起同一集的批量／单集模型兼容尝试，也不重新注册身份。原有 HTTP 空正文恢复预算保持独立。
+- 每次逻辑取流最多一次备用模型 GET。备用请求失败后不重新发起同一集的批量／单集模型兼容尝试，也不重新注册身份。原有 HTTP 空正文恢复预算保持独立。手动画质通过已有请求字段和上下文传入，不新增协议或选择状态。
 - 备用接口只允许 HTTPS 的 `fqnovel.com` / `snssdk.com` 域及子域，默认端口或 443，无 URL 凭据和 fragment，不跟随重定向。不带账号 Cookie、注册设备 Cookie 或请求签名。
 - 请求在原调用取消和总期限内，另设最多八秒的子期限，涵盖排队和读取。正常完整模型和缓存命中不增加联网。
-- 备用模型内部 `video_id` 必须与原模型一致；内部 ID 不要求等于外部数字分集 ID。完整时长差最多 0.5 秒；每一个保留候选都须有有效实际尺寸，短边不得低于原来缺资料档位的实际短边。
+- 备用模型内部 `video_id` 必须与原模型一致；内部 ID 不要求等于外部数字分集 ID。完整时长差最多 0.5 秒；每一个保留候选都须有有效实际尺寸，短边不得低于原来缺资料档位的实际短边。自动画质使用最高原档位；手动指定画质只使用原模型中对应的实际档位作为恢复下限，既不让最高档位误挡合法的低档选择，也不凭备用模型凭空增加原模型没有的手动档位。
 - 每个候选仍须满足既有 AVC／HEVC、有效内容密钥或明确未加密标记规则。备用地址限 HTTPS 的 `qznovelvod.com` / `fqnovelvod.com` / `douyinvod.com` 域及子域，并继续校验 URL 凭据、端口和长度。
 - `key_seed` 包装的媒体地址使用参考项目的 SHA-512 派生和 AES-CBC 协议解开，再做目的地址校验。输入长度、头部、块长度和填充受校验；正常 CENC 密钥算法继续复用现有实现。独立 Node 生成的合成向量位于 `testdata/hongguo_spade_urls.json`，不是运行时依赖。
 - 仅在成功、未取消的解析后使用现有后续模型缓存；缺资料原模型不会作为已完成恢复的缓存条目保存。没有可信内联身份／时长／尺寸的纯备用指针保持失败，后续若取得具体合法样本再单独评估。
@@ -36,9 +36,9 @@
 
 受控传输覆盖完整模型零额外请求、一次有效恢复、JSON 字符串模型与备用地址包装、错集／试看时长／缺少实际尺寸／未知加密／无效密钥／不可信目的地址拒绝、备用重定向和 403／429、取消与缓存隔离。核心通过真实移动 `Call` 验证拒绝不会继续请求网页或第三方路径，诊断可独立读取且不带请求秘密。
 
-Flutter 回归覆盖诊断查询与旧桥接兼容、结构化拒绝范围、批量在中途停止并释放操作控件、普通失败继续、已提交任务和部分文件保留、手动重试与其他来源继续、诊断复制的固定字段和旧记录读取。本地 Go 全量 804 个测试／子测试通过，零失败；8 项既有可选联网巡检未启用。相关竞态、`go vet`、Flutter analyze 和 Dart／Go 格式检查通过。Flutter 全量执行有 1050 项通过，唯一失败是首个预览读取尚未就绪的本地字体路径；修正测试字体配置后，该预览单独重跑通过，合计 1051 项不同回归均已覆盖。此次环境错误和复查结果分别保留在 `/tmp/guoguo-hongguo-model-recovery-flutter-final.jsonl` 与 `preview-recheck.jsonl` 对应日志，不把首次全量退出码写成成功。
+Flutter 回归覆盖诊断查询与旧桥接兼容、结构化拒绝范围、批量在中途停止并释放操作控件、普通失败继续、已提交任务和部分文件保留、手动重试与其他来源继续、诊断复制的固定字段和旧记录读取。本地 Go 全量 808 个测试／子测试通过，零失败；8 项既有可选联网巡检未启用。相关竞态、`go vet`、Flutter analyze 和 Dart／Go 格式检查通过。Flutter 全量执行有 1050 项通过，唯一失败是首个预览读取尚未就绪的本地字体路径；修正测试字体配置后，该预览单独重跑通过，合计 1051 项不同回归均已覆盖。此次环境错误和复查结果分别保留在 `/tmp/guoguo-hongguo-model-recovery-flutter-final.jsonl` 与 `/tmp/guoguo-hongguo-model-recovery-preview-recheck.jsonl`，不把首次全量退出码写成成功。
 
-最终 Go、竞态和静态日志是 `/tmp/guoguo-hongguo-model-recovery-go-checked.jsonl`、`/tmp/guoguo-hongguo-model-recovery-race-checked.log`、`/tmp/guoguo-hongguo-model-recovery-vet-checked.log`；Flutter／诊断及下载专项测试、独立 Node 向量均已执行。
+最终 Go、竞态和静态日志是 `/tmp/guoguo-hongguo-model-recovery-go-quality-final.jsonl`、`/tmp/guoguo-hongguo-model-recovery-race-quality-final.log`、`/tmp/guoguo-hongguo-model-recovery-vet-quality-final.log`；Flutter／诊断及下载专项测试、独立 Node 向量均已执行。
 
 真实探针取得《浴火之路》58 集详情，媒体首段 HTTP 206／1024 字节，一集完整 CENC 解密、MP4 准备与 FFmpeg 解码通过。日志 `/tmp/guoguo-hongguo-model-recovery-live.log`。该联网样本使用正常完整模型；受约束备用恢复由受控传输验证，未把普通模型的联网成功写成真实备用接口触发成功。
 
