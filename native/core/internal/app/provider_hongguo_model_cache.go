@@ -5,6 +5,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -76,8 +77,9 @@ func (client *hongguoAppClient) expireHongguoUpcomingModels(now time.Time) {
 	}
 }
 
-func (downloader *Downloader) keepHongguoUpcomingModels(result map[string]any, ids []string, identity hongguoPlayerIdentity) {
-	entries := make(map[string]json.RawMessage, len(ids))
+func (downloader *Downloader) keepHongguoUpcomingModels(ctx context.Context, result map[string]any, ids []string) {
+	now := time.Now()
+	entries := make(map[string]hongguoUpcomingModel, len(ids))
 	for _, id := range ids {
 		entry := nestedMap(result, "data", id)
 		body, err := json.Marshal(entry)
@@ -87,7 +89,22 @@ func (downloader *Downloader) keepHongguoUpcomingModels(result map[string]any, i
 		if _, err := parseHongguoAppMedia(entry); err != nil {
 			continue
 		}
-		entries[id] = body
+		expiresAt := now.Add(hongguoModelTTL)
+		if _, exists := entry["expire_time"]; exists {
+			seconds, err := strconv.ParseInt(mapString(entry, "expire_time"), 10, 64)
+			if err != nil || seconds <= 0 || seconds > 253402300799 {
+				continue
+			}
+			// Leave a small margin for handing off a URL near its server expiry.
+			serverExpiry := time.Unix(seconds, 0).Add(-5 * time.Second)
+			if !now.Before(serverExpiry) {
+				continue
+			}
+			if serverExpiry.Before(expiresAt) {
+				expiresAt = serverExpiry
+			}
+		}
+		entries[id] = hongguoUpcomingModel{entry: body, expiresAt: expiresAt}
 	}
 	if len(entries) == 0 {
 		return
@@ -95,16 +112,15 @@ func (downloader *Downloader) keepHongguoUpcomingModels(result map[string]any, i
 	client := downloader.hongguoClient()
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if client.player != identity {
+	if ctx.Err() != nil {
 		return
 	}
-	now := time.Now()
 	client.expireHongguoUpcomingModels(now)
 	if client.upcomingModels == nil {
 		client.upcomingModels = make(map[string]hongguoUpcomingModel)
 	}
 	for id, entry := range entries {
-		client.upcomingModels[id] = hongguoUpcomingModel{entry: entry, expiresAt: now.Add(hongguoModelTTL)}
+		client.upcomingModels[id] = entry
 	}
 	for len(client.upcomingModels) > hongguoModelCacheLimit {
 		oldestID := ""

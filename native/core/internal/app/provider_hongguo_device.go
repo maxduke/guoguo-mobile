@@ -26,62 +26,6 @@ const hongguoDeviceMaxBody = 64 * 1024
 
 var errHongguoDeviceRegistration = errors.New("红果播放设备注册失败，请稍后重试")
 
-type hongguoPlayerDeviceCall struct {
-	done     chan struct{}
-	identity hongguoPlayerIdentity
-	err      error
-}
-
-// Share one registration between foreground playback and episode prefetch.
-// Waiting callers can cancel independently; a canceled owner publishes no identity.
-func (downloader *Downloader) hongguoPlaybackDevice(ctx context.Context) (hongguoPlayerIdentity, error) {
-	client := downloader.hongguoClient()
-	for {
-		if err := ctx.Err(); err != nil {
-			return hongguoPlayerIdentity{}, err
-		}
-		client.mu.Lock()
-		if pending := client.playerPending; pending != nil {
-			client.mu.Unlock()
-			traceShared(ctx)
-			select {
-			case <-ctx.Done():
-				return hongguoPlayerIdentity{}, ctx.Err()
-			case <-pending.done:
-				if ctx.Err() != nil {
-					return hongguoPlayerIdentity{}, ctx.Err()
-				}
-				if errors.Is(pending.err, context.Canceled) || errors.Is(pending.err, context.DeadlineExceeded) {
-					continue
-				}
-				return pending.identity, pending.err
-			}
-		}
-		if client.player.deviceID != "" {
-			identity := client.player
-			client.mu.Unlock()
-			return identity, nil
-		}
-		pending := &hongguoPlayerDeviceCall{done: make(chan struct{})}
-		client.playerPending = pending
-		client.mu.Unlock()
-
-		identity, err := downloader.registerHongguoPlaybackDevice(ctx)
-		client.mu.Lock()
-		if ctx.Err() != nil {
-			identity, err = hongguoPlayerIdentity{}, ctx.Err()
-		}
-		if err == nil {
-			client.player = identity
-		}
-		pending.identity, pending.err = identity, err
-		client.playerPending = nil
-		close(pending.done)
-		client.mu.Unlock()
-		return identity, err
-	}
-}
-
 // Keep account/site cookies out of both registration and playback. Fixed API
 // endpoints must not forward registration payloads or device cookies on redirects.
 func hongguoAnonymousClient(client *http.Client) *http.Client {
@@ -91,7 +35,29 @@ func hongguoAnonymousClient(client *http.Client) *http.Client {
 	return &anonymous
 }
 
-func (downloader *Downloader) registerHongguoPlaybackDevice(ctx context.Context) (hongguoPlayerIdentity, error) {
+// Do not share single-use identities between separate resolves. Registration
+// rejection puts subsequent work on a short cooldown; cancellation never does.
+func (downloader *Downloader) registerHongguoPlaybackDevice(ctx context.Context) (identity hongguoPlayerIdentity, err error) {
+	if err := ctx.Err(); err != nil {
+		return hongguoPlayerIdentity{}, err
+	}
+	client := downloader.hongguoClient()
+	client.mu.Lock()
+	coolingDown := time.Now().Before(client.registrationRetryAfter)
+	client.mu.Unlock()
+	if coolingDown {
+		return hongguoPlayerIdentity{}, errHongguoDeviceRegistration
+	}
+	parent := ctx
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	defer func() {
+		if err != nil && parent.Err() == nil {
+			client.mu.Lock()
+			client.registrationRetryAfter = time.Now().Add(10 * time.Second)
+			client.mu.Unlock()
+		}
+	}()
 	cdid, err := newHongguoDeviceUUID()
 	if err != nil {
 		return hongguoPlayerIdentity{}, errHongguoDeviceRegistration
@@ -115,8 +81,11 @@ func (downloader *Downloader) registerHongguoPlaybackDevice(ctx context.Context)
 	}
 	response, err := downloader.doPreparedCatalogRequestWithClient(request, 20*time.Second, nil, hongguoAnonymousClient(downloader.client))
 	if err != nil {
+		if parent.Err() != nil {
+			return hongguoPlayerIdentity{}, parent.Err()
+		}
 		if ctx.Err() != nil {
-			return hongguoPlayerIdentity{}, ctx.Err()
+			return hongguoPlayerIdentity{}, fmt.Errorf("%w: %w", errHongguoDeviceRegistration, ctx.Err())
 		}
 		return hongguoPlayerIdentity{}, fmt.Errorf("%w: %w", errHongguoDeviceRegistration, publicError(err))
 	}
@@ -135,7 +104,10 @@ func (downloader *Downloader) registerHongguoPlaybackDevice(ctx context.Context)
 	if decoder.Decode(&result) != nil || result == nil || decoder.Decode(&extra) != io.EOF {
 		return hongguoPlayerIdentity{}, errHongguoDeviceRegistration
 	}
-	identity := hongguoPlayerIdentity{
+	if code := firstNonEmpty(mapString(result, "code", "Code", "status_code"), mapString(nestedMap(result, "BaseResp"), "StatusCode")); code != "" && code != "0" {
+		return hongguoPlayerIdentity{}, errHongguoDeviceRegistration
+	}
+	identity = hongguoPlayerIdentity{
 		deviceID: mapString(result, "device_id_str", "device_id"), installID: mapString(result, "install_id_str", "install_id"), cdid: cdid,
 	}
 	for _, id := range []string{identity.deviceID, identity.installID} {

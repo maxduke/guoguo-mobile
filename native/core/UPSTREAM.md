@@ -253,3 +253,37 @@ The [investigation and validation record](../../docs/hongguo-identity-recovery-2
 also preserves the live failure where a replacement identity still received empty
 models. Identity-specific and broader service/network failures remain distinct;
 this change does not promise availability during every server incident.
+
+## November 8 Hongguo signed, per-resolve playback
+
+The current playback request policy is selectively adapted from
+[jackotom/hongguo-drama `b2b81cec61159ae788c723b21ad1015ac40296f6`](https://github.com/jackotom/hongguo-drama/tree/b2b81cec61159ae788c723b21ad1015ac40296f6),
+`src/native/app-source.js` (`playbackRequest`, `fetchAppPlayUrl`) and
+`src/native/playback-device.js` (`registerPlaybackDevice`), GPL-3.0-only.
+The existing [GPL license](licenses/hongguoTV-GPL-3.0.txt) is retained.
+That project's signing/Spade provenance is woshishiq1/drpys
+`22261adfa31435e3b3ef5a730b8a2a75bcaf1715` via N3urda/hongguoTV
+`eea73e6a45569a2cbbb9440f7cd5290c459b0b70`; its registration provenance is
+hongguoTV `388931852ddc614db8b00775a3dc54c5ede6307f` via
+charlie901208/HGTV. Our already validated Go cryptography remains in use.
+
+This supersedes the October unsigned-player policy and November 2 shared
+identity/health-revision recovery. Playback signs the final query and POST bytes
+with the registered anonymous identity on every attempt; catalog-only body-stub
+and SDK headers are omitted from the anonymous player profile. Registration
+remains separate and unsigned except for its binary body checksum. Existing
+account-cookie and redirect isolation remain in place.
+
+A fresh identity belongs to each uncached logical resolve, retaining it within
+that resolve's route and batch-to-single retries. Registration uses an eight-second
+sub-deadline and ten-second failure cooldown (caller cancellation excluded).
+Foreground all-empty failure permits at most one replacement and one additional
+four-attempt round; background lookahead keeps one round. The old cross-resolve
+identity state and stale-lease machinery are removed. Successful upcoming models
+remain independently reusable with the existing one-minute cap, additionally
+bounded by server `expire_time` minus five seconds.
+
+Same-episode unsigned/signed controls and single-use identity behavior were
+observed on this host; three sequential mobile resolves passed. See
+[the adoption and validation record](../../docs/hongguo-drama-review-2026-11-08.md)
+for evidence, selective follow-up ideas, and the outstanding iOS acceptance.
