@@ -32,7 +32,7 @@ func TestHongguoMobilePlaybackHasBoundedDedicatedRetries(t *testing.T) {
 					registrations++
 					return rankingHTTPResponse(request, http.StatusOK, hongguoDeviceFixture), nil
 				}
-				assertHongguoUnsignedPlaybackRequest(t, request)
+				assertHongguoSignedPlaybackRequest(t, request)
 				hosts = append(hosts, request.URL.Host)
 				if outcome == "cancel" {
 					cancel()
@@ -76,7 +76,7 @@ func TestHongguoPlaybackRotatesRoutesWithinBudget(t *testing.T) {
 			var hosts []string
 			var identities [][3]string
 			d := hongguoRegisteredMediaDownloader(t, func(request *http.Request) (*http.Response, error) {
-				assertHongguoUnsignedPlaybackRequest(t, request)
+				assertHongguoSignedPlaybackRequest(t, request)
 				hosts = append(hosts, request.URL.Host)
 				query := request.URL.Query()
 				identities = append(identities, [3]string{query.Get("device_id"), query.Get("iid"), query.Get("cdid")})
@@ -142,9 +142,9 @@ func TestHongguoPlaybackRetryOpensIsolatedConnection(t *testing.T) {
 	d := rankingTestDownloader(t, nil)
 	d.client, d.cfg.Retries = client, 2
 	d.hongguoClient().baseURL = server.URL
-	d.hongguoClient().player = hongguoPlayerIdentity{deviceID: "111001", installID: "222001", cdid: "fixture"}
+	identity := hongguoPlayerIdentity{deviceID: "111001", installID: "222001", cdid: "fixture"}
 	for range 3 {
-		if _, err := d.resolveHongguoAppMedia(context.Background(), "800001"); err != nil {
+		if _, err := d.hongguoRequest(context.Background(), http.MethodPost, "/novel/player/multi_video_model/v1/", nil, nil, 0, 0, &identity); err != nil {
 			t.Fatal(err)
 		}
 	}

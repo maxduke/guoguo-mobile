@@ -326,3 +326,48 @@ func TestHongguoModelCacheIsBoundedAndMissingCurrentDoesNotWarm(t *testing.T) {
 		t.Fatal("missing current model warmed speculative entries")
 	}
 }
+
+func TestHongguoUpcomingModelHonorsServerExpiryAndCancellation(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		expiry any
+		cancel bool
+		cached bool
+	}{
+		{"no server expiry", nil, false, true},
+		{"near expiry", float64(time.Now().Add(3 * time.Second).Unix()), false, false},
+		{"expired", float64(time.Now().Add(-time.Second).Unix()), false, false},
+		{"invalid", "tomorrow", false, false},
+		{"short server expiry", float64(time.Now().Add(30 * time.Second).Unix()), false, true},
+		{"long server expiry", float64(time.Now().Add(6 * time.Hour).Unix()), false, true},
+		{"canceled", nil, true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			d := rankingTestDownloader(t, nil)
+			entry := map[string]any{"video_model": hongguoVideoModelFixture()}
+			if test.expiry != nil {
+				entry["expire_time"] = test.expiry
+			}
+			result := map[string]any{"data": map[string]any{"800002": entry}}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if test.cancel {
+				cancel()
+			}
+			before := time.Now()
+			d.keepHongguoUpcomingModels(ctx, result, []string{"800002"})
+			cached, found := d.hongguoClient().upcomingModels["800002"]
+			if found != test.cached {
+				t.Fatal("incorrect expiry/cancellation caching", found)
+			}
+			if found {
+				if cached.expiresAt.After(time.Now().Add(hongguoModelTTL)) || cached.expiresAt.Before(before) {
+					t.Fatal("invalid local cache bound")
+				}
+				if seconds, ok := test.expiry.(float64); ok && cached.expiresAt.After(time.Unix(int64(seconds), 0).Add(-5*time.Second)) {
+					t.Fatal("cache outlives server expiry")
+				}
+			}
+		})
+	}
+}

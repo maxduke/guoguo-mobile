@@ -24,33 +24,15 @@ type hongguoRequestMode uint8
 
 const (
 	hongguoSignedAppRequest hongguoRequestMode = iota
-	hongguoUnsignedPlayerRequest
+	hongguoAnonymousPlayerRequest
 )
 
-// Playback identifiers belong to this client lifetime, never to the saved catalog.
+// An anonymous identity belongs to one logical resolve, including its retries.
 type hongguoPlayerIdentity struct {
 	deviceID  string
 	installID string
 	cdid      string
 	cookie    string
-}
-
-// A request retains the identity and successful-model revision it actually used.
-// Late replies must not change recovery state belonging to a newer request.
-type hongguoPlayerLease struct {
-	identity hongguoPlayerIdentity
-	revision uint64
-}
-
-type hongguoPlayerResponse struct {
-	data  map[string]any
-	lease hongguoPlayerLease
-}
-
-type hongguoPlayerHealth struct {
-	emptyRounds       int
-	rotationAttempted bool
-	revision          uint64
 }
 
 type hongguoCatalogCursor struct {
@@ -71,20 +53,18 @@ type hongguoCatalogState struct {
 }
 
 type hongguoAppClient struct {
-	mu             sync.Mutex
-	catalogMu      sync.Mutex
-	baseURL        string
-	state          hongguoCatalogState
-	player         hongguoPlayerIdentity
-	playerHealth   hongguoPlayerHealth
-	playerPending  *hongguoPlayerDeviceCall
-	upcomingModels map[string]hongguoUpcomingModel
-	details        map[string]hongguoDetailEntry
-	pending        map[string]*hongguoDetailCall
-	searches       map[string]hongguoSearchEntry
-	searchPending  map[string]*hongguoSearchCall
-	suggestions    map[string]hongguoSuggestionEntry
-	suggestPending map[string]*hongguoSuggestionCall
+	mu                     sync.Mutex
+	catalogMu              sync.Mutex
+	baseURL                string
+	state                  hongguoCatalogState
+	registrationRetryAfter time.Time
+	upcomingModels         map[string]hongguoUpcomingModel
+	details                map[string]hongguoDetailEntry
+	pending                map[string]*hongguoDetailCall
+	searches               map[string]hongguoSearchEntry
+	searchPending          map[string]*hongguoSearchCall
+	suggestions            map[string]hongguoSuggestionEntry
+	suggestPending         map[string]*hongguoSuggestionCall
 }
 
 func (downloader *Downloader) hongguoClient() *hongguoAppClient {
@@ -169,20 +149,6 @@ func (downloader *Downloader) hongguoAppRequest(ctx context.Context, method, pat
 	return downloader.hongguoRequest(ctx, method, path, extra, payload, 0, 0, nil)
 }
 
-func (downloader *Downloader) hongguoPlayerRequest(ctx context.Context, path string, payload any) (map[string]any, error) {
-	response, err := downloader.hongguoPlayerRequestWithAttempts(ctx, path, payload, 0, 0)
-	return response.data, err
-}
-
-func (downloader *Downloader) hongguoPlayerRequestWithAttempts(ctx context.Context, path string, payload any, limit, offset int) (hongguoPlayerResponse, error) {
-	lease, err := downloader.hongguoPlaybackLease(ctx)
-	if err != nil {
-		return hongguoPlayerResponse{}, err
-	}
-	result, err := downloader.hongguoRequest(ctx, http.MethodPost, path, nil, payload, limit, offset, &lease.identity)
-	return hongguoPlayerResponse{data: result, lease: lease}, err
-}
-
 func (downloader *Downloader) hongguoRequestAttempts() int {
 	return max(1, min(downloader.cfg.Retries, 3))
 }
@@ -205,7 +171,7 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path s
 	mode := hongguoSignedAppRequest
 	httpClient := downloader.client
 	if player != nil {
-		mode = hongguoUnsignedPlayerRequest
+		mode = hongguoAnonymousPlayerRequest
 		deviceID, installID = player.deviceID, player.installID
 		httpClient = hongguoAnonymousClient(httpClient)
 	}
@@ -215,7 +181,7 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path s
 	for key, values := range extra {
 		query[key] = append([]string(nil), values...)
 	}
-	if mode == hongguoUnsignedPlayerRequest {
+	if mode == hongguoAnonymousPlayerRequest {
 		query.Set("cdid", player.cdid)
 	}
 	var body []byte
@@ -227,7 +193,7 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path s
 		}
 	}
 	attempts := downloader.hongguoRequestAttempts()
-	if mode == hongguoUnsignedPlayerRequest {
+	if mode == hongguoAnonymousPlayerRequest {
 		attempts = downloader.hongguoPlayerRequestAttempts()
 	}
 	if limit > 0 && limit < attempts {
@@ -238,7 +204,7 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path s
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
 			delay := time.Duration(attempt) * time.Second
-			if mode == hongguoUnsignedPlayerRequest {
+			if mode == hongguoAnonymousPlayerRequest {
 				delay = hongguoPlaybackRetryDelay(offset + attempt)
 			}
 			select {
@@ -249,7 +215,7 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path s
 		}
 		requestBase := base
 		attemptClient := httpClient
-		if mode == hongguoUnsignedPlayerRequest {
+		if mode == hongguoAnonymousPlayerRequest {
 			requestBase = hongguoPlaybackBaseURL(base, offset+attempt)
 			if offset+attempt > 0 {
 				var release func()
@@ -261,12 +227,12 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path s
 		if err != nil {
 			return nil, err
 		}
-		request.Close = mode == hongguoUnsignedPlayerRequest && offset+attempt > 0
+		request.Close = mode == hongguoAnonymousPlayerRequest && offset+attempt > 0
 		request.Header.Set("User-Agent", hongguoAppUserAgent)
 		request.Header.Set("Accept", "application/json")
 		request.Header.Set("X-XS-From-Web", "0")
 		request.Header.Set("Sdk-Version", "2")
-		if mode == hongguoUnsignedPlayerRequest && player.cookie != "" {
+		if mode == hongguoAnonymousPlayerRequest && player.cookie != "" {
 			request.Header.Set("Cookie", player.cookie)
 		}
 		comment, _ := ctx.Value(hongguoCommentKey{}).(bool)
@@ -286,15 +252,24 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path s
 		response, err := downloader.doPreparedCatalogRequestWithClient(request, 20*time.Second, func(prepared *http.Request) error {
 			now := time.Now()
 			query.Set("_rticket", strconv.FormatInt(now.UnixMilli(), 10))
-			if mode == hongguoUnsignedPlayerRequest {
+			if mode == hongguoAnonymousPlayerRequest {
 				query.Set("ts", strconv.FormatInt(now.Unix(), 10))
 				prepared.Header.Set("Accept", "application/json; charset=utf-8,application/x-protobuf")
 				prepared.Header.Set("X-SS-Req-Ticket", query.Get("_rticket"))
 				prepared.Header.Set("X-TT-Request-Tag", "t=0;n=0")
 			}
 			prepared.URL.RawQuery = query.Encode()
-			if mode == hongguoUnsignedPlayerRequest {
-				// The playback cluster rejects signature headers, including body stubs.
+			if mode == hongguoAnonymousPlayerRequest {
+				// Sign the final query and exact POST bytes on every route attempt.
+				if err := signHongguoRequest(prepared, body, now); err != nil {
+					return err
+				}
+				// Playback uses the anonymous player header profile, not catalog headers.
+				for _, name := range []string{"X-SS-STUB", "Passport-Sdk-Version", "X-VC-Bdturing-Sdk-Version"} {
+					prepared.Header.Del(name)
+				}
+				prepared.Header.Set("X-TT-Store-Region", "cn")
+				prepared.Header.Set("X-TT-Store-Region-Src", "did")
 				return nil
 			}
 			if comment {
@@ -327,9 +302,9 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path s
 		if len(content) > providerMaxBodyBytes {
 			return nil, errors.New("红果 App 接口未返回有效数据")
 		}
-		if len(content) == 0 || mode == hongguoUnsignedPlayerRequest && len(bytes.TrimSpace(content)) == 0 {
+		if len(content) == 0 || mode == hongguoAnonymousPlayerRequest && len(bytes.TrimSpace(content)) == 0 {
 			lastErr = errors.New("红果 App 接口未返回有效数据")
-			if mode == hongguoUnsignedPlayerRequest {
+			if mode == hongguoAnonymousPlayerRequest {
 				emptyResponses++
 				// Transient empty models share the existing retry budget and identity.
 				continue
@@ -348,7 +323,7 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path s
 		}
 		return result, nil
 	}
-	if mode == hongguoUnsignedPlayerRequest && emptyResponses == attempts {
+	if mode == hongguoAnonymousPlayerRequest && emptyResponses == attempts {
 		return nil, &hongguoEmptyPlaybackError{attempts: attempts}
 	}
 	return nil, lastErr

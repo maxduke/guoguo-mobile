@@ -1,5 +1,7 @@
 # 红果空响应与一次性设备身份恢复（2026-11-02）
 
+> 历史记录：共享身份与轮换策略已由 [11 月 8 日的签名与独立取流身份修复](hongguo-drama-review-2026-11-08.md) 取代。
+
 用户在 v0.20.7 后继续反馈 iPhone 红果无法播放，并提供 [hongguoTV issue #41](https://github.com/tsukiyo-zero/hongguoTV/issues/41)。本轮固定参考 [3e2db1b](https://github.com/tsukiyo-zero/hongguoTV/tree/3e2db1b75126c804d6b1e1dc6acb5e8c6f365766) 中已合入的 [PR #42](https://github.com/tsukiyo-zero/hongguoTV/pull/42)，重点核对设备会话、空响应判定及恢复触发条件。
 
 ## 对上次判断的修正

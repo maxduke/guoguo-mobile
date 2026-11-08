@@ -1,9 +1,13 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -82,7 +86,7 @@ func TestHongguoAppMediaMedia(t *testing.T) {
 					t.Errorf("unexpected stream request: %s %s", request.Method, request.URL.Path)
 					return rankingHTTPResponse(request, http.StatusNotFound, ""), nil
 				}
-				assertHongguoUnsignedPlaybackRequest(t, request)
+				assertHongguoSignedPlaybackRequest(t, request)
 				var payload map[string]any
 				if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 					t.Fatal(err)
@@ -121,12 +125,40 @@ func TestHongguoAppMediaMedia(t *testing.T) {
 	}
 }
 
-func assertHongguoUnsignedPlaybackRequest(t *testing.T, request *http.Request) {
+func assertHongguoSignedPlaybackRequest(t *testing.T, request *http.Request) {
 	t.Helper()
-	for _, name := range []string{"X-Gorgon", "X-Khronos", "X-SS-STUB", "X-Argus", "X-Ladon", "X-Helios", "X-Medusa", "Comment-Source", "Server-Channel"} {
+	for _, name := range []string{"X-SS-STUB", "Passport-Sdk-Version", "X-VC-Bdturing-Sdk-Version", "Comment-Source", "Server-Channel"} {
 		if request.Header.Get(name) != "" {
 			t.Errorf("playback must not carry %s", name)
 		}
+	}
+	for _, name := range []string{"X-Gorgon", "X-Khronos", "X-Argus", "X-Ladon", "X-Helios", "X-Medusa"} {
+		if request.Header.Get(name) == "" {
+			t.Errorf("playback lost %s signature", name)
+		}
+	}
+	body, err := io.ReadAll(request.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Body = io.NopCloser(bytes.NewReader(body))
+	stamp, err := strconv.ParseUint(request.Header.Get("X-Khronos"), 10, 32)
+	if err != nil {
+		t.Fatal("invalid signature timestamp")
+	}
+	gorgon, err := hex.DecodeString(request.Header.Get("X-Gorgon"))
+	if err != nil || len(gorgon) != 26 {
+		t.Fatal("invalid Gorgon signature")
+	}
+	if got := hongguoAppGorgon(request.URL.RawQuery, body, uint32(stamp), binary.LittleEndian.Uint16(gorgon[2:4])); got != request.Header.Get("X-Gorgon") {
+		t.Error("signature does not bind the final query and exact serialized POST body")
+	}
+	hash, bodyHash := hongguoSM3([]byte(request.URL.RawQuery)), md5.Sum(body)
+	if (hongguoSignHashIV(hash[:], bodyHash[:], uint32(stamp))&15)%3 != 0 {
+		t.Error("unsupported signature branch")
+	}
+	if request.Header.Get("X-TT-Store-Region") != "cn" || request.Header.Get("X-TT-Store-Region-Src") != "did" {
+		t.Error("missing anonymous player region")
 	}
 	query := request.URL.Query()
 	for _, name := range []string{"device_id", "iid"} {
@@ -138,7 +170,7 @@ func assertHongguoUnsignedPlaybackRequest(t *testing.T, request *http.Request) {
 		t.Error("playback must supply a UUID CDID")
 	}
 	ticket, err := strconv.ParseInt(query.Get("_rticket"), 10, 64)
-	if err != nil || ticket <= 0 || query.Get("ts") != strconv.FormatInt(ticket/1000, 10) || request.Header.Get("X-SS-Req-Ticket") != query.Get("_rticket") {
+	if err != nil || ticket <= 0 || request.Header.Get("X-Khronos") != query.Get("ts") || request.Header.Get("X-SS-Req-Ticket") != query.Get("_rticket") {
 		t.Error("playback timestamps must agree across query and headers")
 	}
 	if request.Header.Get("X-TT-Request-Tag") != "t=0;n=0" || request.Header.Get("Sdk-Version") != "2" || request.Header.Get("X-XS-From-Web") != "0" || request.Header.Get("User-Agent") != hongguoAppUserAgent {
@@ -161,7 +193,7 @@ func TestHongguoPlaybackIdentityIsIsolatedFromCatalogAndRestart(t *testing.T) {
 		d := hongguoRegisteredMediaDownloader(t, func(request *http.Request) (*http.Response, error) {
 			query := request.URL.Query()
 			if strings.HasPrefix(request.URL.Path, "/novel/player/") {
-				assertHongguoUnsignedPlaybackRequest(t, request)
+				assertHongguoSignedPlaybackRequest(t, request)
 				identity := [3]string{query.Get("device_id"), query.Get("iid"), query.Get("cdid")}
 				if identity[0] == state.DeviceID || identity[1] == state.InstallID {
 					t.Error("playback reused persisted catalog identifiers")
@@ -202,8 +234,13 @@ func TestHongguoPlaybackIdentityIsIsolatedFromCatalogAndRestart(t *testing.T) {
 			}
 		}
 	}
-	if len(identities) != 4 || identities[0] != identities[1] || identities[2] != identities[3] {
-		t.Fatal("playback identity must stay stable for each client lifetime")
+	if len(identities) != 4 {
+		t.Fatal("missing playback identity")
+	}
+	for i := 1; i < len(identities); i++ {
+		if identities[i][2] == identities[i-1][2] {
+			t.Fatal("separate resolves reused an identity")
+		}
 	}
 	for index := range identities[0] {
 		if identities[0][index] == identities[2][index] {
@@ -212,7 +249,7 @@ func TestHongguoPlaybackIdentityIsIsolatedFromCatalogAndRestart(t *testing.T) {
 	}
 }
 
-func TestHongguoPlaybackRetryStaysUnsigned(t *testing.T) {
+func TestHongguoPlaybackRetryStaysSigned(t *testing.T) {
 	const videoID = "800001"
 	body, err := json.Marshal(map[string]any{"data": map[string]any{videoID: map[string]any{"video_model": hongguoVideoModelFixture()}}})
 	if err != nil {
@@ -220,7 +257,7 @@ func TestHongguoPlaybackRetryStaysUnsigned(t *testing.T) {
 	}
 	var identities [][3]string
 	d := hongguoRegisteredMediaDownloader(t, func(request *http.Request) (*http.Response, error) {
-		assertHongguoUnsignedPlaybackRequest(t, request)
+		assertHongguoSignedPlaybackRequest(t, request)
 		query := request.URL.Query()
 		identities = append(identities, [3]string{query.Get("device_id"), query.Get("iid"), query.Get("cdid")})
 		if len(identities) == 1 {

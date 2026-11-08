@@ -101,7 +101,7 @@ func inspectHongguoRegistration(t *testing.T, request *http.Request) map[string]
 	return header
 }
 
-func TestHongguoPlaybackDeviceRegistrationAndReuse(t *testing.T) {
+func TestHongguoPlaybackDeviceRegistrationIsScopedToResolve(t *testing.T) {
 	var registrations, models int
 	var registration map[string]any
 	var identity [3]string
@@ -118,19 +118,19 @@ func TestHongguoPlaybackDeviceRegistrationAndReuse(t *testing.T) {
 		models++
 		query := request.URL.Query()
 		current := [3]string{query.Get("device_id"), query.Get("iid"), query.Get("cdid")}
-		if registrations != 1 || current[0] != "3330000000000000001" || current[1] != "4440000000000000001" || registration["cdid"] != current[2] || registration["app_version"] != query.Get("version_name") {
+		if registrations != (models+1)/2 || current[0] != "3330000000000000001" || current[1] != "4440000000000000001" || registration["cdid"] != current[2] || registration["app_version"] != query.Get("version_name") {
 			t.Error("playback did not use the registered device profile")
 		}
 		if models == 1 {
 			identity = current
-		} else if current != identity {
+		} else if models == 2 && current != identity {
 			t.Error("retry or next resolve rotated the registered identity")
 		}
 		cookies := request.Cookies()
 		if len(cookies) != 4 || request.Header.Get("Cookie") != "install_id=4440000000000000001; ttreq=fixture; store-region=cn; store-region-src=did" {
 			t.Error("playback did not restrict cookies to registered device cookies")
 		}
-		assertHongguoUnsignedPlaybackRequest(t, request)
+		assertHongguoSignedPlaybackRequest(t, request)
 		if models == 1 {
 			return rankingHTTPResponse(request, http.StatusServiceUnavailable, ""), nil
 		}
@@ -147,13 +147,13 @@ func TestHongguoPlaybackDeviceRegistrationAndReuse(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if registrations != 1 || models != 3 {
+	if registrations != 2 || models != 3 {
 		t.Fatalf("registration/model request counts: %d/%d", registrations, models)
 	}
 }
 
 func TestHongguoPlaybackDeviceRegistrationRejectsInvalidResponses(t *testing.T) {
-	for _, body := range []string{"", `null`, `{`, `{"device_id":0,"install_id":444}`, `{"device_id":"333","install_id":"bad"}`, `{"device_id":"0333","install_id":"444"}`, `{"device_id":3e19,"install_id":444}`, `{"device_id":"333","install_id":"444"} {}`, `{"device_id":"333"}`, `{"device_id":"1234567890123456789012345678901","install_id":"444"}`, strings.Repeat(" ", 65537)} {
+	for _, body := range []string{"", `null`, `{`, `{"device_id":0,"install_id":444}`, `{"device_id":"333","install_id":"bad"}`, `{"device_id":"0333","install_id":"444"}`, `{"device_id":3e19,"install_id":444}`, `{"device_id":"333","install_id":"444"} {}`, `{"device_id":"333"}`, `{"device_id":"1234567890123456789012345678901","install_id":"444"}`, `{"code":110001,"device_id":"333","install_id":"444"}`, strings.Repeat(" ", 65537)} {
 		t.Run(fmt.Sprint(len(body))+"-"+truncate(body, 35), func(t *testing.T) {
 			models := 0
 			d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
@@ -186,109 +186,93 @@ func TestHongguoPlaybackDeviceRegistrationFailureCanRetry(t *testing.T) {
 	if _, err := d.resolveHongguoAppMedia(context.Background(), "800001"); err == nil || !strings.Contains(err.Error(), "播放设备注册失败") || strings.Contains(err.Error(), "private-response-details") {
 		t.Fatal("registration failure did not retain a safe error", err)
 	}
+	if _, err := d.resolveHongguoAppMedia(context.Background(), "800001"); !errors.Is(err, errHongguoDeviceRegistration) || registrations != 1 {
+		t.Fatal("registration rejection ignored cooldown", err)
+	}
+	d.hongguoClient().registrationRetryAfter = time.Now().Add(-time.Second)
 	for range 2 {
 		if _, err := d.resolveHongguoAppMedia(context.Background(), "800001"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if registrations != 2 {
-		t.Fatal("successful registration was repeated")
+	if registrations != 3 {
+		t.Fatal("resolve did not get its own registration")
 	}
 }
 
-func TestHongguoPlaybackDeviceRegistrationWaiterCanCancel(t *testing.T) {
-	entered, release := make(chan struct{}), make(chan struct{})
+func TestHongguoPlaybackRegistrationCancellationIsIsolated(t *testing.T) {
+	entered := make(chan struct{})
 	var registrations atomic.Int32
 	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
 		if request.URL.Path == "/service/2/device_register/" {
 			if registrations.Add(1) == 1 {
 				close(entered)
-				select {
-				case <-release:
-				case <-request.Context().Done():
-					return nil, request.Context().Err()
-				}
-			}
-			return rankingHTTPResponse(request, http.StatusOK, hongguoDeviceFixture), nil
-		}
-		return rankingHTTPResponse(request, http.StatusOK, `{"data":{"800001":{"video_model":{"video_list":[{"main_url":"https://media.example.test/episode.mp4"}]}}}}`), nil
-	})
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	defer close(release)
-	done := make(chan error, 1)
-	go func() { _, err := d.resolveHongguoAppMedia(ctx, "800001"); done <- err }()
-	select {
-	case <-entered:
-	case <-ctx.Done():
-		t.Fatal("registration was not started")
-	}
-	waiter, cancelWaiter := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancelWaiter()
-	if _, err := d.resolveHongguoAppMedia(waiter, "800001"); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatal("registration waiter did not honor cancellation", err)
-	}
-	if registrations.Load() != 1 {
-		t.Fatal("concurrent playback started another registration")
-	}
-	cancel()
-	if err := <-done; !errors.Is(err, context.Canceled) {
-		t.Fatal("registration owner did not honor cancellation", err)
-	}
-	if _, err := d.resolveHongguoAppMedia(waiter, "800001"); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatal("canceled playback used or started a device session", err)
-	}
-	if _, err := d.resolveHongguoAppMedia(context.Background(), "800001"); err != nil {
-		t.Fatal("canceled registration prevented a new playback attempt", err)
-	}
-	if registrations.Load() != 2 {
-		t.Fatal("canceled registration was cached or cancellation started another registration")
-	}
-}
-
-func TestHongguoPlaybackDeviceRegistrationSharedByConcurrentPlayback(t *testing.T) {
-	entered, release := make(chan struct{}), make(chan struct{})
-	var registrations, models atomic.Int32
-	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
-		if request.URL.Path == "/service/2/device_register/" {
-			if registrations.Add(1) == 1 {
-				close(entered)
-			}
-			select {
-			case <-release:
-			case <-request.Context().Done():
+				<-request.Context().Done()
 				return nil, request.Context().Err()
 			}
 			return rankingHTTPResponse(request, http.StatusOK, hongguoDeviceFixture), nil
 		}
-		models.Add(1)
-		if request.URL.Query().Get("device_id") != "3330000000000000001" {
-			t.Error("concurrent playback did not use the registered device")
+		return rankingHTTPResponse(request, http.StatusOK, hongguoModelBatchFixture("800002")), nil
+	})
+	d.limiter = newRequestLimiter(8, time.Nanosecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, err := d.resolveHongguoAppMedia(ctx, "800001"); done <- err }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("registration did not start")
+	}
+	// The source limiter serializes network I/O; cancellation must release its
+	// gate so a different resolve can register its own identity and succeed.
+	other := make(chan error, 1)
+	go func() { _, err := d.resolveHongguoAppMedia(context.Background(), "800002"); other <- err }()
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatal("registration ignored cancellation", err)
+	}
+	if err := <-other; err != nil {
+		t.Fatal("another resolve inherited cancellation or cooldown", err)
+	}
+	if _, err := d.resolveHongguoAppMedia(context.Background(), "800002"); err != nil {
+		t.Fatal("canceled registration imposed a cooldown", err)
+	}
+	if registrations.Load() != 3 {
+		t.Fatal("separate resolves reused a device")
+	}
+}
+
+func TestHongguoConcurrentPlaybackUsesIndependentDevices(t *testing.T) {
+	var mu sync.Mutex
+	devices := map[string]bool{}
+	var registrations atomic.Int32
+	d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path == "/service/2/device_register/" {
+			n := registrations.Add(1)
+			return rankingHTTPResponse(request, http.StatusOK, fmt.Sprintf(`{"device_id":"%d","install_id":"%d"}`, 100000+n, 200000+n)), nil
 		}
-		return rankingHTTPResponse(request, http.StatusOK, `{"data":{"800001":{"video_model":{"video_list":[{"main_url":"https://media.example.test/episode.mp4"}]}}}}`), nil
+		mu.Lock()
+		defer mu.Unlock()
+		id := request.URL.Query().Get("device_id")
+		if devices[id] {
+			t.Error("concurrent resolves shared a single-use identity")
+		}
+		devices[id] = true
+		return rankingHTTPResponse(request, http.StatusOK, hongguoModelBatchFixture("800001")), nil
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var group sync.WaitGroup
-	results := make(chan error, 8)
 	for range 8 {
-		group.Go(func() { _, err := d.resolveHongguoAppMedia(ctx, "800001"); results <- err })
+		group.Go(func() {
+			if _, err := d.resolveHongguoAppMedia(ctx, "800001"); err != nil {
+				t.Error(err)
+			}
+		})
 	}
-	select {
-	case <-entered:
-	case <-ctx.Done():
-		t.Fatal("registration was not started")
-	}
-	close(release)
 	group.Wait()
-	close(results)
-	for err := range results {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	if registrations.Load() != 1 || models.Load() != 8 {
-		t.Fatalf("concurrent registration/model requests: %d/%d", registrations.Load(), models.Load())
+	if registrations.Load() != 8 || len(devices) != 8 {
+		t.Fatal("concurrent resolves did not allocate separate identities")
 	}
 }
 
@@ -316,8 +300,8 @@ func TestHongguoPlaybackEmptyResponseRetriesWithinExistingBudget(t *testing.T) {
 			}
 			models = 0
 			d.cfg.Retries = 1
-			if _, err := d.resolveHongguoAppMedia(context.Background(), "800001"); err == nil || !strings.Contains(err.Error(), "未返回有效数据") || models != 1 || registrations != 1 {
-				t.Fatal("empty response exceeded the request budget or rotated identity", err)
+			if _, err := d.resolveHongguoAppMedia(context.Background(), "800001"); err == nil || !strings.Contains(err.Error(), "未返回有效数据") || models != 1 || registrations != 2 {
+				t.Fatal("empty response exceeded the request budget or reused identity", err)
 			}
 		})
 	}
