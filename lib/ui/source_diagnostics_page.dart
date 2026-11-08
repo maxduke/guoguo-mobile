@@ -97,7 +97,7 @@ class _SourceDiagnosticsPageState extends State<SourceDiagnosticsPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const Text('刷新或搜索出现问题后，可复制这些记录用于反馈。'),
+          const Text('刷新、搜索或取源出现问题后，可复制这些记录用于反馈。'),
           if (widget.coverProbe != null)
             OutlinedButton.icon(
               onPressed: _checking ? null : _probeCover,
@@ -115,7 +115,7 @@ class _SourceDiagnosticsPageState extends State<SourceDiagnosticsPage> {
                     widget.source == null || sample.source == widget.source,
               )
               .isEmpty)
-            const Text('暂无记录，刷新栏目或搜索后可在这里查看。'),
+            const Text('暂无记录，刷新栏目、搜索或取源后可在这里查看。'),
           for (final sample in diagnostics.samples.where(
             (sample) => widget.source == null || sample.source == widget.source,
           ))
@@ -130,7 +130,8 @@ class _SourceDiagnosticsPageState extends State<SourceDiagnosticsPage> {
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     Text(
-                      '${sample.at.toLocal().toString().split('.').first} · 第 ${sample.page} 页'
+                      '${sample.at.toLocal().toString().split('.').first}'
+                      '${const {'resolve', 'downloadPlan'}.contains(sample.method) ? '' : ' · 第 ${sample.page} 页'}'
                       '${sample.refresh ? ' · 手动刷新' : ''}${sample.background ? ' · 提前加载' : ''}',
                     ),
                     Text(
@@ -143,7 +144,11 @@ class _SourceDiagnosticsPageState extends State<SourceDiagnosticsPage> {
                       ),
                     if (sample.httpStatus > 0)
                       Text('HTTP ${sample.httpStatus}'),
-                    if (sample.failureLabel.isNotEmpty)
+                    if (sample.sourceStageLabel.isNotEmpty)
+                      Text('取源阶段：${sample.sourceStageLabel}'),
+                    if (sample.sourceFailureLabel.isNotEmpty)
+                      Text(sample.sourceFailureLabel)
+                    else if (sample.failureLabel.isNotEmpty)
                       Text(sample.failureLabel),
                   ],
                 ),

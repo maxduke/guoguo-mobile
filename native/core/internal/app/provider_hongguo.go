@@ -207,6 +207,9 @@ func (d *Downloader) resolveHongguoMedia(ctx context.Context, task Task) (provid
 	if nativeErr == nil {
 		return media, nil
 	}
+	if isHongguoSourceRefusal(nativeErr) {
+		return providerMedia{}, nativeErr
+	}
 	if err := ctx.Err(); err != nil {
 		return providerMedia{}, err
 	}

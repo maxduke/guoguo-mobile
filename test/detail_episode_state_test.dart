@@ -56,9 +56,12 @@ class _Downloads extends DownloadStore {
   _Downloads(super.store);
   final added = <(String, int)>[];
   Completer<void>? pending;
+  int? failAt;
+  Object? failure;
   @override
   Future<void> enqueue(Drama drama, Episode episode, int index) async {
     added.add((episode.id, index));
+    if (added.length == failAt) throw failure!;
     await pending?.future;
   }
 }
@@ -339,4 +342,32 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+  testWidgets(
+    'source refusal stops later lookups and releases batch controls',
+    (tester) async {
+      final (_, downloads, _, _) = await mount(tester);
+      downloads.failAt = 2;
+      downloads.failure = const ProviderException(
+        'private provider data',
+        diagnostic: {
+          'source': 'hongguo',
+          'method': 'downloadPlan',
+          'result': 'failed',
+          'sourceStage': 'model',
+          'sourceFailure': 'rate_limited',
+          'httpStatus': 429,
+        },
+      );
+      await tester.tap(_icon('选择下载分集'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('加入下载（3 集）'));
+      await tester.pumpAndSettle();
+      expect(downloads.added, [('e1', 0), ('e2', 1)]);
+      expect(find.text('红果暂时无法取源，已停止后续 1 集的取源尝试；已加入的下载会继续'), findsOneWidget);
+      expect(find.textContaining('private provider data'), findsNothing);
+      expect(tester.widget<IconButton>(_icon('选择下载分集')).onPressed, isNotNull);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 }

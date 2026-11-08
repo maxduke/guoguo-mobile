@@ -287,6 +287,7 @@ func TestHongguoAppMediaRejectsInvalidResponses(t *testing.T) {
 		{"missing model", `{"code":0,"data":{"800001":{}}}`, "未返回兼容的媒体"},
 		{"invalid model type", `{"code":0,"data":{"800001":{"video_model":[]}}}`, "未返回兼容的媒体"},
 		{"invalid model JSON", `{"code":0,"data":{"800001":{"video_model":"{"}}}`, "播放信息格式异常"},
+		{"trailing model JSON", `{"data":{"800001":{"video_model":"{} {}"}}}`, "播放信息格式异常"},
 		{"null model JSON", `{"code":0,"data":{"800001":{"video_model":"null"}}}`, "未返回兼容的媒体"},
 		{"another episode only", `{"code":0,"data":{"800002":{"video_model":{"video_list":[{"main_url":"https://media.example.test/other-episode.mp4"}]}}}}`, "未返回兼容的媒体"},
 		{"legacy unkeyed model", `{"code":0,"data":{"video_model":{"video_list":[{"main_url":"https://media.example.test/other-episode.mp4"}]}}}`, "未返回兼容的媒体"},

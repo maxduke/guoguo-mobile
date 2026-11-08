@@ -94,6 +94,7 @@ func (downloader *Downloader) registerHongguoPlaybackDevice(ctx context.Context)
 		return hongguoPlayerIdentity{}, fmt.Errorf("%w（HTTP %d）", errHongguoDeviceRegistration, response.StatusCode)
 	}
 	content, err := io.ReadAll(io.LimitReader(response.Body, hongguoDeviceMaxBody+1))
+	traceUpdate(ctx, func(v *mobileDiagnostic) { v.ResponseBytes = int64(len(content)) })
 	if err != nil || len(content) == 0 || len(content) > hongguoDeviceMaxBody {
 		return hongguoPlayerIdentity{}, errHongguoDeviceRegistration
 	}

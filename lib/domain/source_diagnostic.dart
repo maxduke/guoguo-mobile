@@ -19,6 +19,9 @@ class SourceDiagnostic {
     this.stage = 'unknown',
     String? requestResult,
     this.validation = 'not_checked',
+    this.sourceStage = '',
+    this.sourceFailure = '',
+    this.responseBytes = 0,
   }) : requestResult = requestResult ?? result;
   static const methods = {
     'catalog',
@@ -31,6 +34,8 @@ class SourceDiagnostic {
     'detail',
     'chapters',
     'cover',
+    'resolve',
+    'downloadPlan',
   };
   static const results = {'success', 'partial', 'failed', 'cancelled'};
   static const requestResults = {...results, 'not_requested'};
@@ -62,6 +67,22 @@ class SourceDiagnostic {
     'http',
     'connection',
   };
+  static const sourceStages = {'', 'registration', 'model', 'model_fallback'};
+  static const sourceFailures = {
+    '',
+    'registration_failed',
+    'http_denied',
+    'rate_limited',
+    'http_error',
+    'empty_model',
+    'invalid_model',
+    'invalid_response',
+    'business_rejected',
+    'fallback_invalid',
+    'fallback_request_failed',
+  };
+  final String sourceStage, sourceFailure;
+  final int responseBytes;
   final DramaSource source;
   final String method, result, failure, stage, requestResult, validation;
   final DateTime at;
@@ -83,7 +104,9 @@ class SourceDiagnostic {
         !requestResults.contains(value['requestResult'] ?? value['result']) ||
         !validations.contains(value['validation'] ?? 'not_checked') ||
         !failures.contains(value['failure']) ||
-        !stages.contains(value['stage'])) {
+        !stages.contains(value['stage']) ||
+        !sourceStages.contains(value['sourceStage'] ?? '') ||
+        !sourceFailures.contains(value['sourceFailure'] ?? '')) {
       throw const FormatException('诊断数据无效');
     }
     return SourceDiagnostic(
@@ -105,6 +128,9 @@ class SourceDiagnostic {
       stage: value['stage'] as String,
       requestResult: value['requestResult'] as String?,
       validation: value['validation'] as String? ?? 'not_checked',
+      sourceStage: value['sourceStage'] as String? ?? '',
+      sourceFailure: value['sourceFailure'] as String? ?? '',
+      responseBytes: number('responseBytes', maximum: 32 * 1024 * 1024),
     );
   }
 
@@ -123,6 +149,9 @@ class SourceDiagnostic {
     cacheHits: cacheHits,
     sharedWaits: sharedWaits,
     httpStatus: httpStatus,
+    sourceStage: sourceStage,
+    sourceFailure: sourceFailure,
+    responseBytes: responseBytes,
     requestResult: requestResult,
     validation: valid ? 'passed' : 'failed',
     result: valid ? result : 'failed',
@@ -147,6 +176,9 @@ class SourceDiagnostic {
     'stage': stage,
     'requestResult': requestResult,
     'validation': validation,
+    if (sourceStage.isNotEmpty) 'sourceStage': sourceStage,
+    if (sourceFailure.isNotEmpty) 'sourceFailure': sourceFailure,
+    if (sourceStage.isNotEmpty) 'responseBytes': responseBytes,
   };
 
   String get methodLabel => switch (method) {
@@ -159,7 +191,28 @@ class SourceDiagnostic {
     'suggestions' => '搜索联想',
     'detail' => '详情',
     'cover' => '封面',
+    'resolve' => '播放取源',
+    'downloadPlan' => '下载取源',
     _ => '分集',
+  };
+  String get sourceStageLabel => switch (sourceStage) {
+    'registration' => '准备播放连接',
+    'model' => '读取播放资料',
+    'model_fallback' => '读取备用播放资料',
+    _ => '',
+  };
+  String get sourceFailureLabel => switch (sourceFailure) {
+    'registration_failed' => '播放连接未就绪，请稍后重试',
+    'http_denied' => '站源拒绝取源',
+    'rate_limited' => '站源限制取源，请稍后重试',
+    'empty_model' => '站源未返回播放资料',
+    'business_rejected' => '站源暂未提供本集资源',
+    'fallback_request_failed' => '备用播放资料读取失败',
+    'http_error' => '取源接口返回错误',
+    'invalid_model' ||
+    'invalid_response' ||
+    'fallback_invalid' => '播放资料不完整或校验未通过',
+    _ => '',
   };
   String get resultLabel => _resultLabel(result);
   String get requestResultLabel => _resultLabel(requestResult);

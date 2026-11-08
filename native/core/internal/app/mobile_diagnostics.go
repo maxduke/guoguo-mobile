@@ -13,6 +13,9 @@ import (
 const mobileDiagnosticLimit = 64
 
 type mobileDiagnostic struct {
+	SourceStage     string    `json:"sourceStage,omitempty"`
+	SourceFailure   string    `json:"sourceFailure,omitempty"`
+	ResponseBytes   int64     `json:"responseBytes,omitempty"`
 	Source          string    `json:"source"`
 	Method          string    `json:"method"`
 	At              time.Time `json:"at"`
@@ -38,7 +41,7 @@ type mobileTrace struct {
 
 func diagnosticMethod(method string) bool {
 	switch method {
-	case "catalog", "categories", "ranking", "boards", "recommendations", "search", "suggestions", "detail", "chapters", "cover":
+	case "catalog", "categories", "ranking", "boards", "recommendations", "search", "suggestions", "detail", "chapters", "cover", "resolve", "downloadPlan":
 		return true
 	}
 	return false

@@ -237,4 +237,109 @@ void main() {
       expect(methods, ['coreInfo']);
     },
   );
+  test(
+    'resolve and download failures reuse safe diagnostic lookup without bridge changes',
+    () async {
+      Map? observed;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'initialize') return null;
+        final request = jsonDecode(call.arguments as String) as Map;
+        if (request['method'] == 'coreInfo') {
+          return jsonEncode({'protocol': 3, 'sourceDiagnostics': 1});
+        }
+        if (request['method'] == 'requestDiagnostic') {
+          expect(request['traceId'], observed!['traceId']);
+          return jsonEncode({
+            'diagnostic': {
+              'source': 'hongguo',
+              'method': observed!['method'],
+              'result': 'failed',
+              'sourceStage': 'model',
+              'sourceFailure': 'http_denied',
+              'httpStatus': 403,
+            },
+          });
+        }
+        observed = request;
+        expect(request['traceId'], isNotNull);
+        throw PlatformException(
+          code: 'provider',
+          message: 'private response https://secret.invalid/?token=secret',
+        );
+      });
+      final provider = NativeProviderClient();
+      await provider.initialize('/providers');
+      for (final method in ['resolve', 'downloadPlan']) {
+        await expectLater(
+          provider.call(method, {'id': 'hongguo:1'}),
+          throwsA(
+            isA<ProviderException>()
+                .having(
+                  (e) => e.stopsSourceBatch,
+                  'batch stop scope',
+                  method == 'downloadPlan',
+                )
+                .having(
+                  (e) => e.userMessage,
+                  'safe user message',
+                  '站源暂时不可用，请稍后重试',
+                ),
+          ),
+        );
+      }
+    },
+  );
+
+  test(
+    'batch refusal requires fixed method source stage reason and HTTP evidence',
+    () {
+      const base = {
+        'source': 'hongguo',
+        'method': 'downloadPlan',
+        'result': 'failed',
+        'sourceStage': 'model',
+        'sourceFailure': 'http_denied',
+        'httpStatus': 403,
+      };
+      expect(
+        const ProviderException('anything', diagnostic: base).stopsSourceBatch,
+        isTrue,
+      );
+      for (final changes in [
+        {'source': 'huangju'},
+        {'method': 'resolve'},
+        {'result': 'cancelled'},
+        {'sourceStage': 'cdn'},
+        {'sourceFailure': 'business_rejected'},
+        {'httpStatus': 503},
+      ]) {
+        expect(
+          ProviderException(
+            'DEVICE_REGISTRATION_FAILED HTTP 403',
+            diagnostic: {...base, ...changes},
+          ).stopsSourceBatch,
+          isFalse,
+        );
+      }
+      expect(
+        const ProviderException(
+          'DEVICE_REGISTRATION_FAILED HTTP 403',
+        ).stopsSourceBatch,
+        isFalse,
+      );
+      expect(
+        const ProviderException(
+          'registration error',
+          diagnostic: {
+            'source': 'hongguo',
+            'method': 'downloadPlan',
+            'result': 'failed',
+            'sourceStage': 'registration',
+            'sourceFailure': 'registration_failed',
+          },
+        ).stopsSourceBatch,
+        isTrue,
+      );
+    },
+  );
 }

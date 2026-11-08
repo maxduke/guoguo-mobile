@@ -108,6 +108,8 @@ class NativeProviderClient implements ProviderClient {
               'suggestions',
               'detail',
               'chapters',
+              'resolve',
+              'downloadPlan',
             }.contains(method)
         ? 'native-${DateTime.now().microsecondsSinceEpoch}-${++_traceSerial}'
         : null;
@@ -182,6 +184,26 @@ class ProviderException implements Exception {
     this.failureHint,
     this.diagnostic,
   }) : _userMessage = userMessage;
+
+  /// A closed core diagnostic, scoped to a Hongguo source lookup.
+  bool get stopsSourceBatch {
+    final d = diagnostic;
+    if (d == null ||
+        d['source'] != 'hongguo' ||
+        d['method'] != 'downloadPlan' ||
+        d['result'] != 'failed') {
+      return false;
+    }
+    if (d['sourceStage'] == 'registration') {
+      return d['sourceFailure'] == 'registration_failed';
+    }
+    if (d['sourceStage'] != 'model' && d['sourceStage'] != 'model_fallback') {
+      return false;
+    }
+    return (d['sourceFailure'] == 'http_denied' && d['httpStatus'] == 403) ||
+        (d['sourceFailure'] == 'rate_limited' && d['httpStatus'] == 429);
+  }
+
   final String message;
   // Fixed display text, never the native error's URL, credentials or IP address.
   final String? failureHint;
