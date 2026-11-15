@@ -358,15 +358,34 @@ func yeguoScriptURL(base, reference string) string {
 	return address.String()
 }
 
-func yeguoRuntimeAPIBase(script string) string {
+func yeguoRuntimeAPIBase(script, site string) string {
 	for _, match := range yeguoRuntimeBase.FindAllStringSubmatch(script, 32) {
 		// The runtime function must actually supply the API client's baseURL.
 		used := regexp.MustCompile(`\bbaseURL\s*:\s*` + regexp.QuoteMeta(match[1]) + `\(\s*\)`)
-		if !used.MatchString(script) || providerSourceForURL(match[2]) != sourceYeguo {
+		if providerSourceForURL(match[2]) != sourceYeguo {
 			continue
 		}
-		if base, err := yeguoAPIBase(nil, match[2]); err == nil {
+		base, err := yeguoAPIBase(nil, match[2])
+		if err != nil {
+			continue
+		}
+		if used.MatchString(script) {
 			return base
+		}
+		// Current clients wrap the canonical fallback with a same-origin API
+		// for alternate lines. Recognize that bounded wrapper without running JS
+		// or treating an unrelated /api.php literal as an endpoint.
+		origin := validYeguoSite(site)
+		if origin == "" {
+			continue
+		}
+		identifier := `[a-zA-Z_$][a-zA-Z0-9_$]*`
+		wrapper := regexp.MustCompile(`(?s)\b(` + identifier + `)\s*=\s*\([^()]{0,128}\)\s*=>\s*\{\s*(?:let|const)\s+` + identifier + `\s*=\s*` + regexp.QuoteMeta(match[1]) + `\(\s*\);[^{}]{0,512}\{\s*hostname\s*:\s*` + identifier + `\s*,\s*origin\s*:\s*(` + identifier + `)\s*\}\s*=\s*window\.location[^{}]{0,512}\x60\$\{(` + identifier + `)\}/api\.php\x60\s*\}`)
+		for _, wrapped := range wrapper.FindAllStringSubmatch(script, 16) {
+			used = regexp.MustCompile(`\bbaseURL\s*:\s*` + regexp.QuoteMeta(wrapped[1]) + `\(\s*` + identifier + `\s*\)`)
+			if wrapped[2] == wrapped[3] && used.MatchString(script) {
+				return origin + "/api.php"
+			}
 		}
 	}
 	return ""
@@ -463,7 +482,7 @@ func (client *yeguoAPIClient) discoverConfigurationAt(ctx context.Context, site 
 	}
 	imports := yeguoModuleImport.FindAllStringSubmatch(entryBody, 64)
 	if apiBase == "" {
-		apiBase = yeguoRuntimeAPIBase(entryBody)
+		apiBase = yeguoRuntimeAPIBase(entryBody, site)
 	}
 	access := parseYeguoPublicConfiguration(entryBody)
 	sort.SliceStable(imports, func(i, j int) bool {
@@ -496,7 +515,7 @@ func (client *yeguoAPIClient) discoverConfigurationAt(ctx context.Context, site 
 			continue
 		}
 		if apiBase == "" {
-			apiBase = yeguoRuntimeAPIBase(body)
+			apiBase = yeguoRuntimeAPIBase(body, site)
 		}
 		if access == nil {
 			access = parseYeguoPublicConfiguration(body)

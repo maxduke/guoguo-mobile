@@ -12,6 +12,9 @@ const unavailable = {
   DramaSource.piguo,
   DramaSource.chaoguo,
   DramaSource.shuangguo,
+  DramaSource.miguo,
+  DramaSource.wuguo,
+  DramaSource.huaguo,
 };
 
 void main() {
@@ -58,37 +61,50 @@ void main() {
     },
   );
 
-  for (final manuallyEnabled in [false, true]) {
-    test(
-      'saved unavailable selection ${manuallyEnabled ? 'honors manual enable' : 'falls back without losing records'}',
-      () async {
-        const drama = Drama(
-          id: 'saved',
-          source: DramaSource.shuangguo,
-          title: '保存的收藏',
-        );
-        final storage = MemoryStorage()
-          ..value = {
-            'version': 1,
-            'source': 'shuangguo',
-            'hiddenSources': <String>[],
-            if (manuallyEnabled) 'enabledSources': ['shuangguo'],
-            'records': RecordBackup([drama], []).toJson(),
-          };
-        final store = AppStore(storage: storage, provider: NoNetwork());
-        addTearDown(store.dispose);
-        await store.load();
-        expect(
-          store.catalog.source,
-          manuallyEnabled ? DramaSource.shuangguo : DramaSource.hongguo,
-        );
-        expect(store.records.favorites.keys, [drama.key]);
-        expect(
-          store.preferences.hiddenSources.contains(DramaSource.shuangguo),
-          !manuallyEnabled,
-        );
-      },
-    );
+  for (final source in [
+    DramaSource.shuangguo,
+    DramaSource.miguo,
+    DramaSource.wuguo,
+    DramaSource.huaguo,
+  ]) {
+    for (final manuallyEnabled in [false, true]) {
+      test(
+        'saved ${source.name} selection ${manuallyEnabled ? 'honors manual enable' : 'falls back without losing records'}',
+        () async {
+          final drama = Drama(id: 'saved', source: source, title: '保存的收藏');
+          final history = WatchRecord(
+            drama: drama,
+            episodeId: 'saved-2',
+            episodeIndex: 1,
+            episodeNumber: 2,
+            positionMs: 12000,
+            durationMs: 60000,
+            updatedAt: DateTime.utc(2026, 11, 15),
+          );
+          final storage = MemoryStorage()
+            ..value = {
+              'version': 1,
+              'source': source.name,
+              'hiddenSources': <String>[],
+              if (manuallyEnabled) 'enabledSources': [source.name],
+              'records': RecordBackup([drama], [history]).toJson(),
+            };
+          final store = AppStore(storage: storage, provider: NoNetwork());
+          addTearDown(store.dispose);
+          await store.load();
+          expect(
+            store.catalog.source,
+            manuallyEnabled ? source : DramaSource.hongguo,
+          );
+          expect(store.records.favorites.keys, [drama.key]);
+          expect(store.records.history[drama.key]?.toJson(), history.toJson());
+          expect(
+            store.preferences.hiddenSources.contains(source),
+            !manuallyEnabled,
+          );
+        },
+      );
+    }
   }
 
   test('Shuangguo uses local search even when explicitly re-enabled', () async {

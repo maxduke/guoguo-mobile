@@ -29,6 +29,8 @@ enum DramaSource {
     piguo => '当前站点需要浏览器验证',
     chaoguo => '站点播放已改为账户和点数模式',
     shuangguo => '部分网络无法加载目录，播放兼容性待验证',
+    miguo || wuguo => '部分设备无法加载目录，待复测',
+    huaguo => '部分设备无法播放，待复测',
     _ => null,
   };
   bool get enabledByDefault => defaultDisabledReason == null;

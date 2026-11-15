@@ -13,6 +13,57 @@ const yeguoDiscoveryPage = `<script type="module" src="/_nuxt/entry.js"></script
 const yeguoDiscoveryEntry = `import {config} from "./config.js";`
 const yeguoDiscoveryConfig = `const config = {version:"v0",mode:"CBC",padding:"Pkcs7",key:"0123456789abcdef",iv:"abcdef0123456789",sign_key:"fixture-sign"};`
 
+// Shape of the current site's API client, with public keys supplied separately.
+const yeguoOriginRuntime = "const Ef=()=>`https://www.yeguodj.com/api.php`,Qf=(e=``)=>{let t=Ef();if(!Tf())return t;let{hostname:n,origin:r}=window.location,i=e.trim().replace(/\\/+$/,``);return n===`localhost`||n===`127.0.0.1`||i&&i===r?t:`${r}/api.php`};function request(e,a){return api(e,{baseURL:Qf(a),method:'POST'})}"
+
+func TestYeguoDiscoveryFindsCurrentSameOriginRuntime(t *testing.T) {
+	const site = "https://analyze.callawtj.cc"
+	var requests []string
+	d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {
+		requests = append(requests, r.URL.String())
+		body := ""
+		switch r.URL.Path {
+		case "/":
+			body = `<script type="module" src="/_nuxt/entry.js"></script>`
+		case "/_nuxt/entry.js":
+			body = "import {config} from './config.js';import {a,b} from './client.js';"
+		case "/_nuxt/config.js":
+			body = yeguoDiscoveryConfig
+		case "/_nuxt/client.js":
+			body = yeguoOriginRuntime
+		default:
+			t.Errorf("unexpected discovery request: %s", r.URL.Path)
+		}
+		return rankingHTTPResponse(r, 200, body), nil
+	})
+	access, err := d.yeguoClient().discoverConfigurationAt(context.Background(), site)
+	if err != nil || access.base != site+"/api.php" || access.site != site || len(access.key) != 16 {
+		t.Fatal("same-origin runtime configuration was not discovered", err)
+	}
+	for _, request := range requests {
+		if !strings.HasPrefix(request, site+"/") {
+			t.Fatal("discovery escaped its selected origin")
+		}
+	}
+}
+
+func TestYeguoSameOriginRuntimeRequiresLinkedClientAndOrigin(t *testing.T) {
+	for _, script := range []string{
+		strings.Replace(yeguoOriginRuntime, "baseURL:Qf(a)", "baseURL:other(a)", 1),
+		strings.Replace(yeguoOriginRuntime, "let t=Ef()", "let t=other()", 1),
+		strings.Replace(yeguoOriginRuntime, "${r}/api.php", "${other}/api.php", 1),
+		strings.Replace(yeguoOriginRuntime, "window.location", "other.location", 1),
+		strings.Replace(yeguoOriginRuntime, "www.yeguodj.com", "outside.example.org", 1),
+	} {
+		if yeguoRuntimeAPIBase(script, yeguoBaseURL) != "" {
+			t.Error("unlinked runtime base accepted")
+		}
+	}
+	if yeguoRuntimeAPIBase(yeguoOriginRuntime, "https://outside.example.org") != "" {
+		t.Error("runtime accepted an unknown site")
+	}
+}
+
 func TestYeguoDiscoveryFindsRuntimeBaseWithoutNuxtField(t *testing.T) {
 	var requests []string
 	d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {
@@ -49,7 +100,7 @@ func TestYeguoRuntimeBaseRequiresKnownAPIHostAndClientReference(t *testing.T) {
 		`const x=()=>"https://www.yeguodj.com/api.php";fetch(a,{baseURL:other()})`,
 		"const x=()=>`https://${host}/api.php`;fetch(a,{baseURL:x()})",
 	} {
-		if yeguoRuntimeAPIBase(script) != "" {
+		if yeguoRuntimeAPIBase(script, yeguoBaseURL) != "" {
 			t.Error("invalid runtime base accepted")
 		}
 	}
