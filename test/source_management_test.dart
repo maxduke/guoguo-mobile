@@ -470,6 +470,8 @@ void main() {
             next = _store(provider: nextProvider),
             choices = <DramaSource?>[];
         await _fixture(tester, [old, next]);
+        await old.preferences.setSourceHidden(DramaSource.wuguo, false);
+        await next.preferences.setSourceHidden(DramaSource.wuguo, false);
         await tester.pumpWidget(_app(old, choices));
         await _open(tester, manage: manage);
         await tester.pumpWidget(_app(next, choices));

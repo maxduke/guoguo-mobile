@@ -111,18 +111,20 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.widgetWithText(ChoiceChip, '帝果'), findsOneWidget);
-      final lastSource = find.widgetWithText(ChoiceChip, '伍果');
+      final lastSource = find.widgetWithText(ChoiceChip, '星果');
       await tester.ensureVisible(lastSource);
       await tester.pumpAndSettle();
       expect(lastSource.hitTestable(), findsOneWidget);
-      for (final label in ['超果', '爽果']) {
-        expect(find.widgetWithText(ChoiceChip, label), findsNothing);
+      for (final source in DramaSource.values.where(
+        (source) => !source.enabledByDefault,
+      )) {
+        expect(find.widgetWithText(ChoiceChip, source.label), findsNothing);
       }
       await tester.ensureVisible(find.byType(TextField));
-      for (final label in ['超果', '米果', '爽果']) {
-        await tester.enterText(find.byType(TextField), label);
+      for (final source in DramaSource.values) {
+        await tester.enterText(find.byType(TextField), source.label);
         await tester.pumpAndSettle();
-        final choice = find.widgetWithText(ChoiceChip, label);
+        final choice = find.widgetWithText(ChoiceChip, source.label);
         expect(choice, findsOneWidget);
         await tester.ensureVisible(choice);
         expect(choice.hitTestable(), findsOneWidget);
@@ -161,6 +163,7 @@ void main() {
     (tester) async {
       final provider = SourceProvider();
       final store = AppStore(storage: MemoryStorage(), provider: provider);
+      await store.preferences.setSourceHidden(DramaSource.wuguo, false);
       await store.catalog.selectSource(DramaSource.huangju);
       final downloads = DownloadStore(store);
       addTearDown(() {
