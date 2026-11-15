@@ -118,12 +118,12 @@ func TestHongguoPlaybackDeviceRegistrationIsScopedToResolve(t *testing.T) {
 		models++
 		query := request.URL.Query()
 		current := [3]string{query.Get("device_id"), query.Get("iid"), query.Get("cdid")}
-		if registrations != (models+1)/2 || current[0] != "3330000000000000001" || current[1] != "4440000000000000001" || registration["cdid"] != current[2] || registration["app_version"] != query.Get("version_name") {
+		if registrations != models || current[0] != "3330000000000000001" || current[1] != "4440000000000000001" || registration["cdid"] != current[2] || registration["app_version"] != hongguoAppVersion {
 			t.Error("playback did not use the registered device profile")
 		}
 		if models == 1 {
 			identity = current
-		} else if models == 2 && current != identity {
+		} else if models == 2 && current == identity {
 			t.Error("retry or next resolve rotated the registered identity")
 		}
 		cookies := request.Cookies()
@@ -131,9 +131,6 @@ func TestHongguoPlaybackDeviceRegistrationIsScopedToResolve(t *testing.T) {
 			t.Error("playback did not restrict cookies to registered device cookies")
 		}
 		assertHongguoSignedPlaybackRequest(t, request)
-		if models == 1 {
-			return rankingHTTPResponse(request, http.StatusServiceUnavailable, ""), nil
-		}
 		return rankingHTTPResponse(request, http.StatusOK, `{"data":{"800001":{"video_model":{"video_list":[{"main_url":"https://media.example.test/episode.mp4","codec_type":"h264","encrypt":false}]}}}}`), nil
 	})
 	d.cfg.Retries = 2
@@ -147,7 +144,7 @@ func TestHongguoPlaybackDeviceRegistrationIsScopedToResolve(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if registrations != 2 || models != 3 {
+	if registrations != 2 || models != 2 {
 		t.Fatalf("registration/model request counts: %d/%d", registrations, models)
 	}
 }
@@ -295,12 +292,12 @@ func TestHongguoPlaybackEmptyResponseRetriesWithinExistingBudget(t *testing.T) {
 			if _, err := d.resolveHongguoAppMedia(context.Background(), "800001"); err != nil {
 				t.Fatal("transient empty response did not recover", err)
 			}
-			if registrations != 1 || models != 2 {
+			if registrations != 2 || models != 2 {
 				t.Fatalf("empty response registration/model requests: %d/%d", registrations, models)
 			}
 			models = 0
 			d.cfg.Retries = 1
-			if _, err := d.resolveHongguoAppMedia(context.Background(), "800001"); err == nil || !strings.Contains(err.Error(), "未返回有效数据") || models != 1 || registrations != 2 {
+			if _, err := d.resolveHongguoAppMedia(context.Background(), "800001"); err == nil || !strings.Contains(err.Error(), "未返回有效数据") || models != 1 || registrations != 3 {
 				t.Fatal("empty response exceeded the request budget or reused identity", err)
 			}
 		})

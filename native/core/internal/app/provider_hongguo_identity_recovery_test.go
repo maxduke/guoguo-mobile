@@ -51,10 +51,7 @@ func TestHongguoEmptyForegroundRecoveryIsBounded(t *testing.T) {
 			})
 			d.cfg.hongguoPlayerAttempts = 4
 			_, err := d.resolveHongguoAppMedia(context.Background(), "800001")
-			wantModels := 8
-			if recover {
-				wantModels = 5
-			}
+			wantModels := 2
 			if recover && err != nil || !recover && !errors.Is(err, errHongguoPlaybackRecoveryExhausted) || registrations != 2 || models != wantModels {
 				t.Fatal("unexpected recovery result", err, registrations, models)
 			}
@@ -104,5 +101,44 @@ func TestHongguoRecoveryCancellationStopsReplacement(t *testing.T) {
 	d.cfg.hongguoPlayerAttempts = 4
 	if _, err := d.resolveHongguoAppMedia(ctx, "800001"); !errors.Is(err, context.Canceled) || registrations != 1 || models != 1 {
 		t.Fatal("cancellation did not stop model work", err, registrations, models)
+	}
+}
+
+func TestHongguoLegacyRecoveryDistinguishesRegistrationRefusals(t *testing.T) {
+	for _, status := range []int{403, 429, 503, 200} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			registrations, models := 0, 0
+			var firstIdentity string
+			d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path == "/service/2/device_register/" {
+					registrations++
+					if registrations == 1 {
+						return rankingHTTPResponse(r, 200, hongguoDeviceFixture), nil
+					}
+					return rankingHTTPResponse(r, status, `{"code":110001}`), nil
+				}
+				models++
+				if models == 1 {
+					firstIdentity = r.URL.Query().Get("cdid")
+					return rankingHTTPResponse(r, 200, ""), nil
+				}
+				if r.URL.Query().Get("cdid") != firstIdentity {
+					t.Error("transient registration failure lost the original identity")
+				}
+				return rankingHTTPResponse(r, 200, hongguoModelBatchFixture("800001")), nil
+			})
+			d.cfg.hongguoPlayerAttempts = 4
+			_, err := d.resolveHongguoAppMedia(context.Background(), "800001")
+			if status == 503 {
+				if err != nil || models != 2 {
+					t.Fatal("transient registration failure blocked the bounded legacy request", err, models)
+				}
+			} else if !isHongguoSourceRefusal(err) || models != 1 {
+				t.Fatal("registration refusal did not stop legacy recovery", err, models)
+			}
+			if registrations != 2 {
+				t.Fatal("unexpected registration expansion")
+			}
+		})
 	}
 }

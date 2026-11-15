@@ -97,10 +97,10 @@ func TestHuangguoAPIRecoveryKeepsPlaybackOrigin(t *testing.T) {
 		if request.URL.Host == "first.example.org" {
 			return rankingHTTPResponse(request, 500, "temporary"), nil
 		}
-		return huangguoAPIResponse(request, `{"id":501,"ep_num":3,"video_url":"/a.m3u8"}`), nil
+		return huangguoAPIResponse(request, `{"id":501,"ep":3,"manifest_method":"GET","streams":{"main":"/a.m3u8"}}`), nil
 	})
 	media, base, err := d.huangguoAPIPlayback(context.Background(), "501", "3")
-	if err != nil || base != "https://second.example.org" || media != base+"/a.m3u8" {
+	if err != nil || base != "https://second.example.org" || media.URL != base+"/a.m3u8" {
 		t.Fatal("recovered media lost its actual origin", media, base, err)
 	}
 }

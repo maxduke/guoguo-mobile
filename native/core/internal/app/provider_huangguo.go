@@ -1682,17 +1682,27 @@ func (d *Downloader) discoverHuangguoAIRoutes(ctx context.Context, force bool) [
 	if !force && checked {
 		return nil
 	}
-	requestCtx := ctx
+	work, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	requestCtx, stopMain := context.WithTimeout(work, 3*time.Second)
 	requestCtx = context.WithValue(requestCtx, providerTextExactURLKey{}, true)
 	requestCtx = context.WithValue(requestCtx, providerTextRouteDiscoveryKey{}, true)
+	requestCtx = context.WithValue(requestCtx, providerTextSingleAttemptKey{}, true)
 	if force {
 		requestCtx = context.WithValue(requestCtx, providerTextNoCacheKey{}, true)
 	}
 	body, err := d.fetchProviderText(requestCtx, huangguoAIBaseURL+"/", huangguoAIBaseURL+"/")
-	if err != nil {
+	stopMain()
+	var routes []string
+	if err == nil {
+		routes = parseHuangguoAIRoutes(body)
+	}
+	if len(routes) == 0 && ctx.Err() == nil {
+		routes = d.discoverHuangguoPublisher(work)
+	}
+	if ctx.Err() != nil || len(routes) == 0 {
 		return nil
 	}
-	routes := parseHuangguoAIRoutes(body)
 	d.providerMu.Lock()
 	d.huangguoAIRouteChecked = true
 	if len(routes) > 0 {
@@ -1731,9 +1741,6 @@ func (d *Downloader) huangguoAIContentBaseURL(ctx context.Context) string {
 		if route == preferred {
 			return strings.TrimRight(route, "/")
 		}
-	}
-	if len(routes) == 0 {
-		routes = d.discoverHuangguoAIRoutes(ctx, true)
 	}
 	for _, route := range routes {
 		if huangguoAIIsContentRoute(route) {

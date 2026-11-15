@@ -30,7 +30,7 @@ type huangguoAPIRequestKey struct{}
 
 // Only anonymous reads use this envelope. Account cookies, tokens and redirect
 // destinations cannot become part of the provider or media session.
-func (d *Downloader) requestHuangguoAPI(ctx context.Context, base, path string, force bool) (huangguoAPIReply, error) {
+func (d *Downloader) requestHuangguoAPI(ctx context.Context, base, path string, force bool, methods ...string) (huangguoAPIReply, error) {
 	reply := huangguoAPIReply{base: base}
 	if err := ctx.Err(); err != nil {
 		return reply, err
@@ -41,7 +41,11 @@ func (d *Downloader) requestHuangguoAPI(ctx context.Context, base, path string, 
 	if unavailable {
 		return reply, errHuangguoAPIUnavailable
 	}
-	body, _ := json.Marshal(map[string]string{"method": "GET", "path": path, "body": "", "content_type": ""})
+	requestEnvelope := map[string]string{"method": "GET", "path": path, "body": "", "content_type": ""}
+	if len(methods) > 0 && methods[0] == http.MethodPost {
+		requestEnvelope["method"], requestEnvelope["body"], requestEnvelope["content_type"] = http.MethodPost, "e30=", "application/json"
+	}
+	body, _ := json.Marshal(requestEnvelope)
 	ctx = context.WithValue(ctx, coverRequestKey{}, true)
 	ctx = context.WithValue(ctx, coverSourceKey{}, sourceHuangguoAI)
 	ctx = context.WithValue(ctx, huangguoAPIRequestKey{}, true)
@@ -274,21 +278,30 @@ func (d *Downloader) fetchHuangguoAPIMetadata(ctx context.Context, sourceID stri
 	return drama, reply.data, nil
 }
 
-func (d *Downloader) huangguoAPIPlayback(ctx context.Context, sourceID, episode string) (string, string, error) {
-	media := ""
-	reply, err := d.readHuangguoAPI(ctx, "/api/videos/"+sourceID+"/play?ep="+url.QueryEscape(episode)+"&page_texts=0", func(raw []byte, base string) error {
+func (d *Downloader) huangguoAPIPlayback(ctx context.Context, sourceID, episode string) (providerMedia, string, error) {
+	var media providerMedia
+	reply, err := d.readHuangguoAPI(ctx, "/api/videos/"+sourceID+"/episodes/"+episode+"/playback", func(raw []byte, base string) error {
 		data, err := decodeHuangguoAPIMap(raw)
 		if err != nil {
 			return err
 		}
-		if mapString(data, "id") != sourceID || mapString(data, "ep_num") != episode {
+		if mapString(data, "id") != sourceID || mapString(data, "ep") != episode {
 			return fmt.Errorf("%w：作品或分集身份不符", errHuangguoAPIInvalid)
 		}
-		media = normalizeProviderMediaURL(base+"/", mapString(data, "video_url"))
-		if media == "" {
+		if mapString(data, "manifest_method") != http.MethodGet {
+			return fmt.Errorf("%w：播放请求方式不受支持", errHuangguoAPIInvalid)
+		}
+		media.URL = normalizeProviderMediaURL(base+"/", mapString(nestedMap(data, "streams"), "main"))
+		if media.URL == "" {
 			return fmt.Errorf("%w：缺少有效播放地址", errHuangguoAPIInvalid)
 		}
+		media.Referer = base + "/"
+		credentials, err := huangguoPlaybackCredentials(media, nestedMap(data, "cdn"))
+		if err != nil {
+			return fmt.Errorf("%w：播放凭证无效", errHuangguoAPIInvalid)
+		}
+		media.credentials = credentials
 		return nil
-	})
+	}, http.MethodPost)
 	return media, reply.base, err
 }

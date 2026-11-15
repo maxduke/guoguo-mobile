@@ -310,8 +310,12 @@ func (s hongguoAppSigner) medusa(query string, body []byte, stamp uint32) string
 }
 
 func hongguoAppHelios(stamp, random uint32) string {
+	return hongguoAppLadon(stamp, random, "1588093228", "8662")
+}
+
+func hongguoAppLadon(stamp, random uint32, license, aid string) string {
 	prefix := hongguoSignLE(random)
-	hash := md5.Sum(append(append([]byte(nil), prefix...), "8662"...))
+	hash := md5.Sum(append(append([]byte(nil), prefix...), aid...))
 	ascii := []byte(hex.EncodeToString(hash[:]))
 	left, right := binary.LittleEndian.Uint64(ascii), binary.LittleEndian.Uint64(ascii[8:])
 	queue := []uint64{binary.LittleEndian.Uint64(ascii[16:]), binary.LittleEndian.Uint64(ascii[24:])}
@@ -323,7 +327,7 @@ func hongguoAppHelios(stamp, random uint32) string {
 		left = mixed ^ bits.RotateLeft64(left, 3)
 		right, queue = queue[0], queue[1:]
 	}
-	data := hongguoCommentPad([]byte(strconv.FormatUint(uint64(stamp), 10) + "-1588093228-8662"))
+	data := hongguoCommentPad([]byte(strconv.FormatUint(uint64(stamp), 10) + "-" + license + "-" + aid))
 	for offset := 0; offset < len(data); offset += 16 {
 		left, right := binary.LittleEndian.Uint64(data[offset:]), binary.LittleEndian.Uint64(data[offset+8:])
 		for _, key := range keys {

@@ -196,7 +196,7 @@ func TestHongguoOfficialRefusalStopsBeforeOtherProviderRoutes(t *testing.T) {
 						}
 						return rankingHTTPResponse(r, 200, hongguoDeviceFixture), nil
 					}
-					if strings.HasPrefix(r.URL.Path, "/novel/player/") {
+					if r.URL.Path == hongguoVideoTabPath {
 						return rankingHTTPResponse(r, 403, "account-secret"), nil
 					}
 					t.Error("refusal reached webpage or third-party route")

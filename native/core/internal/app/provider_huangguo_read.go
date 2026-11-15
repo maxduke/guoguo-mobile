@@ -22,7 +22,7 @@ func (d *Downloader) huangguoAIPinned() bool {
 // Each read gets at most two API attempts within the original caller deadline
 // and a shared 16-second bound. Probe requests deliberately bypass this helper.
 // Validate the actual page/work/episode before remembering a recovered origin.
-func (d *Downloader) readHuangguoAPI(ctx context.Context, path string, validate func([]byte, string) error) (huangguoAPIReply, error) {
+func (d *Downloader) readHuangguoAPI(ctx context.Context, path string, validate func([]byte, string) error, methods ...string) (huangguoAPIReply, error) {
 	work, cancel := context.WithTimeout(ctx, 16*time.Second)
 	defer cancel()
 	d.providerMu.Lock()
@@ -35,7 +35,7 @@ func (d *Downloader) readHuangguoAPI(ctx context.Context, path string, validate 
 	routes := append([]string(nil), d.huangguoAIRoutes...)
 	d.providerMu.Unlock()
 	attempt := func(origin string) (huangguoAPIReply, error) {
-		reply, err := d.requestHuangguoAPI(work, origin, path, false)
+		reply, err := d.requestHuangguoAPI(work, origin, path, false, methods...)
 		if err == nil {
 			err = validate(reply.data, origin)
 		}

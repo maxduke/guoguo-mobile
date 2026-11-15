@@ -26,89 +26,71 @@ func TestHongguoMobilePlaybackHasBoundedDedicatedRetries(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			registrations := 0
-			var hosts []string
-			d.client = &http.Client{Transport: rankingTransport(func(request *http.Request) (*http.Response, error) {
-				if request.URL.Path == "/service/2/device_register/" {
+			var paths []string
+			d.client = &http.Client{Transport: rankingTransport(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path == "/service/2/device_register/" {
 					registrations++
-					return rankingHTTPResponse(request, http.StatusOK, hongguoDeviceFixture), nil
+					return rankingHTTPResponse(r, 200, hongguoDeviceFixture), nil
 				}
-				assertHongguoSignedPlaybackRequest(t, request)
-				hosts = append(hosts, request.URL.Host)
+				assertHongguoSignedPlaybackRequest(t, r)
+				paths = append(paths, r.URL.Path)
 				if outcome == "cancel" {
 					cancel()
 				}
-				if outcome == "recover" && len(hosts) == 4 {
-					return rankingHTTPResponse(request, http.StatusOK, hongguoModelBatchFixture("800001")), nil
+				if outcome == "recover" && len(paths) == 2 {
+					return rankingHTTPResponse(r, 200, hongguoModelBatchFixture("800001")), nil
 				}
-				return rankingHTTPResponse(request, http.StatusOK, ""), nil
+				return rankingHTTPResponse(r, 200, ""), nil
 			})}
 			if outcome == "recover" {
 				_, err = c.Call(`{"method":"resolve","id":"hongguo:700001","chapter":{"id":"one","videoUrl":"hongguo-cenc://800001"}}`)
 				if err != nil {
-					t.Fatal("mobile playback did not reach the fourth permitted route", err)
+					t.Fatal(err)
 				}
 			} else {
-				if outcome == "exhaust" {
-					// Background metadata retains a single four-attempt budget;
-					// foreground identity recovery has separate regressions.
-					_, err = d.resolveHongguoAppMedia(ctx, "800001", "800002")
-				} else {
-					_, err = d.resolveHongguoAppMedia(ctx, "800001")
-				}
+				_, err = d.resolveHongguoAppMedia(ctx, "800001", "800002")
 				if err == nil || outcome == "cancel" && !errors.Is(err, context.Canceled) {
-					t.Fatal("mobile playback ignored exhaustion or cancellation", err)
+					t.Fatal("ignored exhaustion/cancellation", err)
 				}
 			}
-			want := []string{"api5-normal-sinfonlineb.fqnovel.com", "api5-normal-hl.fqnovel.com", "api5-normal-lf.fqnovel.com", "api5-normal-sinfonlineb.fqnovel.com"}
+			want := []string{hongguoVideoTabPath, hongguoLegacyPlayerPath}
+			wantRegistrations := 2
 			if outcome == "cancel" {
 				want = want[:1]
+				wantRegistrations = 1
 			}
-			if !reflect.DeepEqual(hosts, want) || registrations != 1 || d.hongguoRequestAttempts() != 2 {
-				t.Fatal("playback changed the route/count, registered again, or changed the general request budget", hosts, registrations)
+			if !reflect.DeepEqual(paths, want) || registrations != wantRegistrations || d.hongguoRequestAttempts() != 2 {
+				t.Fatal("playback expanded its two-model bound or changed general retries", paths, registrations)
 			}
 		})
 	}
 }
 
-func TestHongguoPlaybackRotatesRoutesWithinBudget(t *testing.T) {
-	for _, failure := range []string{"empty", "HTTP 503", "connection", "body read"} {
+func TestHongguoPlaybackNonEmptyFailuresDoNotProbeLegacy(t *testing.T) {
+	for _, failure := range []string{"HTTP 503", "connection", "body read", "wrong episode", "bad JSON"} {
 		t.Run(failure, func(t *testing.T) {
-			var hosts []string
-			var identities [][3]string
-			d := hongguoRegisteredMediaDownloader(t, func(request *http.Request) (*http.Response, error) {
-				assertHongguoSignedPlaybackRequest(t, request)
-				hosts = append(hosts, request.URL.Host)
-				query := request.URL.Query()
-				identities = append(identities, [3]string{query.Get("device_id"), query.Get("iid"), query.Get("cdid")})
-				if request.Close != (len(hosts) > 1) {
-					t.Error("only playback retries should request an unpooled connection")
-				}
-				if len(hosts) == 3 {
-					return rankingHTTPResponse(request, http.StatusOK, hongguoModelBatchFixture("800001")), nil
-				}
+			calls := 0
+			d := hongguoRegisteredMediaDownloader(t, func(r *http.Request) (*http.Response, error) {
+				calls++
+				assertHongguoSignedPlaybackRequest(t, r)
 				switch failure {
 				case "HTTP 503":
-					return rankingHTTPResponse(request, http.StatusServiceUnavailable, ""), nil
+					return rankingHTTPResponse(r, 503, ""), nil
 				case "connection":
 					return nil, errors.New("fixture connection failed")
 				case "body read":
-					response := rankingHTTPResponse(request, http.StatusOK, "")
-					response.Body = io.NopCloser(iotest.ErrReader(errors.New("fixture read failed")))
+					response := rankingHTTPResponse(r, 200, "")
+					response.Body = io.NopCloser(iotest.ErrReader(errors.New("read failed")))
 					return response, nil
+				case "wrong episode":
+					return rankingHTTPResponse(r, 200, hongguoModelBatchFixture("800002")), nil
 				default:
-					return rankingHTTPResponse(request, http.StatusOK, " \n\t"), nil
+					return rankingHTTPResponse(r, 200, "{"), nil
 				}
 			})
-			d.cfg.Retries = 3
-			if _, err := d.resolveHongguoAppMedia(context.Background(), "800001"); err != nil {
-				t.Fatal("playback did not recover within the existing budget", err)
-			}
-			want := []string{"api5-normal-sinfonlineb.fqnovel.com", "api5-normal-hl.fqnovel.com", "api5-normal-lf.fqnovel.com"}
-			if !reflect.DeepEqual(hosts, want) {
-				t.Fatal("playback retried the same route or exceeded its budget", hosts)
-			}
-			if identities[0] != identities[1] || identities[0] != identities[2] {
-				t.Fatal("changing playback routes changed the registered device")
+			d.cfg.hongguoPlayerAttempts = 4
+			if _, err := d.resolveHongguoAppMedia(context.Background(), "800001"); err == nil || calls != 1 {
+				t.Fatal("non-empty failure expanded recovery", calls, err)
 			}
 		})
 	}

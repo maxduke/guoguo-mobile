@@ -131,6 +131,7 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 		return d.resolveHongguoMedia(ctx, task)
 	}
 	apiResolved := false
+	var playbackCredentials *providerMediaCredentials
 	if source, sourceID, valid := splitProviderDramaID(task.DramaID); valid && source == sourceHuangguoAI && chapter.Source == sourceHuangguoAI && huangguoAPIID(sourceID) {
 		episode := chapter.EpisodeString(task.Index)
 		if !huangguoAPIID(episode) {
@@ -139,9 +140,10 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 		if chapter.ID != "" && (!strings.HasPrefix(chapter.ID, task.DramaID+":") || aiEpisodeNumber(strings.TrimPrefix(chapter.ID, task.DramaID+":")) != aiEpisodeNumber(episode)) {
 			return providerMedia{}, fmt.Errorf("黄果播放作品或分集身份不符")
 		}
-		address, base, err := d.huangguoAPIPlayback(ctx, sourceID, episode)
+		playback, base, err := d.huangguoAPIPlayback(ctx, sourceID, episode)
 		if err == nil {
-			chapter.VideoURL, chapter.Referer = address, base+"/"
+			chapter.VideoURL, chapter.Referer = playback.URL, base+"/"
+			playbackCredentials = playback.credentials
 			apiResolved = true
 		} else if !huangguoAPICanFallback(ctx, err) {
 			return providerMedia{}, err
@@ -166,7 +168,7 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 			}
 		}
 	}
-	media := providerMedia{certificateFallback: chapter.Source == sourceHuangguoAI || chapter.Source == sourceHuangguoVideo, URL: chapter.VideoURL, Referer: firstNonEmpty(chapter.Referer, d.providerBaseURL(chapter.Source)+"/")}
+	media := providerMedia{certificateFallback: chapter.Source == sourceHuangguoAI || chapter.Source == sourceHuangguoVideo, URL: chapter.VideoURL, Referer: firstNonEmpty(chapter.Referer, d.providerBaseURL(chapter.Source)+"/"), credentials: playbackCredentials}
 	if chapter.Source == sourceHuangdou {
 		_, sourceID, valid := splitProviderDramaID(task.DramaID)
 		if valid {
@@ -222,7 +224,7 @@ func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (provi
 		if media.certificateFallback {
 			defer client.CloseIdleConnections()
 		}
-		playlist, finalURL, err := d.fetchMediaPlaylistWithClient(ctx, media.URL, media.Referer, client)
+		playlist, finalURL, err := d.fetchMediaPlaylistWithClient(providerMediaContext(ctx, media.credentials), media.URL, media.Referer, client)
 		if err != nil {
 			return providerMedia{}, fmt.Errorf("获取播放列表失败: %w", err)
 		}

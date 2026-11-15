@@ -1,6 +1,7 @@
 package app
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -76,85 +78,40 @@ func hongguoModelBatchFixture(ids ...string) string {
 	return string(body)
 }
 
-func TestHongguoBatchFailureFallsBackWithinExistingBudget(t *testing.T) {
-	for _, failure := range []struct {
-		status int
-		body   string
-	}{
-		{http.StatusServiceUnavailable, ""},
-		{http.StatusOK, ""},
-		{http.StatusOK, `{"code":110001}`},
-		{http.StatusOK, `{"data":{"800002":{"video_model":{}}}}`},
-	} {
-		var requests [][]string
-		var hosts []string
-		var identity string
-		d := hongguoRegisteredMediaDownloader(t, func(request *http.Request) (*http.Response, error) {
-			hosts = append(hosts, request.URL.Host)
-			var payload struct {
-				IDs map[string][]string `json:"mixed_video_id_map"`
-			}
-			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-				t.Fatal(err)
-			}
-			requests = append(requests, payload.IDs["1004"])
-			if len(requests) == 1 {
-				identity = request.URL.Query().Get("device_id")
-				return rankingHTTPResponse(request, failure.status, failure.body), nil
-			}
-			if request.URL.Query().Get("device_id") != identity {
-				t.Fatal("single fallback rotated the device")
-			}
-			return rankingHTTPResponse(request, http.StatusOK, hongguoModelBatchFixture("800001")), nil
-		})
-		d.cfg.Retries = 2
-		media, err := d.resolveHongguoAppMedia(context.Background(), "800001", "800002", "800003")
-		if err != nil || media.URL != "https://media.example.test/800001.mp4" {
-			t.Fatal("batch failure broke current episode", err)
+func TestHongguoEmptyCurrentFallsBackToOneLegacyEpisode(t *testing.T) {
+	var requests [][]string
+	d := hongguoRegisteredMediaDownloader(t, func(r *http.Request) (*http.Response, error) {
+		ids := hongguoRequestedIDs(t, r)
+		requests = append(requests, ids)
+		if len(requests) == 1 {
+			return rankingHTTPResponse(r, 200, ""), nil
 		}
-		if !reflect.DeepEqual(requests, [][]string{{"800001", "800002", "800003"}, {"800001"}}) {
-			t.Fatal("fallback exceeded the budget or retried lookahead", requests)
-		}
-		if !reflect.DeepEqual(hosts, []string{"api5-normal-sinfonlineb.fqnovel.com", "api5-normal-hl.fqnovel.com"}) {
-			t.Fatal("batch fallback restarted the failed playback route", hosts)
-		}
-		if len(d.hongguoClient().upcomingModels) != 0 {
-			t.Fatal("failed batch warmed another episode")
-		}
+		return rankingHTTPResponse(r, 200, hongguoModelBatchFixture("800001")), nil
+	})
+	d.cfg.Retries = 4
+	media, err := d.resolveHongguoAppMedia(context.Background(), "800001", "800002", "800003")
+	if err != nil || media.URL != "https://media.example.test/800001.mp4" || !reflect.DeepEqual(requests, [][]string{{"800001"}, {"800001"}}) || len(d.hongguoClient().upcomingModels) != 0 {
+		t.Fatal("legacy recovery sent speculative IDs or exceeded its bound", requests, err)
 	}
 }
 
-func TestHongguoBatchFailureAndCancelDoNotExpandRetries(t *testing.T) {
-	for _, scenario := range []struct {
-		attempts int
-		cancel   bool
-	}{{2, false}, {2, true}, {4, false}, {4, true}} {
-		ctx, cancel := context.WithCancel(context.Background())
-		calls := 0
-		var hosts []string
-		d := hongguoRegisteredMediaDownloader(t, func(request *http.Request) (*http.Response, error) {
-			calls++
-			hosts = append(hosts, request.URL.Host)
-			if scenario.cancel {
-				cancel()
-			}
-			return rankingHTTPResponse(request, http.StatusServiceUnavailable, ""), nil
-		})
-		d.cfg.Retries = 2
-		d.cfg.hongguoPlayerAttempts = scenario.attempts
-		if _, err := d.resolveHongguoAppMedia(ctx, "800001", "800002"); err == nil || scenario.cancel && !errors.Is(err, context.Canceled) {
-			t.Fatal("accepted failed model response")
-		}
-		want := scenario.attempts
-		if scenario.cancel {
-			want = 1
-		}
-		wantHosts := []string{"api5-normal-sinfonlineb.fqnovel.com", "api5-normal-hl.fqnovel.com", "api5-normal-lf.fqnovel.com", "api5-normal-sinfonlineb.fqnovel.com"}
-		if calls != want || !reflect.DeepEqual(hosts, wantHosts[:want]) {
-			t.Fatal("retry/cancellation budget or fallback route changed", calls, want, hosts)
-		}
-		cancel()
+func hongguoRequestedIDs(t *testing.T, r *http.Request) []string {
+	t.Helper()
+	if r.Method == http.MethodGet {
+		return []string{r.URL.Query().Get("video_id")}
 	}
+	reader, err := gzip.NewReader(r.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	var payload struct {
+		IDs map[string][]string `json:"mixed_video_id_map"`
+	}
+	if err := json.NewDecoder(reader).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload.IDs["1004"]
 }
 
 func TestHongguoBatchDoesNotRetryDeviceRegistrationFailure(t *testing.T) {
@@ -174,18 +131,12 @@ func TestHongguoBatchDoesNotRetryDeviceRegistrationFailure(t *testing.T) {
 	}
 }
 
-func TestHongguoMobileLookaheadBatchesOnlyValidatedUpcomingEpisodes(t *testing.T) {
+func TestHongguoMobileLookaheadReusesOnlyValidatedReturnedEpisodes(t *testing.T) {
 	var requests [][]string
 	d := hongguoRegisteredMediaDownloader(t, func(request *http.Request) (*http.Response, error) {
-		var payload struct {
-			IDs map[string][]string `json:"mixed_video_id_map"`
-		}
-		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-			t.Fatal(err)
-		}
-		ids := payload.IDs["1004"]
+		ids := hongguoRequestedIDs(t, request)
 		requests = append(requests, ids)
-		return rankingHTTPResponse(request, http.StatusOK, hongguoModelBatchFixture(ids...)), nil
+		return rankingHTTPResponse(request, http.StatusOK, hongguoModelBatchFixture("800001", "800002", "800003", "800004")), nil
 	})
 	d.hongguoClient().details["700001"] = hongguoDetailEntry{
 		ExpiresAt: time.Now().Add(time.Minute),
@@ -216,7 +167,7 @@ func TestHongguoMobileLookaheadBatchesOnlyValidatedUpcomingEpisodes(t *testing.T
 			t.Fatal("lookahead selected another episode")
 		}
 	}
-	if !reflect.DeepEqual(requests, [][]string{{"800001", "800002", "800003"}}) {
+	if !reflect.DeepEqual(requests, [][]string{{"800001"}}) {
 		t.Fatalf("three selections should use one bounded model request: %v", requests)
 	}
 	if _, err := d.resolveHongguoAppMedia(context.Background(), "800002"); err != nil {
@@ -230,11 +181,7 @@ func TestHongguoMobileLookaheadBatchesOnlyValidatedUpcomingEpisodes(t *testing.T
 func TestHongguoLookaheadLeavesSingleEpisodeRequestsUnchanged(t *testing.T) {
 	var requested []string
 	d := hongguoRegisteredMediaDownloader(t, func(request *http.Request) (*http.Response, error) {
-		var payload struct {
-			IDs map[string][]string `json:"mixed_video_id_map"`
-		}
-		json.NewDecoder(request.Body).Decode(&payload)
-		requested = payload.IDs["1004"]
+		requested = hongguoRequestedIDs(t, request)
 		return rankingHTTPResponse(request, http.StatusOK, hongguoModelBatchFixture(requested...)), nil
 	})
 	if _, err := d.resolveHongguoAppMedia(context.Background(), "800001"); err != nil {
@@ -301,11 +248,9 @@ func TestHongguoModelCacheRejectsInvalidAndOversizedModels(t *testing.T) {
 
 func TestHongguoModelCacheIsBoundedAndMissingCurrentDoesNotWarm(t *testing.T) {
 	d := hongguoRegisteredMediaDownloader(t, func(request *http.Request) (*http.Response, error) {
-		var payload struct {
-			IDs map[string][]string `json:"mixed_video_id_map"`
-		}
-		json.NewDecoder(request.Body).Decode(&payload)
-		return rankingHTTPResponse(request, http.StatusOK, hongguoModelBatchFixture(payload.IDs["1004"]...)), nil
+		ids := hongguoRequestedIDs(t, request)
+		current, _ := strconv.Atoi(ids[0])
+		return rankingHTTPResponse(request, http.StatusOK, hongguoModelBatchFixture(ids[0], strconv.Itoa(current+1))), nil
 	})
 	for index := 0; index < 8; index++ {
 		current, next := fmt.Sprint(800000+index*10), fmt.Sprint(800001+index*10)
