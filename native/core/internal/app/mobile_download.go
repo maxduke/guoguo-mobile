@@ -43,7 +43,7 @@ func (c *MobileClient) downloadPlan(ctx context.Context, request mobileRequest) 
 		return plan, err
 	}
 	if media.credentials != nil {
-		plan.RefreshOnResume = media.credentials.cookie != ""
+		plan.RefreshOnResume = media.credentials.cookie != "" || len(media.credentials.headers) > 0
 		headerRequest, _ := http.NewRequest(http.MethodGet, media.URL, nil)
 		if err := media.credentials.apply(headerRequest); err != nil {
 			return plan, publicError(err)
@@ -56,6 +56,20 @@ func (c *MobileClient) downloadPlan(ctx context.Context, request mobileRequest) 
 	}
 	for i := range plan.Assets {
 		asset := &plan.Assets[i]
+		if media.credentials != nil && len(media.credentials.headers) > 0 {
+			resource, err := http.NewRequest(http.MethodGet, asset.URL, nil)
+			if err != nil {
+				return plan, errors.New("媒体资源地址无效")
+			}
+			if err := media.credentials.apply(resource); err != nil {
+				return plan, publicError(err)
+			}
+			// Native background tasks have shared headers, so a resource-scoped
+			// CDN grant cannot be exported without losing redirect isolation.
+			if resource.Header.Get("X-Cdn-Auth") != "" {
+				return plan, errors.New("该媒体暂不支持后台下载，请使用在线播放")
+			}
+		}
 		asset.Identity = asset.URL
 		asset.URL, err = media.credentials.downloadURL(asset.URL)
 		if err != nil {

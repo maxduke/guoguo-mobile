@@ -5,16 +5,19 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 )
 
 type providerMediaCredentials struct {
-	cookie    string
-	origin    string
-	referer   string
-	userAgent string
-	expires   time.Time
+	cookie           string
+	origin           string
+	referer          string
+	userAgent        string
+	expires          time.Time
+	headers          http.Header
+	headerExtensions []string
 }
 
 type providerMediaCredentialsKey struct{}
@@ -37,6 +40,9 @@ func providerMediaOrigin(address *url.URL) string {
 
 func (credentials *providerMediaCredentials) apply(request *http.Request) error {
 	request.Header.Del("Cookie")
+	for name := range credentials.headers {
+		request.Header.Del(name)
+	}
 	if credentials.userAgent != "" {
 		request.Header.Set("User-Agent", credentials.userAgent)
 	}
@@ -51,8 +57,45 @@ func (credentials *providerMediaCredentials) apply(request *http.Request) error 
 			return errors.New("播放凭证已过期，请重新解析播放")
 		}
 		request.Header.Set("Cookie", credentials.cookie)
+		for _, extension := range credentials.headerExtensions {
+			if strings.EqualFold(path.Ext(request.URL.Path), extension) {
+				for name, values := range credentials.headers {
+					request.Header[name] = append([]string(nil), values...)
+				}
+				break
+			}
+		}
 	}
 	return nil
+}
+
+// Website playback grants apply only to media on the selected stream origin.
+// Never allow an upstream response to choose arbitrary request header names.
+func huangguoPlaybackCredentials(media providerMedia, cdn map[string]any) (*providerMediaCredentials, error) {
+	playlists, _ := cdn["m3u8Enabled"].(bool)
+	assets, _ := cdn["otherEnabled"].(bool)
+	if !playlists && !assets {
+		return nil, nil
+	}
+	name, value, app := mapString(cdn, "authKey"), mapString(cdn, "authValue"), mapString(cdn, "app")
+	if !strings.EqualFold(name, "x-cdn-auth") || value == "" || len(value) > 4096 || strings.ContainsAny(value, "\r\n\x00") || app == "" || len(app) > 64 || strings.ContainsAny(app, "\r\n\x00") {
+		return nil, errors.New("黄果播放凭证格式不正确")
+	}
+	u, err := url.Parse(media.URL)
+	if err != nil || !validImageURL(u) {
+		return nil, errors.New("黄果播放地址不受支持")
+	}
+	credentials := &providerMediaCredentials{
+		origin: providerMediaOrigin(u), referer: media.Referer, userAgent: userAgent,
+		headers: http.Header{"X-Cdn-Auth": {value}, "X-Cdn-App": {app}},
+	}
+	if playlists {
+		credentials.headerExtensions = append(credentials.headerExtensions, ".m3u8")
+	}
+	if assets {
+		credentials.headerExtensions = append(credentials.headerExtensions, ".ts", ".m4s", ".key")
+	}
+	return credentials, nil
 }
 
 func (credentials *providerMediaCredentials) client(client *http.Client) *http.Client {

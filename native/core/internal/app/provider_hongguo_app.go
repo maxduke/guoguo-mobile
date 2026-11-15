@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,8 @@ const hongguoAppBaseURL = "https://api5-normal-sinfonlineb.fqnovel.com"
 const hongguoAppVersion = "7.3.5.32"
 const hongguoAppVersionCode = "73532"
 const hongguoAppUserAgent = "com.phoenix.read/73532 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
+const hongguoVideoTabPath = "/reading/bookapi/video_tab/multi_video_model/v1/"
+const hongguoLegacyPlayerPath = "/novel/player/multi_video_model/v1/"
 
 type hongguoRequestMode uint8
 
@@ -182,6 +185,20 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path s
 		query[key] = append([]string(nil), values...)
 	}
 	if mode == hongguoAnonymousPlayerRequest {
+		version, code := "7.4.3.32", "74332"
+		if path == hongguoVideoTabPath {
+			version, code = "7.3.9.32", "73932"
+		}
+		for _, name := range []string{"version_code", "manifest_version_code", "update_version_code", "pv_player"} {
+			query.Set(name, code)
+		}
+		query.Set("version_name", version)
+		for name, value := range map[string]string{
+			"host_abi": "arm64-v8a", "dragon_device_type": "phone", "compliance_status": "0",
+			"need_personal_recommend": "1", "player_so_load": "1", "is_android_pad_screen": "0",
+		} {
+			query.Set(name, value)
+		}
 		query.Set("cdid", player.cdid)
 	}
 	var body []byte
@@ -190,6 +207,17 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path s
 		body, err = json.Marshal(payload)
 		if err != nil {
 			return nil, err
+		}
+		if mode == hongguoAnonymousPlayerRequest {
+			var compressed bytes.Buffer
+			writer := gzip.NewWriter(&compressed)
+			if _, err := writer.Write(body); err != nil {
+				return nil, err
+			}
+			if err := writer.Close(); err != nil {
+				return nil, err
+			}
+			body = compressed.Bytes()
 		}
 	}
 	attempts := downloader.hongguoRequestAttempts()
@@ -213,22 +241,23 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path s
 				return nil, ctx.Err()
 			}
 		}
-		requestBase := base
 		attemptClient := httpClient
 		if mode == hongguoAnonymousPlayerRequest {
-			requestBase = hongguoPlaybackBaseURL(base, offset+attempt)
 			if offset+attempt > 0 {
 				var release func()
 				attemptClient, release = hongguoFreshPlayerClient(httpClient)
 				defer release()
 			}
 		}
-		request, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(requestBase, "/")+path, bytes.NewReader(body))
+		request, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(base, "/")+path, bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
 		request.Close = mode == hongguoAnonymousPlayerRequest && offset+attempt > 0
 		request.Header.Set("User-Agent", hongguoAppUserAgent)
+		if mode == hongguoAnonymousPlayerRequest {
+			request.Header.Set("User-Agent", strings.Replace(hongguoAppUserAgent, hongguoAppVersionCode, query.Get("version_code"), 1))
+		}
 		request.Header.Set("Accept", "application/json")
 		request.Header.Set("X-XS-From-Web", "0")
 		request.Header.Set("Sdk-Version", "2")
@@ -248,6 +277,9 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path s
 		}
 		if payload != nil {
 			request.Header.Set("Content-Type", "application/json; charset=utf-8")
+			if mode == hongguoAnonymousPlayerRequest {
+				request.Header.Set("Content-Encoding", "gzip")
+			}
 		}
 		response, err := downloader.doPreparedCatalogRequestWithClient(request, 20*time.Second, func(prepared *http.Request) error {
 			now := time.Now()
@@ -261,12 +293,15 @@ func (downloader *Downloader) hongguoRequest(ctx context.Context, method, path s
 			prepared.URL.RawQuery = query.Encode()
 			if mode == hongguoAnonymousPlayerRequest {
 				// Sign the final query and exact POST bytes on every route attempt.
-				if err := signHongguoRequest(prepared, body, now); err != nil {
+				if err := signHongguoPlayerRequest(prepared, body, now); err != nil {
 					return err
 				}
-				// Playback uses the anonymous player header profile, not catalog headers.
-				for _, name := range []string{"X-SS-STUB", "Passport-Sdk-Version", "X-VC-Bdturing-Sdk-Version"} {
-					prepared.Header.Del(name)
+				prepared.Header.Set("X-SS-DP", query.Get("aid"))
+				prepared.Header.Set("Passport-Sdk-Version", "5051452")
+				prepared.Header.Del("X-TT-Request-Tag")
+				if path == hongguoVideoTabPath {
+					prepared.Header.Set("Passport-Sdk-Version", "50561")
+					prepared.Header.Set("X-TT-Request-Tag", "t=0;n=0")
 				}
 				prepared.Header.Set("X-TT-Store-Region", "cn")
 				prepared.Header.Set("X-TT-Store-Region-Src", "did")

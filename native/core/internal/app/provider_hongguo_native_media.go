@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,97 +46,78 @@ func (downloader *Downloader) resolveHongguoAppMedia(ctx context.Context, videoI
 			}
 		}
 	}
-	payload := map[string]any{
-		"biz_param": map[string]any{
-			"detail_page_version": 0,
-			// The conservative profile keeps AVC/HEVC lower-quality renditions
-			// available instead of receiving ByteVC2-only lower tiers.
-			"device_level":              1,
-			"disable_digg_stat":         false,
-			"need_all_video_definition": true,
-			"need_mp4_align":            false,
-			"use_os_player":             false,
-			"use_server_dns":            false,
-			// The player API rejects the detail API's video_platform value of 3.
-			"video_platform": 1024,
-		},
-		"mixed_video_id_map": map[string]any{
-			"1004": ids, // Short-drama content type.
-		},
-	}
-	attempts := downloader.hongguoPlayerRequestAttempts()
-	limit := 0
-	if len(ids) > 1 {
-		limit = 1
-	}
-	// Allocate after the cache check: a cached upcoming model needs no new device.
-	register := func() (hongguoPlayerIdentity, error) {
-		traceHongguoStage(ctx, "registration")
-		identity, err := downloader.registerHongguoPlaybackDevice(ctx)
-		if err != nil && ctx.Err() == nil {
-			return identity, hongguoRefused(ctx, "registration_failed", err)
+	traceHongguoStage(ctx, "registration")
+	identity, err := downloader.registerHongguoPlaybackDevice(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			err = hongguoRefused(ctx, "registration_failed", err)
 		}
-		return identity, err
+		return providerMedia{}, err
 	}
-	identity, err := register()
+	// One current GET, with one legacy POST only after an empty HTTP 200 body.
+	// Never restart the model ladder for rejection, wrong identity or bad media.
+	work, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	traceHongguoStage(ctx, "model")
+	query := url.Values{
+		"video_id": {videoID}, "video_id_type": {"0"}, "device_level": {"1"},
+		"need_all_video_definition": {"1"}, "need_mp4_align": {"0"}, "use_os_player": {"0"},
+		"video_platform": {"1024"}, "source": {"0"}, "from_video_id": {""},
+	}
+	result, err := downloader.hongguoRequest(work, http.MethodGet, hongguoVideoTabPath, query, nil, 1, 0, &identity)
+	if hongguoEmptyAttemptCount(err) == 1 && downloader.hongguoPlayerRequestAttempts() > 1 && work.Err() == nil {
+		// A fresh identity is optional; explicit refusal and caller cancellation
+		// still stop recovery, while a transient registration failure can retain it.
+		if deadline, ok := work.Deadline(); ok && time.Until(deadline) >= 8*time.Second {
+			traceHongguoStage(ctx, "registration")
+			fresh, registerErr := downloader.registerHongguoPlaybackDevice(work)
+			if registerErr == nil {
+				identity = fresh
+			} else if work.Err() != nil {
+				return providerMedia{}, work.Err()
+			} else if hongguoRegistrationRefused(registerErr) {
+				return providerMedia{}, hongguoRefused(ctx, "registration_failed", registerErr)
+			}
+		}
+		select {
+		case <-time.After(time.Second):
+		case <-work.Done():
+			return providerMedia{}, work.Err()
+		}
+		traceHongguoStage(ctx, "model")
+		payload := map[string]any{
+			"biz_param": map[string]any{
+				"detail_page_version": 0, "device_level": 1, "disable_digg_stat": false,
+				"need_all_video_definition": true, "need_mp4_align": false,
+				"use_os_player": false, "use_server_dns": false, "video_platform": 1024,
+			},
+			"mixed_video_id_map": map[string]any{"1004": ids[:1]},
+		}
+		result, err = downloader.hongguoRequest(work, http.MethodPost, hongguoLegacyPlayerPath, nil, payload, 1, 1, &identity)
+		if hongguoEmptyAttemptCount(err) == 1 {
+			err = errHongguoPlaybackRecoveryExhausted
+		}
+	}
+	if work.Err() != nil {
+		return providerMedia{}, work.Err()
+	}
 	if err != nil {
 		return providerMedia{}, err
 	}
+	data := nestedMap(result, "data")
+	if _, wrapped := data["video_model_data"]; wrapped {
+		data = nestedMap(data, "video_model_data")
+	}
 	fallbackAttempted := false
-	fetch := func(limit, offset int) (map[string]any, providerMedia, error) {
-		traceHongguoStage(ctx, "model")
-		result, err := downloader.hongguoRequest(ctx, "POST", "/novel/player/multi_video_model/v1/", nil, payload, limit, offset, &identity)
-		if err != nil {
-			return result, providerMedia{}, err
-		}
-		media, err := downloader.resolveHongguoAppModel(ctx, nestedMap(result, "data", videoID), &fallbackAttempted)
-		return result, media, err
+	media, err := downloader.resolveHongguoAppModel(work, nestedMap(data, videoID), &fallbackAttempted)
+	if err != nil {
+		return providerMedia{}, err
 	}
-	// One optional fresh-identity round on all-empty foreground failure. Each
-	// resolve is independent; no old identity can poison another episode's state.
-	lookaheadHint, _ := ctx.Value(hongguoMetadataAheadKey{}).(int)
-	recoverIdentity := attempts == hongguoPlayerMaxAttempts && len(metadataAhead) == 0 && lookaheadHint == 0
-	for round := 0; round < 2; round++ {
-		result, media, err := fetch(limit, 0)
-		emptyAttempts := hongguoEmptyAttemptCount(err)
-		if err != nil && len(ids) > 1 && attempts > 1 && ctx.Err() == nil {
-			var backoff *requestBackoff
-			if !errors.As(err, &backoff) && !errors.Is(err, errHongguoDeviceRegistration) && !isHongguoSourceRefusal(err) && !fallbackAttempted {
-				select {
-				case <-time.After(hongguoPlaybackRetryDelay(1)):
-				case <-ctx.Done():
-					return providerMedia{}, ctx.Err()
-				}
-				ids = ids[:1]
-				payload["mixed_video_id_map"] = map[string]any{"1004": ids}
-				result, media, err = fetch(attempts-1, 1)
-				remainingEmpty := hongguoEmptyAttemptCount(err)
-				if emptyAttempts >= 0 && remainingEmpty >= 0 {
-					emptyAttempts += remainingEmpty
-				} else {
-					emptyAttempts = -1
-				}
-			}
-		}
-		if ctx.Err() != nil {
-			return providerMedia{}, ctx.Err()
-		}
-		if err == nil {
-			downloader.keepHongguoUpcomingModels(ctx, result, ids[1:])
-			return media, nil
-		}
-		if !recoverIdentity || emptyAttempts != attempts {
-			return providerMedia{}, err
-		}
-		if round == 1 {
-			return providerMedia{}, errHongguoPlaybackRecoveryExhausted
-		}
-		identity, err = register()
-		if err != nil {
-			return providerMedia{}, err
-		}
+	if work.Err() != nil {
+		return providerMedia{}, work.Err()
 	}
-	return providerMedia{}, errHongguoPlaybackRecoveryExhausted
+	downloader.keepHongguoUpcomingModels(work, map[string]any{"data": data}, ids[1:])
+	return media, nil
 }
 
 func decodeHongguoAppModel(entry map[string]any) (map[string]any, error) {

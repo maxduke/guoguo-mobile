@@ -26,6 +26,16 @@ const hongguoDeviceMaxBody = 64 * 1024
 
 var errHongguoDeviceRegistration = errors.New("红果播放设备注册失败，请稍后重试")
 
+type hongguoRegistrationRejection struct{ cause error }
+
+func (e *hongguoRegistrationRejection) Error() string { return e.cause.Error() }
+func (e *hongguoRegistrationRejection) Unwrap() error { return e.cause }
+func hongguoRegistrationRefused(err error) bool {
+	var rejection *hongguoRegistrationRejection
+	var backoff *requestBackoff
+	return errors.As(err, &rejection) || errors.As(err, &backoff)
+}
+
 // Keep account/site cookies out of both registration and playback. Fixed API
 // endpoints must not forward registration payloads or device cookies on redirects.
 func hongguoAnonymousClient(client *http.Client) *http.Client {
@@ -91,7 +101,11 @@ func (downloader *Downloader) registerHongguoPlaybackDevice(ctx context.Context)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return hongguoPlayerIdentity{}, fmt.Errorf("%w（HTTP %d）", errHongguoDeviceRegistration, response.StatusCode)
+		err := fmt.Errorf("%w（HTTP %d）", errHongguoDeviceRegistration, response.StatusCode)
+		if response.StatusCode == 403 || response.StatusCode == 429 {
+			err = &hongguoRegistrationRejection{cause: err}
+		}
+		return hongguoPlayerIdentity{}, err
 	}
 	content, err := io.ReadAll(io.LimitReader(response.Body, hongguoDeviceMaxBody+1))
 	traceUpdate(ctx, func(v *mobileDiagnostic) { v.ResponseBytes = int64(len(content)) })
@@ -106,7 +120,7 @@ func (downloader *Downloader) registerHongguoPlaybackDevice(ctx context.Context)
 		return hongguoPlayerIdentity{}, errHongguoDeviceRegistration
 	}
 	if code := firstNonEmpty(mapString(result, "code", "Code", "status_code"), mapString(nestedMap(result, "BaseResp"), "StatusCode")); code != "" && code != "0" {
-		return hongguoPlayerIdentity{}, errHongguoDeviceRegistration
+		return hongguoPlayerIdentity{}, &hongguoRegistrationRejection{cause: errHongguoDeviceRegistration}
 	}
 	identity = hongguoPlayerIdentity{
 		deviceID: mapString(result, "device_id_str", "device_id"), installID: mapString(result, "install_id_str", "install_id"), cdid: cdid,

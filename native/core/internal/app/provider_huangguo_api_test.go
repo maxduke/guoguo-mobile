@@ -25,8 +25,15 @@ func huangguoAPIResponse(request *http.Request, data string) *http.Response {
 func huangguoEnvelopePath(t *testing.T, request *http.Request) string {
 	t.Helper()
 	var envelope map[string]string
-	if request.Method != http.MethodPost || request.URL.Path != "/api/edge/request" || json.NewDecoder(request.Body).Decode(&envelope) != nil || envelope["method"] != "GET" || envelope["body"] != "" || envelope["content_type"] != "" {
+	if request.Method != http.MethodPost || request.URL.Path != "/api/edge/request" || json.NewDecoder(request.Body).Decode(&envelope) != nil {
 		t.Errorf("invalid anonymous read envelope: %s %s", request.Method, request.URL.Path)
+	}
+	if strings.HasSuffix(envelope["path"], "/playback") {
+		if envelope["method"] != "POST" || envelope["body"] != "e30=" || envelope["content_type"] != "application/json" {
+			t.Error("invalid playback POST envelope")
+		}
+	} else if envelope["method"] != "GET" || envelope["body"] != "" || envelope["content_type"] != "" {
+		t.Error("catalog read envelope changed")
 	}
 	if request.Header.Get("Cookie") != "" || request.Header.Get("Authorization") != "" || request.Header.Get("Content-Type") != "application/json" {
 		t.Error("API inherited account credentials or lost its content type")
@@ -79,7 +86,7 @@ func TestHuangguoAPIPlaybackRejectsWrongIdentityWithoutHTMLFallback(t *testing.T
 			var calls atomic.Int32
 			d := rankingTestDownloader(t, func(request *http.Request) (*http.Response, error) {
 				calls.Add(1)
-				if huangguoEnvelopePath(t, request) != "/api/videos/501/play?ep=3&page_texts=0" {
+				if huangguoEnvelopePath(t, request) != "/api/videos/501/episodes/3/playback" {
 					t.Error("wrong episode target")
 				}
 				return huangguoAPIResponse(request, data), nil
@@ -104,10 +111,10 @@ func TestHuangguoAPIPlaybackUsesSelectedRouteAndExistingHLSPath(t *testing.T) {
 			}
 			return rankingHTTPResponse(request, 200, "#EXTM3U\n#EXTINF:4,\npart.ts\n#EXT-X-ENDLIST\n"), nil
 		}
-		if request.URL.Host != "selected-huangguo.example.org" || huangguoEnvelopePath(t, request) != "/api/videos/501/play?ep=3&page_texts=0" {
+		if request.URL.Host != "selected-huangguo.example.org" || huangguoEnvelopePath(t, request) != "/api/videos/501/episodes/3/playback" {
 			t.Error("playback used stale page or route")
 		}
-		return huangguoAPIResponse(request, `{"id":501,"ep_num":3,"video_url":"https://media.example.org/a.m3u8"}`), nil
+		return huangguoAPIResponse(request, `{"id":501,"ep":3,"manifest_method":"GET","streams":{"main":"https://media.example.org/a.m3u8"}}`), nil
 	})
 	d.huangguoLine = base
 	media, err := d.resolveProviderMedia(context.Background(), Task{DramaID: "huangguoai:501", Chapter: Chapter{ID: "huangguoai:501:ep-3", CurrentEpisode: rawEpisode(3), PageURL: "https://old-huangguo.example.org/video/501/ep-3/"}})

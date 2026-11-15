@@ -332,3 +332,51 @@ lookups, while media-CDN errors and ordinary episode failures do not. The existi
 mobile diagnostic query carries fixed reason/stage metadata; native bridge
 signatures, ongoing transfers and user files remain unchanged. See
 [the implementation and validation record](../../docs/hongguo-bounded-model-recovery-2026-11-08.md).
+
+## November 15 Huangguo and Hongguo playback repair
+
+This playback policy supersedes the older endpoint/signature policies below.
+
+Hongguo uses the current `video_tab` GET and playback-only Argus 551/Ladon
+signature, selectively adapted from
+[jackotom/hongguo-drama `782fb21cbddf1be46f88e97af5e788c99e30beae`](https://github.com/jackotom/hongguo-drama/tree/782fb21cbddf1be46f88e97af5e788c99e30beae),
+`src/native/app-source.js` and `src/native/playback-signature.js` (GPL-3.0-only).
+The latter credits N3urda/hongguoTV
+`7444bb01aec7b0420740103e551c45f1f66101c9`, `Argus.kt` blob
+`9f1b06f16c778f07d1bd9e1f8e9a596590e57213`, and ch6vip/fqapp's
+`rust/src/sign/{argus,simon,ladon,protobuf}.rs`. The existing
+[GPL license](licenses/hongguoTV-GPL-3.0.txt) is retained.
+The 18 independent Node oracle vectors in
+`internal/app/testdata/hongguo_player_signing.json` cover bodyless GET, JSON and
+gzip bytes, signed random fields, and timestamps crossing the signed-32-bit edge.
+Catalog signing retains its existing independent fixtures and behavior.
+
+Each uncached resolve still registers its own anonymous identity. Only an empty
+HTTP 200 response permits one legacy gzip POST, with an optional fresh identity,
+within a shared 12-second model deadline. Explicit registration refusals and
+cancellation stop recovery. Both requests use the fixed playback origin; the
+legacy attempt retains its isolated HTTP/2 connection. Mobile decoding retains
+the conservative device level and AVC/HEVC filtering.
+
+HGhub's current commit
+[`cae4645ddfdd234dd9a5e90191007dac812360d9`](https://github.com/Minireel/HGhub/tree/cae4645ddfdd234dd9a5e90191007dac812360d9)
+contains only a discontinuation README. Its historical
+[`8665ffcaa553bc6eb1b52629fd91b35cc6e02678`](https://github.com/Minireel/HGhub/tree/8665ffcaa553bc6eb1b52629fd91b35cc6e02678)
+`src-tauri/src/lines.rs` supplies the fixed official publisher and the
+`publish.js` domain/subdomain discovery format. The local reader bounds the
+entire discovery to eight seconds, keeps script reads on that HTTPS origin,
+rejects redirects, and retains public-DNS and media identity checks.
+
+Huangguo's old GET playback endpoint now returns successful metadata with empty
+media fields. The current anonymous POST playback request and CDN fields were
+verified against the public website's `services/playback.js` and
+`edge-cache-runtime.js`, version `20261113008`, on November 15. Their SHA-256
+values are `a8e6d6c6c3198e34fb92197e49851bf5486b17dcc1994208c077a8fe1ed13aa4`
+and `c28d814724ab39ff712baa9a44f2dadb0a9f4da4e8bffde17d6da592cc955392`.
+The existing edge envelope remains usable, including its base64 POST body; no
+website encryption/session implementation is copied. CDN grants stay in the
+existing media session, restricted to the stream origin and declared resource
+extensions, and are removed on cross-origin redirects.
+
+See [the investigation and validation record](../../docs/source-playback-repair-2026-11-15.md)
+for host decoding evidence and remaining network/device boundaries.
