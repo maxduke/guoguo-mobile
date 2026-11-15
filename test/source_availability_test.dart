@@ -71,11 +71,7 @@ void main() {
       test(
         'saved ${source.name} selection ${manuallyEnabled ? 'honors manual enable' : 'falls back without losing records'}',
         () async {
-          final drama = Drama(
-            id: 'saved',
-            source: source,
-            title: '保存的收藏',
-          );
+          final drama = Drama(id: 'saved', source: source, title: '保存的收藏');
           final history = WatchRecord(
             drama: drama,
             episodeId: 'saved-2',
