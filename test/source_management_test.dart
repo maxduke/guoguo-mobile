@@ -135,12 +135,13 @@ void main() {
       final storage = _Storage(), provider = _Provider();
       final store = _store(storage: storage, provider: provider);
       addTearDown(store.dispose);
+      await store.preferences.setSourceHidden(DramaSource.wuguo, false);
       for (final source in DramaSource.values) {
         await store.catalog.selectSource(source);
       }
       await store.catalog.selectSource(DramaSource.huangdou);
       await store.catalog.selectSource(DramaSource.wuguo);
-      expect(storage.writes, DramaSource.values.length + 2);
+      expect(storage.writes, DramaSource.values.length + 3);
       expect(store.preferences.recentSources, [
         DramaSource.wuguo,
         DramaSource.huangdou,
@@ -182,6 +183,7 @@ void main() {
       );
       await store.records.toggleFavorite(drama);
       await store.preferences.toggleFavoriteSource(DramaSource.wuguo);
+      await store.preferences.setSourceHidden(DramaSource.wuguo, false);
       await store.preferences.setSourceHidden(DramaSource.wuguo, true);
       await store.catalog.selectSource(DramaSource.wuguo);
       await storage.writeCache({'catalogs': {}});
@@ -294,6 +296,7 @@ void main() {
       final provider = _Provider();
       final store = _store(provider: provider), choices = <DramaSource?>[];
       await _fixture(tester, [store]);
+      await store.preferences.setSourceHidden(DramaSource.wuguo, false);
       await store.preferences.toggleFavoriteSource(DramaSource.wuguo);
       await store.catalog.selectSource(DramaSource.wuguo);
       await store.catalog.selectSource(DramaSource.hongguo);
@@ -335,7 +338,10 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('恢复站源伍果'));
       await tester.pumpAndSettle();
-      expect(store.preferences.hiddenSources, defaultHidden);
+      expect(
+        store.preferences.hiddenSources,
+        defaultHidden.difference({DramaSource.wuguo}),
+      );
       await tester.tap(find.byTooltip('返回站源选择'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(ChoiceChip, '伍果'));
