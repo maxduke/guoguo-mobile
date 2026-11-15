@@ -1836,7 +1836,7 @@ func huangguoAIContentOrigin(raw string) (origin, host string, ok bool) {
 		return "", "", false
 	}
 	host = strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
-	if mediaEdgeHost(raw) != "" || host == "" || host == "huangguoai.ai" || strings.HasSuffix(host, ".huangguoai.ai") || host == "huangguoai.pages.dev" || host == "huangguoai.gitlab.io" || huangguoAIIsDeprecatedRoute(parsed.String()) || huangguoAIHostIn(host, huangguoAIExcludedHosts) {
+	if mediaEdgeHost(raw) != "" || host == "" || host == "huangguoai.ai" || strings.HasSuffix(host, ".huangguoai.ai") || host == "huangguoai.pages.dev" || host == "huangguoai.gitlab.io" || host == "hgai15.com" || huangguoAIIsDeprecatedRoute(parsed.String()) || huangguoAIHostIn(host, huangguoAIExcludedHosts) {
 		return "", "", false
 	}
 	return parsed.Scheme + "://" + parsed.Host, host, true
