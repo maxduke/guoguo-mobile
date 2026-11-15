@@ -16,6 +16,10 @@ import (
 // Read its data, never execute scripts or follow a publisher to another origin.
 const huangguoAIPublishURL = "https://huangguoai.pages.dev/"
 
+// The official landing page also advertises this independent address entry.
+// It publishes current content routes; it is never itself a playback origin.
+const huangguoAIFallbackEntryURL = "https://hgai15.com/"
+
 var huangguoPublishScript = regexp.MustCompile(`(?is)<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["']`)
 var huangguoPublishArray = regexp.MustCompile(`(?s)\bvar\s+(urls|subdomains)\s*=\s*\[([^\]]*)\]`)
 var huangguoPublishString = regexp.MustCompile(`["']([a-zA-Z0-9./-]{1,253})["']`)
@@ -84,11 +88,11 @@ func (d *Downloader) discoverHuangguoPublisher(ctx context.Context) []string {
 			return "", err
 		}
 		req.Header.Set("User-Agent", userAgent)
-		req.Header.Set("Referer", huangguoAIPublishURL)
+		req.Header.Set("Referer", address)
 		client := *d.client
 		client.Jar = nil
 		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-		response, err := d.doPreparedCatalogRequestWithClient(req, 4*time.Second, nil, &client)
+		response, err := d.doPreparedCatalogRequestWithClient(req, 3*time.Second, nil, &client)
 		if err != nil {
 			return "", err
 		}
@@ -98,6 +102,16 @@ func (d *Downloader) discoverHuangguoPublisher(ctx context.Context) []string {
 			return "", errors.New("黄果发布页暂时不可用")
 		}
 		return string(bytes.TrimSpace(raw)), nil
+	}
+	// Try the published HTML entry before the script-only publisher, so a slow
+	// or blocked pages.dev connection cannot consume the entire discovery budget.
+	if raw, err := read(huangguoAIFallbackEntryURL); err == nil && work.Err() == nil {
+		if routes := parseHuangguoAIRoutes(raw); len(routes) > 0 {
+			return routes
+		}
+	}
+	if work.Err() != nil {
+		return nil
 	}
 	html, err := read(huangguoAIPublishURL)
 	if err != nil {

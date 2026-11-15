@@ -380,3 +380,17 @@ extensions, and are removed on cross-origin redirects.
 
 See [the investigation and validation record](../../docs/source-playback-repair-2026-11-15.md)
 for host decoding evidence and remaining network/device boundaries.
+
+## November 15 Huangguo default discovery follow-up
+
+The main official landing page also links `https://hgai15.com/` as its current
+address entry. On this host the primary landing and Pages publisher still fail
+TLS while that independent entry publishes valid `data-url` routes. It is now
+read before the Pages fallback, retaining the shared eight-second discovery
+budget, anonymous/public-DNS transport, redirect rejection and existing route
+validation. No rotating content origin is embedded in the application.
+
+The [default-path validation](../../docs/huangguo-default-route-recovery-2026-11-15.md)
+uses an unmodified probe with no saved or injected route and completes a real
+episode through FFmpeg preparation and decoding. Device acceptance remains
+separate.
