@@ -23,6 +23,7 @@ class PlaybackRecoveryController {
 
   Future<void> recover(
     int index, {
+    bool refresh = false,
     required Future<void> Function() pause,
     required void Function(RecoveryAction) onAction,
     required void Function(ResolvedMedia?) restart,
@@ -31,7 +32,9 @@ class PlaybackRecoveryController {
     final ticket = session.generation;
     if (!_current(ticket) || recovering) return;
     final media = session.peek(index)?.media;
-    var action = _budget.next(alternative: media?.hasAlternative == true);
+    var action = _budget.next(
+      alternative: !refresh && media?.hasAlternative == true,
+    );
     if (action == RecoveryAction.stop) {
       onAction(action);
       return;

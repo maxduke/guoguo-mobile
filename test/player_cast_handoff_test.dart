@@ -90,6 +90,8 @@ class NativeCastPlayer {
   final seeks = <int>[];
   final sources = <Map>[];
   void Function(Map)? beforeSource;
+  void Function()? beforePlay, beforePause;
+  void Function(int)? beforeSeek;
   Completer<void>? seekGate;
   void install() {
     final messenger =
@@ -108,11 +110,18 @@ class NativeCastPlayer {
           }),
         );
       }
-      if (call.method == 'play') plays++;
-      if (call.method == 'pause') pauses++;
+      if (call.method == 'play') {
+        beforePlay?.call();
+        plays++;
+      }
+      if (call.method == 'pause') {
+        beforePause?.call();
+        pauses++;
+      }
       if (call.method == 'seekTo' || call.method == 'guoguoSeek') {
         final target = (call.arguments as Map)['location'] as int;
         seeks.add(target);
+        beforeSeek?.call(target);
         await seekGate?.future;
         position = target;
         if (call.method == 'guoguoSeek') return position;
@@ -134,6 +143,18 @@ class NativeCastPlayer {
             'event': event,
             ...values,
           }),
+          (_) {},
+        );
+  }
+
+  void emitFailure() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .handlePlatformMessage(
+          events.name,
+          const StandardMethodCodec().encodeErrorEnvelope(
+            code: 'VideoError',
+            message: 'Native media failed',
+          ),
           (_) {},
         );
   }

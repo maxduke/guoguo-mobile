@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guoguo_mobile/data/app_store.dart';
 import 'package:guoguo_mobile/data/storage.dart';
@@ -11,6 +12,7 @@ import 'package:guoguo_mobile/platform/episode_buffer.dart';
 import 'package:guoguo_mobile/platform/provider_client.dart';
 import 'package:guoguo_mobile/ui/player_page.dart';
 import 'package:guoguo_mobile/ui/player_notice.dart';
+import 'package:guoguo_mobile/ui/player_transport.dart';
 
 import 'player_cast_handoff_test.dart' show NativeCastPlayer, LocalDownloads;
 import 'widget_test.dart' show NoNetwork;
@@ -18,6 +20,8 @@ import 'widget_test.dart' show NoNetwork;
 class _Provider extends NoNetwork {
   Object? failure;
   int resolves = 0;
+  int fallbacks = 0;
+  int expiresAt = 0;
   Completer<void>? gate;
   int? gatedResolve;
 
@@ -26,6 +30,7 @@ class _Provider extends NoNetwork {
     String method, [
     Map<String, dynamic> arguments = const {},
   ]) async {
+    if (method == 'fallback') fallbacks++;
     if (method != 'resolve') return {};
     resolves++;
     if (gatedResolve == null || resolves == gatedResolve) await gate?.future;
@@ -33,6 +38,9 @@ class _Provider extends NoNetwork {
     return {
       'url': 'https://fixture.test/video.mp4',
       'remoteUrl': 'https://fixture.test/video.mp4',
+      'expiresAt': expiresAt,
+      'session': expiresAt == 0 ? '' : 'fixture-$resolves',
+      'routeCount': expiresAt == 0 ? 1 : 2,
     };
   }
 }
@@ -43,12 +51,16 @@ void main() {
     _Provider provider, {
     bool offline = false,
     bool settle = true,
+    bool autoAdvance = true,
+    DateTime Function()? clock,
+    DramaSource source = DramaSource.hongguo,
   }) async {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     final native = NativeCastPlayer()..install();
     final store = AppStore(storage: MemoryStorage(), provider: provider)
       ..offline = offline
-      ..preferences.prefetch = false;
+      ..preferences.prefetch = false
+      ..preferences.autoAdvance = autoAdvance;
     final downloads = LocalDownloads(store)..available = false;
     addTearDown(() {
       native.uninstall();
@@ -60,21 +72,176 @@ void main() {
         home: PlayerPage(
           store: store,
           downloads: downloads,
-          drama: const Drama(
-            id: 'fixture',
-            source: DramaSource.hongguo,
-            title: '失败恢复',
-          ),
+          drama: Drama(id: 'fixture', source: source, title: '失败恢复'),
           episodes: [
             Episode.fromJson({'id': 'one'}, 0),
             Episode.fromJson({'id': 'two'}, 1),
           ],
           initialIndex: 0,
+          playbackClock: clock,
         ),
       ),
     );
     if (settle) await tester.pumpAndSettle();
     return (native, downloads, store);
+  }
+
+  Future<void> togglePlayback(WidgetTester tester) async {
+    tester.widget<PlayerTransport>(find.byType(PlayerTransport)).onPlay();
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+    'resume refreshes an expired link and seeks in the same episode',
+    (tester) async {
+      var now = DateTime(2026, 11, 19);
+      final provider = _Provider()
+        ..expiresAt = now
+            .add(const Duration(minutes: 1))
+            .millisecondsSinceEpoch;
+      final (native, _, _) = await mount(
+        tester,
+        provider,
+        clock: () => now,
+        source: DramaSource.huangguo,
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      await togglePlayback(tester);
+      await togglePlayback(tester);
+      expect(provider.resolves, 1);
+      expect(native.plays, 2);
+      await togglePlayback(tester);
+
+      now = now.add(const Duration(minutes: 2));
+      provider.expiresAt = now
+          .add(const Duration(minutes: 1))
+          .millisecondsSinceEpoch;
+      await togglePlayback(tester);
+      expect(provider.resolves, 2);
+      expect(provider.fallbacks, 0);
+      expect(native.sources.map((source) => source['author']), [
+        '果果 · 第 1 集',
+        '果果 · 第 1 集',
+      ]);
+      expect(native.seeks, [10000]);
+      expect(native.plays, 3);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets('replay refreshes an expired link before seeking to zero', (
+    tester,
+  ) async {
+    var now = DateTime(2026, 11, 19);
+    final provider = _Provider()
+      ..expiresAt = now.add(const Duration(minutes: 1)).millisecondsSinceEpoch;
+    final (native, _, _) = await mount(
+      tester,
+      provider,
+      autoAdvance: false,
+      clock: () => now,
+      source: DramaSource.huangguo,
+    );
+    native.emit('completed');
+    await tester.pumpAndSettle();
+    now = now.add(const Duration(minutes: 2));
+    provider.expiresAt = now
+        .add(const Duration(minutes: 1))
+        .millisecondsSinceEpoch;
+    final sourceCountsAtSeek = <int>[];
+    native.beforeSeek = (_) => sourceCountsAtSeek.add(native.sources.length);
+
+    await togglePlayback(tester);
+
+    expect(
+      provider.resolves,
+      2,
+      reason: 'seeks on sources $sourceCountsAtSeek',
+    );
+    expect(sourceCountsAtSeek, [2]);
+    expect(native.seeks, [0]);
+    expect(native.plays, 2);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('failed resume seek retains the target for manual retry', (
+    tester,
+  ) async {
+    final provider = _Provider();
+    final (native, _, _) = await mount(tester, provider);
+    await tester.pump(const Duration(milliseconds: 400));
+    await togglePlayback(tester);
+    native.beforeSeek = (_) {
+      native.beforeSeek = null;
+      throw PlatformException(code: 'seek_failed');
+    };
+    native.emitFailure();
+    await tester.pumpAndSettle();
+    expect(provider.resolves, 2);
+    expect(native.seeks, [10000]);
+
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+
+    expect(provider.resolves, 3);
+    expect(native.seeks, [10000, 10000]);
+    expect(native.plays, 2);
+    expect(find.byType(PlayerNotice), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('failed resume reloads even when the old player cannot pause', (
+    tester,
+  ) async {
+    final provider = _Provider();
+    final (native, _, _) = await mount(tester, provider);
+    await tester.pump(const Duration(milliseconds: 400));
+    await togglePlayback(tester);
+    native.beforePlay = () {
+      native.beforePlay = null;
+      native.beforePause = () => throw PlatformException(code: 'pause_failed');
+      throw PlatformException(code: 'play_failed');
+    };
+    native.beforeSource = (_) => native.beforePause = null;
+    await togglePlayback(tester);
+
+    expect(provider.resolves, 2);
+    expect(native.seeks, [10000]);
+    expect(native.plays, 2);
+    expect(find.byType(PlayerNotice), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  for (final paused in [false, true]) {
+    testWidgets('foreground handles a background error with paused=$paused', (
+      tester,
+    ) async {
+      final provider = _Provider();
+      final (native, _, _) = await mount(tester, provider);
+      await tester.pump(const Duration(milliseconds: 400));
+      if (paused) await togglePlayback(tester);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      native.emit('pause');
+      native.emitFailure();
+      await tester.pump();
+      expect(provider.resolves, 1);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      if (paused) {
+        expect(provider.resolves, 1);
+        expect(native.plays, 1);
+        await tester.tap(find.text('重试'));
+        await tester.pumpAndSettle();
+      }
+      expect(provider.resolves, 2);
+      expect(native.seeks, [10000]);
+      expect(native.plays, 2);
+      expect(find.byType(PlayerNotice), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
   }
 
   testWidgets(
