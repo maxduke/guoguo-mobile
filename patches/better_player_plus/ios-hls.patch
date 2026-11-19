@@ -407,7 +407,8 @@
 -        commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
 +        addRemoteTarget(commandCenter.togglePlayPauseCommand) { [weak self] _ in
              guard let self = self, let player = self.notificationPlayer else { return .commandFailed }
-             if player.isPlaying { player.eventSink?(["event": "play"]) } else { player.eventSink?(["event": "pause"]) }
+-            if player.isPlaying { player.eventSink?(["event": "play"]) } else { player.eventSink?(["event": "pause"]) }
++            if player.isPlaying { player.eventSink?(["event": "pause"]) } else { player.eventSink?(["event": "play"]) }
              return .success
          }
  
