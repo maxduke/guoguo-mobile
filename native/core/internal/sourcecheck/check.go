@@ -161,18 +161,14 @@ func Check(ctx context.Context, client Client, capability Capability, query stri
 	step, value := call(ctx, client, source, "catalog_cold", "catalog", map[string]any{"page": 1})
 	items := checkRows(&step, value, source, false, false)
 	result.Steps = append(result.Steps, step)
-	boardStep := Step{Operation: "boards", Status: "skipped", Reason: "no_rankings"}
+	boardStep, boardValue := call(ctx, client, source, "boards", "boards", map[string]any{})
 	var boards []struct{ ID, Source string }
-	if !capability.Plugin {
-		var boardValue response
-		boardStep, boardValue = call(ctx, client, source, "boards", "boards", map[string]any{})
-		if boardStep.Status == "passed" && (json.Unmarshal(boardValue.Items, &boards) != nil || len(boards) == 0) {
+	if boardStep.Status == "passed" && (json.Unmarshal(boardValue.Items, &boards) != nil || len(boards) == 0) {
+		boardStep.Status, boardStep.Reason = "failed", "invalid_boards"
+	}
+	for _, board := range boards {
+		if board.ID == "" || board.Source != source {
 			boardStep.Status, boardStep.Reason = "failed", "invalid_boards"
-		}
-		for _, board := range boards {
-			if board.ID == "" || board.Source != source {
-				boardStep.Status, boardStep.Reason = "failed", "invalid_boards"
-			}
 		}
 	}
 	boardStep.Items = len(boards)

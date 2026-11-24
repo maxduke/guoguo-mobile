@@ -243,8 +243,8 @@ func (d *Downloader) hppResolve(ctx context.Context, source string, spec hppSour
 	if err != nil || episodeErr != nil {
 		return providerMedia{}, errors.New("插件分集标识无效")
 	}
-	if source == "bfzy" {
-		// This plugin may fall back to the first episode when a saved ID is stale.
+	if source == "bfzy" || source == "hl365" {
+		// These plugins may fall back to the first episode when a saved ID is stale.
 		_, current, err := d.hppDetail(ctx, source, spec, key)
 		if err != nil {
 			return providerMedia{}, err

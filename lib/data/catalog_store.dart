@@ -185,7 +185,10 @@ class CatalogStore extends ChangeNotifier {
   final searchCache = SearchCache();
   late final discoveryCache = DiscoveryCache(
     now: now,
-    onRead: (source, method) => diagnostics?.cached(source, method),
+    onRead: (source, method) {
+      // Source switches can restore cached columns during a widget build.
+      scheduleMicrotask(() => diagnostics?.cached(source, method));
+    },
   );
 
   final Map<String, Future<CatalogSearchResult>> _searchRequests = {};

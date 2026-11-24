@@ -95,7 +95,7 @@ func TestCheckInvalidContentAndUnobservedRefresh(t *testing.T) {
 					test.patch(value)
 				}
 			}}
-			result := Check(context.Background(), f, Capability{Source: "huangju", Search: true}, "query", false)
+			result := Check(context.Background(), f, Capability{Source: "yingxi", Plugin: true, Search: true}, "query", false)
 			found := false
 			for _, step := range result.Steps {
 				if step.Reason == test.want && step.Status == "failed" {

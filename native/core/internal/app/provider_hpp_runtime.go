@@ -136,12 +136,20 @@ func cacheHPPProgram(path string, raw []byte) {
 func compileHPP(name, script string) (*goja.Program, error) {
 	const manifest = "export const meta"
 	const factory = "export default "
+	// The pinned index loader yields between chunks using a zero-delay callback.
+	// Promise jobs stay on this request's VM and require no background timer.
+	const yield = `
+function setTimeout(callback, delay) {
+  if (delay !== 0 || typeof callback !== 'function') throw new TypeError('插件仅支持零延时回调');
+  Promise.resolve().then(callback);
+}
+`
 	if strings.Count(script, manifest) != 1 || strings.Count(script, factory) != 1 {
 		return nil, errors.New("插件声明不完整")
 	}
 	script = strings.Replace(script, manifest, "const meta", 1)
 	script = strings.Replace(script, factory, "const factory = ", 1)
-	return goja.Compile(name, "'use strict';\n"+script+"\n;({ meta, factory })", true)
+	return goja.Compile(name, "'use strict';\n"+yield+script+"\n;({ meta, factory })", true)
 }
 
 type hppInvocation struct {

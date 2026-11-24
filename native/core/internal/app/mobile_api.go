@@ -351,6 +351,10 @@ func (c *MobileClient) Call(raw string) (result string, callErr error) {
 		}
 		value = map[string]any{"title": title, "chapters": chapters}
 	case "boards":
+		if board, ok := pluginCatalogBoard(request.Source); ok {
+			value = map[string]any{"items": []rankingBoard{board}}
+			break
+		}
 		boards := make([]rankingBoard, 0)
 		for _, board := range rankingBoards {
 			if board.Source == request.Source {

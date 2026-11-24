@@ -67,6 +67,7 @@ void main() {
     DramaSource.miguo,
     DramaSource.wuguo,
     DramaSource.huaguo,
+    DramaSource.yingxi,
   ]) {
     for (final manuallyEnabled in [false, true]) {
       test(

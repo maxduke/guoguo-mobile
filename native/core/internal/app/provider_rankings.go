@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -126,11 +127,24 @@ type rankingCache struct {
 	pending map[string]*rankingCall
 }
 
+func pluginCatalogBoard(source string) (rankingBoard, bool) {
+	if _, ok := hppSources[source]; !ok {
+		return rankingBoard{}, false
+	}
+	return rankingBoard{
+		ID: source + "-catalog", Source: source, Name: "剧库目录", Kind: rankingKindCatalog,
+		Description: "按站源默认分类的目录顺序展示。",
+	}, true
+}
+
 func findRankingBoard(id string) (rankingBoard, bool) {
 	for _, board := range rankingBoards {
 		if board.ID == id {
 			return board, true
 		}
+	}
+	if source, ok := strings.CutSuffix(id, "-catalog"); ok {
+		return pluginCatalogBoard(source)
 	}
 	return rankingBoard{}, false
 }
@@ -233,7 +247,7 @@ func (d *Downloader) fetchRankingPage(ctx context.Context, board rankingBoard, p
 	case sourceHuangju, sourceYeguo, sourceDSD:
 		return d.fetchCatalogRankingPage(ctx, board, page)
 	default:
-		if isDuanjuProviderSource(board.Source) {
+		if board.Kind == rankingKindCatalog || isDuanjuProviderSource(board.Source) {
 			return d.fetchCatalogRankingPage(ctx, board, page)
 		}
 		return rankingPage{}, fmt.Errorf("不支持的榜单站源 %s", board.Source)
@@ -244,22 +258,11 @@ func (d *Downloader) fetchCatalogRankingPage(ctx context.Context, board rankingB
 	if page < 1 || page > 100 {
 		return rankingPage{}, errors.New("榜单页码超出范围")
 	}
-	var items []Drama
-	var more bool
-	var err error
-	switch board.Source {
-	case sourceHuangju:
-		items, more, err = d.fetchHuangjuCatalogPage(ctx, page, board.path, "")
-	case sourceYeguo:
-		items, more, err = d.fetchYeguoCatalogPage(ctx, page, board.path, "")
-	case sourceDSD:
-		items, more, err = d.fetchDSDCatalogPage(ctx, page, board.path, "")
-	default:
-		if !isDuanjuProviderSource(board.Source) {
-			return rankingPage{}, fmt.Errorf("不支持的目录站源 %s", board.Source)
-		}
-		items, more, err = d.fetchDuanjuCatalogPage(ctx, board.Source, page, board.path)
+	adapter, ok := d.mobileSource(board.Source)
+	if !ok {
+		return rankingPage{}, fmt.Errorf("不支持的目录站源 %s", board.Source)
 	}
+	items, more, err := adapter.catalog(ctx, page, board.path, "")
 	if err != nil {
 		return rankingPage{}, err
 	}
