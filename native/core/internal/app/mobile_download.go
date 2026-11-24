@@ -30,6 +30,9 @@ type mobileDownloadPlan struct {
 // Build a durable offline resource graph. URLs point at upstream resources, not
 // an ephemeral loopback server, so native background transfers can outlive Dart.
 func (c *MobileClient) downloadPlan(ctx context.Context, request mobileRequest) (mobileDownloadPlan, error) {
+	if _, plugin := hppSources[sourceFromDramaID(request.ID)]; plugin {
+		return mobileDownloadPlan{}, errors.New("该站源提供在线播放")
+	}
 	media, key, err := c.downloader.resolvePlaybackMedia(ctx, Task{DramaID: request.ID, Chapter: request.Chapter})
 	if err != nil {
 		return mobileDownloadPlan{}, publicError(err)

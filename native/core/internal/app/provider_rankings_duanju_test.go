@@ -23,8 +23,8 @@ func TestDuanjuRankingDefinitionsAndKinds(t *testing.T) {
 			t.Fatalf("directory disguised as official ranks: %+v", board)
 		}
 	}
-	if count != 47 || len(sources) != 13 {
-		t.Fatalf("want 47 boards across 13 sources: %d %d", count, len(sources))
+	if count != 48 || len(sources) != 14 {
+		t.Fatalf("want 48 boards across 14 sources: %d %d", count, len(sources))
 	}
 	for _, id := range []string{"huangju-hot", "huangju-new", "yeguo-recommend", "dsd-catalog"} {
 		board, ok := findRankingBoard(id)
@@ -92,7 +92,7 @@ func TestDuanjuRankingDispatchPreservesProviderAndOrder(t *testing.T) {
 					} else {
 						body = `<a class="card" href="/drama/000088" title="乙"></a><a class="card" href="/drama/000077" title="甲"></a>`
 					}
-				case sourceHuaguo, sourcePiguo, sourceWuguo, sourceMiguo, sourceShuangguo:
+				case sourceHuaguo, sourcePiguo, sourceWuguo, sourceMiguo, sourceShuangguo, sourceDbku:
 					switch board.Source {
 					case sourceHuaguo:
 						if r.URL.Query().Get("tid") != board.path {
@@ -105,6 +105,10 @@ func TestDuanjuRankingDispatchPreservesProviderAndOrder(t *testing.T) {
 					case sourceWuguo:
 						if r.URL.Path != "/index.php/vod/search/class/"+board.path+"/page/1.html" {
 							t.Errorf("wrong wuguo category: %s", r.URL)
+						}
+					case sourceDbku:
+						if r.URL.Path != "/vodshow/21-----------.html" {
+							t.Errorf("wrong dbku category: %s", r.URL)
 						}
 					}
 					body = `<div class="BrowseList_listItem"><a href="/detail/88.html" title="乙"></a></div><div class="BrowseList_listItem"><a href="/detail/77.html" title="甲"></a></div>`

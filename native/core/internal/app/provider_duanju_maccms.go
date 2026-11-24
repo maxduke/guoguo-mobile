@@ -319,6 +319,16 @@ func (d *Downloader) fetchMaccmsCatalogPage(ctx context.Context, source string, 
 			path = fmt.Sprintf("%s%d---.html", strings.TrimSuffix(path, "---.html"), page)
 		}
 		address = base + path
+	case sourceDbku:
+		class := firstNonEmpty(category, duanjuFirstCategory(sourceDbku))
+		if !validDuanjuCategory(sourceDbku, class) {
+			return nil, false, errors.New("独播库分类无效")
+		}
+		pageSlot := ""
+		if page > 1 {
+			pageSlot = strconv.Itoa(page)
+		}
+		address = fmt.Sprintf("%s/vodshow/%s--------%s---.html", base, class, pageSlot)
 	default:
 		return nil, false, errors.New("该站源没有网页目录")
 	}
@@ -344,7 +354,12 @@ func (d *Downloader) fetchMaccmsDetail(ctx context.Context, source, sourceID str
 			lastErr = errors.New("站源返回了其他剧集的详情页")
 			continue
 		}
-		episodes := maccmsEpisodesFromDocument(document)
+		var episodes []providerEpisode
+		if source == sourceDbku {
+			episodes = dbkuEpisodes(document, base, sourceID)
+		} else {
+			episodes = maccmsEpisodesFromDocument(document)
+		}
 		if len(episodes) == 0 {
 			contentErr = errors.New("当前详情未提供可播放分集，请稍后刷新")
 			continue
@@ -369,6 +384,9 @@ func (d *Downloader) fetchMaccmsDetail(ctx context.Context, source, sourceID str
 				continue
 			}
 			number := duanjuEpisodeNumber(firstNonEmpty(episode.Title, episode.Key), index+1)
+			if source == sourceDbku {
+				number = episode.Index
+			}
 			if seen[number] {
 				continue
 			}
@@ -419,6 +437,11 @@ func maccmsDetailCandidates(source, base, sourceID string) []string {
 		return []string{fmt.Sprintf("%s/voddetail/%s.html", base, sourceID), fmt.Sprintf("%s/detail/%s.html", base, sourceID)}
 	case sourceShuangguo:
 		return []string{fmt.Sprintf("%s/vod/%s.html", base, sourceID), fmt.Sprintf("%s/detail/%s.html", base, sourceID)}
+	case sourceDbku:
+		if webProviderNumericID.MatchString(sourceID) {
+			return []string{fmt.Sprintf("%s/voddetail/%s.html", base, sourceID)}
+		}
+		return nil
 	default:
 		return nil
 	}
@@ -669,6 +692,11 @@ func (d *Downloader) searchMaccmsPage(ctx context.Context, source, query string,
 		address = fmt.Sprintf("%s/vodsearch/%s----------%d---.html", base, url.PathEscape(query), page)
 	case sourceShuangguo:
 		address = fmt.Sprintf("%s/search/%s----------%d---.html", base, url.PathEscape(query), page)
+	case sourceDbku:
+		if page > 1 {
+			return []Drama{}, false, nil
+		}
+		address = base + "/vodsearch/-------------.html?" + url.Values{"wd": {query}}.Encode()
 	default:
 		return nil, false, errors.New("该站源不支持在线搜索")
 	}
@@ -677,7 +705,7 @@ func (d *Downloader) searchMaccmsPage(ctx context.Context, source, query string,
 		return nil, false, err
 	}
 	items := maccmsCards(document, source, finalURL)
-	return items, maccmsHasMore(document, page, len(items)), nil
+	return items, source != sourceDbku && maccmsHasMore(document, page, len(items)), nil
 }
 
 func maccmsPlayerURL(body string) string {

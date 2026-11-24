@@ -19,11 +19,52 @@ enum DramaSource {
   wuguo('伍果', '精彩故事继续看'),
   chaoguo('超果', '短剧随心搜'),
   miguo('米果', '短剧 · 电影 · 电视剧'),
-  shuangguo('爽果', '更多短剧随心看');
+  shuangguo('爽果', '更多短剧随心看'),
+  dbku('独播库', '短剧 · 电影 · 电视剧 · 动漫 · 综艺'),
+  bfzy('暴风资源', '综合影视', plugin: true),
+  tangxin('糖心Vlog', '成人内容', plugin: true, adult: true),
+  av321('321AV', '成人内容', plugin: true, adult: true),
+  hanime16('H動漫', '成人内容', plugin: true, adult: true),
+  juzong('剧踪影院', '综合影视', plugin: true, browserUrl: 'https://www.juzong01.me/'),
+  hlws('51黑料', '成人内容', plugin: true, adult: true),
+  chengguo(
+    '橙果短剧',
+    '成人内容',
+    plugin: true,
+    adult: true,
+    browserUrl: 'https://chengguodj.com/',
+  ),
+  jisu('极速追剧', '综合影视', plugin: true),
+  kxyy('开心影院', '综合影视', plugin: true),
+  dhvideo('豆花电影网', '综合影视', plugin: true, browserUrl: 'https://dhvideo.cc/'),
+  auete('Auete影视', '综合影视', plugin: true, search: false),
+  netflixgc('奈飞工厂', '综合影视', plugin: true),
+  cg91('91吃瓜', '成人内容', plugin: true, adult: true),
+  av591('591AV', '成人内容', plugin: true, adult: true),
+  yingxi('影夕视频', '综合影视', plugin: true),
+  hhkan('好好看', '综合影视', plugin: true, browserUrl: 'https://www.hhkan1.com/'),
+  heiliao('黑料网', '成人内容', plugin: true, adult: true),
+  hl365('黑料不打烊', '成人内容', plugin: true, adult: true),
+  pianku('片库', '综合影视', plugin: true),
+  dpw('66大片网', '综合影视', plugin: true, search: false),
+  lovebox('18PORNY', '成人内容', plugin: true, adult: true);
 
-  const DramaSource(this.label, this.subtitle);
+  const DramaSource(
+    this.label,
+    this.subtitle, {
+    this.plugin = false,
+    this.adult = false,
+    this.browserUrl,
+    bool search = true,
+  }) : _search = search;
   final String label;
   final String subtitle;
+  final String? browserUrl;
+  final bool plugin, adult, _search;
+  bool get browserOnly => browserUrl != null;
+  bool get inPluginLibrary => plugin || this == huangguo || this == dbku;
+  bool get offersLongFormVideo =>
+      this == miguo || this == niuguo || this == dbku || plugin && !adult;
   String? get defaultDisabledReason => switch (this) {
     niuguo => '播放解析服务暂不可用',
     piguo => '当前站点需要浏览器验证',
@@ -31,19 +72,23 @@ enum DramaSource {
     shuangguo => '部分网络无法加载目录，播放兼容性待验证',
     miguo || wuguo => '部分设备无法加载目录，待复测',
     huaguo => '部分设备无法播放，待复测',
+    _ when browserOnly => '站点要求验证，请在浏览器访问',
+    _ when adult => '成人内容，按需启用',
+    _ when plugin => '插件库站源，按需启用',
     _ => null,
   };
   bool get enabledByDefault => defaultDisabledReason == null;
   bool get remoteCategories => switch (this) {
     hongguo || huangguo || huangdou => false,
-    _ => true,
+    _ => !browserOnly,
   };
   // Huangguo keeps its aggregate library while exposing real AI topic channels.
   bool get topicCategories => this == huangguo || remoteCategories;
   bool get onlineSearch =>
+      _search &&
       this != shuangguo &&
       (this == hongguo || this == huangguo || remoteCategories);
-  bool get rankings => true;
+  bool get rankings => !plugin;
   static DramaSource parse(Object? value) => values.firstWhere(
     (source) => source.name == value,
     orElse: () => throw const FormatException('未知站源'),

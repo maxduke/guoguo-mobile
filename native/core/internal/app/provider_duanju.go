@@ -20,6 +20,7 @@ const (
 	sourceChaoguo   = "chaoguo"
 	sourceMiguo     = "miguo"
 	sourceShuangguo = "shuangguo"
+	sourceDbku      = "dbku"
 
 	duanjuMaxBodyBytes = 8 * 1024 * 1024
 	duanjuUserAgent    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -43,6 +44,7 @@ var (
 	chaoguoBaseURL   = "https://www.shanekids.com"
 	miguoBaseURL     = "https://dmxq40.com"
 	shuangguoBaseURL = "https://www.duanju2.com"
+	dbkuBaseURL      = "https://www.dbku.tv"
 )
 
 type duanjuSourceSpec struct {
@@ -71,6 +73,7 @@ var duanjuProviderCatalog = []duanjuSourceSpec{
 	{ID: sourceChaoguo, Name: "超果", Base: chaoguoBaseURL, Kind: "web", Searcher: true, Paged: true},
 	{ID: sourceMiguo, Name: "米果", Base: miguoBaseURL, Kind: "maccms", Searcher: true},
 	{ID: sourceShuangguo, Name: "爽果", Base: shuangguoBaseURL, Kind: "maccms", Paged: true, Browser: true},
+	{ID: sourceDbku, Name: "独播库", Base: dbkuBaseURL, Kind: "maccms", Searcher: true, Paged: true},
 }
 
 var duanjuMarkupPattern = regexp.MustCompile(`<[^>]{1,80}>`)
@@ -105,6 +108,7 @@ var duanjuSourceAliases = map[string]string{
 	"chaoguo": sourceChaoguo, "chaoduanju": sourceChaoguo, "超果": sourceChaoguo, "shanekids.com": sourceChaoguo, "www.shanekids.com": sourceChaoguo,
 	"miguo": sourceMiguo, "大米星球": sourceMiguo, "米果": sourceMiguo, "dmxq40.com": sourceMiguo, "www.dmxq40.com": sourceMiguo,
 	"shuangguo": sourceShuangguo, "爽果": sourceShuangguo, "duanju2.com": sourceShuangguo, "www.duanju2.com": sourceShuangguo,
+	"dbku": sourceDbku, "独播库": sourceDbku, "dbku.tv": sourceDbku, "www.dbku.tv": sourceDbku,
 }
 
 var duanjuSourcesByName = func() map[string]duanjuSourceSpec {
@@ -175,6 +179,8 @@ func duanjuSourceForHost(host string) string {
 		return sourceMiguo
 	case host == "www.duanju2.com" || host == "duanju2.com":
 		return sourceShuangguo
+	case host == "www.dbku.tv" || host == "dbku.tv":
+		return sourceDbku
 	default:
 		return ""
 	}
@@ -192,6 +198,13 @@ func validDuanjuCategory(source, category string) bool {
 		return validChaoguoCategory(category)
 	case sourceMaoguo:
 		return validMaoguoCategory(category)
+	case sourceDbku:
+		for _, item := range duanjuStaticCategories[sourceDbku] {
+			if item.ID == category {
+				return true
+			}
+		}
+		return false
 	case sourceHeguo, sourceXingguo, sourceYaguo, sourceNiuguo:
 		return webProviderNumericID.MatchString(strings.SplitN(category, "-", 2)[0])
 	case sourceFanguo, sourceGuanguo:
@@ -220,6 +233,13 @@ type duanjuCategory struct {
 }
 
 var duanjuStaticCategories = map[string][]duanjuCategory{
+	sourceDbku: {
+		{ID: "21", Name: "短剧"},
+		{ID: "2", Name: "电视剧"},
+		{ID: "1", Name: "电影"},
+		{ID: "4", Name: "动漫"},
+		{ID: "3", Name: "综艺"},
+	},
 	sourceShuangguo: {
 		{ID: "all", Name: "全部"},
 		{ID: "反转爽文", Name: "反转爽文"},

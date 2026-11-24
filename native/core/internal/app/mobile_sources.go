@@ -15,6 +15,9 @@ type mobileSourceAdapter struct {
 
 func (d *Downloader) mobileSource(source string) (mobileSourceAdapter, bool) {
 	source = canonicalProviderSource(source)
+	if spec, ok := hppSources[source]; ok {
+		return d.hppAdapter(source, spec), true
+	}
 	if isDuanjuProviderSource(source) {
 		return mobileSourceAdapter{
 			categories: func(ctx context.Context) ([]nativeCategory, error) { return d.fetchDuanjuCategories(ctx, source) },

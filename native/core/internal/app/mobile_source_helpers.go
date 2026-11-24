@@ -19,6 +19,10 @@ func validNativeCategory(source, category string) bool {
 	if len(category) > 128 || strings.ContainsAny(category, "|/\\\x00\r\n") {
 		return false
 	}
+	if _, exists := hppSources[source]; exists {
+		_, err := hppUnkey(category, 92)
+		return err == nil
+	}
 	switch source {
 	case sourceHuangju:
 		return category == huangjuNewestCategory || validHuangjuID(category) && !strings.HasPrefix(category, "@")

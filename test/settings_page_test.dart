@@ -159,6 +159,22 @@ void main() {
     });
   }
 
+  testWidgets('settings opens source management and restores a hidden source', (
+    tester,
+  ) async {
+    final store = await mountSettings(tester);
+    await tester.ensureVisible(tile('站源管理'));
+    await tester.tap(tile('站源管理'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('关闭站源管理'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '米果');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('恢复站源米果'));
+    await tester.pumpAndSettle();
+    expect(store.preferences.hiddenSources, isNot(contains(DramaSource.miguo)));
+    expect(store.catalog.source, DramaSource.hongguo);
+  });
+
   testWidgets(
     'small large-text settings keep theme and advanced actions reachable',
     (tester) async {

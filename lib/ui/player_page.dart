@@ -1778,6 +1778,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               menu.index == _index;
           return PlayerMoreSheet(
             autoAdvance: widget.store.preferences.autoAdvance,
+            downloadEnabled: !widget.drama.source.plugin,
             fill: _fill,
             pipEnabled: menu.pipEnabled,
             qualities: menu.media?.qualities ?? const [],

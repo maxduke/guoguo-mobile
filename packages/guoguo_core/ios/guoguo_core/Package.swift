@@ -7,6 +7,10 @@ let package = Package(
     dependencies: [.package(name: "FlutterFramework", path: "../FlutterFramework")],
     targets: [
         .binaryTarget(name: "GuoguoMobile", path: "../Frameworks/GuoguoMobile.xcframework"),
-        .target(name: "guoguo_core", dependencies: ["GuoguoMobile", .product(name: "FlutterFramework", package: "FlutterFramework")])
+        .target(
+            name: "guoguo_core",
+            dependencies: ["GuoguoMobile", .product(name: "FlutterFramework", package: "FlutterFramework")],
+            linkerSettings: [.linkedLibrary("resolv", .when(platforms: [.iOS]))]
+        )
     ]
 )

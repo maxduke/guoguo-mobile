@@ -90,6 +90,7 @@ var rankingBoards = []rankingBoard{
 	{ID: "shuangguo-romance", Source: sourceShuangguo, Kind: rankingKindCatalog, Name: "现代言情目录", Description: "爽果现代言情题材顺序，按源站返回顺序展示，不代表官方排名。", path: "现代言情"},
 	{ID: "shuangguo-urban", Source: sourceShuangguo, Kind: rankingKindCatalog, Name: "现代都市目录", Description: "爽果现代都市题材顺序，按源站返回顺序展示，不代表官方排名。", path: "现代都市"},
 	{ID: "shuangguo-short", Source: sourceShuangguo, Kind: rankingKindCatalog, Name: "短剧目录", Description: "爽果短剧题材顺序，按源站返回顺序展示，不代表官方排名。", path: "短剧"},
+	{ID: "dbku-short", Source: sourceDbku, Kind: rankingKindCatalog, Name: "短剧目录", Description: "独播库短剧分类顺序，按源站返回顺序展示，不代表官方排名。", path: "21"},
 }
 
 type rankingItem struct {

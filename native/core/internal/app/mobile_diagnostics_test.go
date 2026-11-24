@@ -128,7 +128,7 @@ func TestMobileCatalogCancellationOwnershipAndCapabilities(t *testing.T) {
 			background++
 		}
 	}
-	if len(capabilities) != 19 || background != 16 {
+	if len(capabilities) != 20+len(hppSources) || background != 17 {
 		t.Fatalf("capabilities: %+v", capabilities)
 	}
 	for _, source := range []string{sourceHongguo, "huangguo", sourceHuangdou} {

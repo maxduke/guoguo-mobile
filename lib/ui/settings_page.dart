@@ -16,6 +16,7 @@ import 'components.dart';
 import 'huangguo_lines_page.dart';
 import 'playback_diagnostics_page.dart';
 import 'source_diagnostics_page.dart';
+import 'source_selector.dart';
 import 'storage_page.dart';
 import 'record_backup_picker.dart';
 
@@ -299,6 +300,25 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                     ),
                   ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              _heading(context, '站源'),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.tune),
+                  title: const Text('站源管理'),
+                  subtitle: const Text('收藏、隐藏或恢复站源'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    final owner = store;
+                    showSourceManagement(
+                      context,
+                      preferences: owner.preferences,
+                      catalog: owner.catalog,
+                      isCurrent: () => mounted && identical(store, owner),
+                    );
+                  },
                 ),
               ),
               const SizedBox(height: 24),

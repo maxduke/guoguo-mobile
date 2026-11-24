@@ -95,13 +95,14 @@ class PlayerMoreSheet extends StatelessWidget {
     required this.autoAdvance,
     required this.fill,
     required this.pipEnabled,
+    this.downloadEnabled = true,
     required this.qualities,
     required this.quality,
     required this.onAutoAdvance,
     required this.onAction,
     required this.onQuality,
   });
-  final bool autoAdvance, fill, pipEnabled;
+  final bool autoAdvance, fill, pipEnabled, downloadEnabled;
   final List<int> qualities;
   final int? quality;
   final ValueChanged<bool> onAutoAdvance;
@@ -170,11 +171,12 @@ class PlayerMoreSheet extends StatelessWidget {
           enabled: pipEnabled,
           onTap: () => onAction(PlayerMenuAction.pip),
         ),
-        ListTile(
-          leading: const Icon(Icons.download_outlined),
-          title: const Text('下载当前集'),
-          onTap: () => onAction(PlayerMenuAction.download),
-        ),
+        if (downloadEnabled)
+          ListTile(
+            leading: const Icon(Icons.download_outlined),
+            title: const Text('下载当前集'),
+            onTap: () => onAction(PlayerMenuAction.download),
+          ),
         if (!TelevisionScope.of(context))
           ListTile(
             leading: const Icon(Icons.lock_outline),

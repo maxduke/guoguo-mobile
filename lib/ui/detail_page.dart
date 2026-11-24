@@ -334,23 +334,25 @@ class _DetailPageState extends State<DetailPage> {
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
               child: Row(
                 children: [
-                  IconButton.filledTonal(
-                    tooltip: '选择下载分集',
-                    onPressed: rows.isEmpty || _downloadBusy || _loading
-                        ? null
-                        : () => _downloadRange(rows, resume.index),
-                    style: IconButton.styleFrom(
-                      minimumSize: const Size(52, 52),
+                  if (!drama.source.plugin) ...[
+                    IconButton.filledTonal(
+                      tooltip: '选择下载分集',
+                      onPressed: rows.isEmpty || _downloadBusy || _loading
+                          ? null
+                          : () => _downloadRange(rows, resume.index),
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size(52, 52),
+                      ),
+                      icon: _enqueueing
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.download_rounded),
                     ),
-                    icon: _enqueueing
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.download_rounded),
-                  ),
-                  const SizedBox(width: 12),
+                    const SizedBox(width: 12),
+                  ],
                   Expanded(
                     child: FilledButton.icon(
                       key: const ValueKey('detail-primary-play'),
@@ -690,10 +692,12 @@ class _DetailPageState extends State<DetailPage> {
     onJump: (index) => _play(rows, index),
     builder: (context, index) => OutlinedButton(
       onPressed: () => _play(rows, index),
-      onLongPress: () => perform(
-        context,
-        () => widget.downloads.enqueue(drama, rows[index], index),
-      ),
+      onLongPress: drama.source.plugin
+          ? null
+          : () => perform(
+              context,
+              () => widget.downloads.enqueue(drama, rows[index], index),
+            ),
       style: OutlinedButton.styleFrom(
         backgroundColor: record?.episodeId == rows[index].id
             ? Theme.of(context).colorScheme.primaryContainer

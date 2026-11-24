@@ -50,7 +50,7 @@ Map<String, dynamic> page(
 };
 
 void main() {
-  for (final source in DramaSource.values.skip(6)) {
+  for (final source in DramaSource.values.skip(6).where((s) => !s.plugin)) {
     test(
       '${source.name} routes catalog and search and restores offline',
       () async {
@@ -121,7 +121,7 @@ void main() {
         expect(find.widgetWithText(ChoiceChip, source.label), findsNothing);
       }
       await tester.ensureVisible(find.byType(TextField));
-      for (final source in DramaSource.values) {
+      for (final source in DramaSource.values.where((s) => !s.plugin)) {
         await tester.enterText(find.byType(TextField), source.label);
         await tester.pumpAndSettle();
         final choice = find.widgetWithText(ChoiceChip, source.label);

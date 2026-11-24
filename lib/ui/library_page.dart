@@ -80,6 +80,7 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
       !widget.store.offline &&
       widget.store.preferences.catalogPrefetch &&
       widget.store.catalog.source.remoteCategories &&
+      !widget.store.catalog.source.plugin &&
       _sort == CatalogSort.recommended;
 
   void _cancelPrefetch() {

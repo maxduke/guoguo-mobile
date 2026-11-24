@@ -9,6 +9,7 @@ Pod::Spec.new do |s|
   s.source = { :path => '.' }
   s.source_files = 'guoguo_core/Sources/guoguo_core/**/*.swift'
   s.vendored_frameworks = 'Frameworks/GuoguoMobile.xcframework'
+  s.libraries = 'resolv'
   s.dependency 'Flutter'
   s.platform = :ios, '15.0'
   s.swift_version = '5.0'

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guoguo_mobile/domain/models.dart';
 import 'package:guoguo_mobile/ui/source_selector.dart';
+import 'package:guoguo_mobile/ui/television_scope.dart';
 
 Future<void> _mount(
   WidgetTester tester, {
@@ -9,6 +11,7 @@ Future<void> _mount(
   double scale = 1,
   double keyboard = 0,
   bool includeAll = false,
+  bool television = false,
   required List<DramaSource?> changes,
 }) async {
   tester.view.physicalSize = size;
@@ -18,12 +21,15 @@ Future<void> _mount(
   DramaSource? selected = DramaSource.hongguo;
   await tester.pumpWidget(
     MaterialApp(
-      builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(context).copyWith(
-          textScaler: TextScaler.linear(scale),
-          viewInsets: EdgeInsets.only(bottom: keyboard),
+      builder: (context, child) => TelevisionScope(
+        enabled: television,
+        child: MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            textScaler: TextScaler.linear(scale),
+            viewInsets: EdgeInsets.only(bottom: keyboard),
+          ),
+          child: child!,
         ),
-        child: child!,
       ),
       home: Scaffold(
         body: StatefulBuilder(
@@ -58,9 +64,7 @@ void main() {
     const Size(320, 740),
     const Size(1024, 768),
   ]) {
-    testWidgets('all nineteen sources remain selectable on $size', (
-      tester,
-    ) async {
+    testWidgets('all sources remain selectable on $size', (tester) async {
       final changes = <DramaSource?>[];
       await _mount(tester, size: size, changes: changes);
       expect(find.byType(ChoiceChip), findsNothing);
@@ -92,6 +96,24 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('TV can switch from the selected source with the remote', (
+    tester,
+  ) async {
+    final changes = <DramaSource?>[];
+    await _mount(
+      tester,
+      size: const Size(1024, 768),
+      television: true,
+      changes: changes,
+    );
+    await _open(tester);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await tester.pumpAndSettle();
+    expect(changes, [DramaSource.huangguo]);
+  });
 
   testWidgets('search supports source names and the all-source record filter', (
     tester,

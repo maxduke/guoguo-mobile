@@ -136,19 +136,20 @@ void main() {
       final store = _store(storage: storage, provider: provider);
       addTearDown(store.dispose);
       await store.preferences.setSourceHidden(DramaSource.wuguo, false);
-      for (final source in DramaSource.values) {
+      final builtIn = DramaSource.values.where((source) => !source.plugin);
+      for (final source in builtIn) {
         await store.catalog.selectSource(source);
       }
       await store.catalog.selectSource(DramaSource.huangdou);
       await store.catalog.selectSource(DramaSource.wuguo);
-      expect(storage.writes, DramaSource.values.length + 3);
+      expect(storage.writes, builtIn.length + 3);
       expect(store.preferences.recentSources, [
         DramaSource.wuguo,
         DramaSource.huangdou,
+        DramaSource.dbku,
         DramaSource.shuangguo,
         DramaSource.miguo,
         DramaSource.chaoguo,
-        DramaSource.piguo,
       ]);
       final restored = _store(storage: storage);
       addTearDown(restored.dispose);
@@ -291,6 +292,83 @@ void main() {
   );
 
   testWidgets(
+    'many sources stay out of the picker until enabled in the plugin library',
+    (tester) async {
+      final provider = _Provider();
+      final store = _store(provider: provider);
+      await _fixture(tester, [store]);
+      await tester.pumpWidget(_app(store, []));
+      await _open(tester);
+      await tester.enterText(find.byType(TextField), '片库');
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(ChoiceChip, '片库'), findsNothing);
+      await tester.tap(find.byTooltip('打开插件库'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('启用站源片库'));
+      await tester.pumpAndSettle();
+      expect(
+        store.preferences.hiddenSources,
+        isNot(contains(DramaSource.pianku)),
+      );
+      await tester.enterText(find.byType(TextField), '好好看');
+      await tester.pumpAndSettle();
+      expect(find.text('站点要求验证，请在浏览器访问'), findsOneWidget);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.ancestor(
+                of: find.byTooltip('启用站源好好看'),
+                matching: find.byType(IconButton),
+              ),
+            )
+            .onPressed,
+        isNull,
+      );
+      await tester.enterText(find.byType(TextField), '');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('返回站源选择'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilterChip, '综合影视'));
+      await tester.pumpAndSettle();
+      expect(
+        find.widgetWithText(ChoiceChip, '片库').hitTestable(),
+        findsOneWidget,
+      );
+      expect(find.widgetWithText(ChoiceChip, '红果'), findsNothing);
+      expect(provider.calls, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'content groups and hidden management keep each source reachable once',
+    (tester) async {
+      final provider = _Provider();
+      final store = _store(provider: provider);
+      await _fixture(tester, [store]);
+      await tester.pumpWidget(_app(store, []));
+      await _open(tester);
+      expect(find.text('短剧站源'), findsOneWidget);
+      expect(find.text('综合影视站源'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, '独播库'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, '米果'), findsNothing);
+
+      final hidden = find.text('已隐藏 ${defaultHidden.length} 个站源');
+      await tester.ensureVisible(hidden);
+      await tester.pumpAndSettle();
+      await tester.tap(hidden);
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('隐藏站源红果'), findsNothing);
+      await tester.enterText(find.byType(TextField), '米果');
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('恢复站源米果'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), '红果');
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('隐藏站源红果'), findsOneWidget);
+      expect(provider.calls, isEmpty);
+    },
+  );
+
+  testWidgets(
     'favorites, recents and current hidden source are reachable without duplicate choices',
     (tester) async {
       final provider = _Provider();
@@ -415,7 +493,11 @@ void main() {
       await _open(tester, manage: true);
       expect(find.text('剧库提示：部分分类暂不可用'), findsOneWidget);
       expect(find.textContaining('栏目上次获取'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), '黄豆');
+      await tester.pumpAndSettle();
       expect(find.text('本地搜名 · 本地分类 · 栏目入口'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), '剧果');
+      await tester.pumpAndSettle();
       expect(find.text('剧库提示：分类暂时无法加载，请重试'), findsOneWidget);
       expect(provider.calls, ['catalog', 'categories', 'catalog']);
       expect(find.text('健康'), findsNothing);
@@ -480,6 +562,7 @@ void main() {
             ? find.byTooltip('收藏站源红果')
             : find.widgetWithText(ChoiceChip, '伍果');
         await tester.ensureVisible(action);
+        await tester.pumpAndSettle();
         await tester.tap(action);
         await tester.pumpAndSettle();
         expect(find.text('页面已更新，请关闭后重新选择站源'), findsOneWidget);
@@ -571,6 +654,7 @@ void main() {
         200,
         scrollable: find.byType(Scrollable).first,
       );
+      await tester.pumpAndSettle();
       await tester.tap(find.text('已隐藏 ${defaultHidden.length} 个站源'));
       await tester.pumpAndSettle();
       expect(find.text('站源管理').hitTestable(), findsOneWidget);

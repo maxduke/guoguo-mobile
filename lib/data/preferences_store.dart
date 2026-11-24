@@ -29,7 +29,9 @@ class PreferencesStore extends ChangeNotifier {
   Set<DramaSource> get hiddenSources => Set.unmodifiable({
     ..._hiddenSources,
     for (final source in DramaSource.values)
-      if (!source.enabledByDefault && !_enabledSources.contains(source)) source,
+      if (source.browserOnly ||
+          !source.enabledByDefault && !_enabledSources.contains(source))
+        source,
   });
   List<DramaSource> get recentSources => List.unmodifiable(_recentSources);
 
@@ -50,6 +52,7 @@ class PreferencesStore extends ChangeNotifier {
   }
 
   Future<void> setSourceHidden(DramaSource source, bool hidden) async {
+    if (source.browserOnly) return;
     if (hiddenSources.contains(source) == hidden) return;
     if (hidden) {
       _hiddenSources.add(source);

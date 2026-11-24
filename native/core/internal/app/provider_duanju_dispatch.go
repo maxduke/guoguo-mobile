@@ -45,7 +45,7 @@ func (d *Downloader) fetchDuanjuCatalogPage(ctx context.Context, source string, 
 		return d.fetchXingguoCatalogPage(ctx, page, category)
 	case sourceNiuguo:
 		return d.fetchNiuguoCatalogPage(ctx, page, category)
-	case sourceHuaguo, sourceWuguo, sourcePiguo, sourceMiguo, sourceShuangguo:
+	case sourceHuaguo, sourceWuguo, sourcePiguo, sourceMiguo, sourceShuangguo, sourceDbku:
 		return d.fetchMaccmsCatalogPage(ctx, source, page, category)
 	case sourceChaoguo:
 		return d.fetchChaoguoCatalogPage(ctx, page, category)
@@ -70,7 +70,7 @@ func (d *Downloader) fetchDuanjuDetail(ctx context.Context, source, sourceID str
 		return d.fetchXingguoDetail(ctx, sourceID)
 	case sourceNiuguo:
 		return d.fetchNiuguoDetail(ctx, sourceID)
-	case sourceHuaguo, sourceWuguo, sourcePiguo, sourceMiguo, sourceShuangguo:
+	case sourceHuaguo, sourceWuguo, sourcePiguo, sourceMiguo, sourceShuangguo, sourceDbku:
 		return d.fetchMaccmsDetail(ctx, source, sourceID)
 	case sourceChaoguo:
 		return d.fetchChaoguoDetail(ctx, sourceID)
@@ -95,7 +95,7 @@ func (d *Downloader) searchDuanju(ctx context.Context, source, query string) ([]
 		return d.searchXingguo(ctx, query)
 	case sourceNiuguo:
 		return d.searchNiuguo(ctx, query)
-	case sourceHuaguo, sourceWuguo, sourcePiguo, sourceMiguo, sourceShuangguo:
+	case sourceHuaguo, sourceWuguo, sourcePiguo, sourceMiguo, sourceShuangguo, sourceDbku:
 		return d.searchMaccms(ctx, source, query)
 	case sourceChaoguo:
 		items, _, err := d.searchChaoguoPage(ctx, query, 1)
@@ -119,7 +119,7 @@ func (d *Downloader) searchDuanjuPage(ctx context.Context, source, query string,
 		return d.searchGuanguoPage(ctx, query, page)
 	case sourceNiuguo:
 		return d.searchNiuguoPage(ctx, query, page)
-	case sourceHuaguo, sourceWuguo, sourcePiguo, sourceMiguo, sourceShuangguo:
+	case sourceHuaguo, sourceWuguo, sourcePiguo, sourceMiguo, sourceShuangguo, sourceDbku:
 		return d.searchMaccmsPage(ctx, source, query, page)
 	case sourceChaoguo:
 		return d.searchChaoguoPage(ctx, query, page)
@@ -201,12 +201,18 @@ func (d *Downloader) resolveDuanjuMedia(ctx context.Context, task Task) (provide
 			}
 		}
 		if pageURL != "" {
+			if source == sourceDbku {
+				return d.resolveDbkuMedia(ctx, sourceID, task.Chapter.ID, pageURL, base)
+			}
 			resolved, err := d.resolveDuanjuWebPage(ctx, source, pageURL, referer)
 			if err != nil {
 				return providerMedia{}, err
 			}
 			return d.prepareWebProviderMedia(ctx, resolved, name)
 		}
+	}
+	if source == sourceDbku {
+		return providerMedia{}, errors.New("独播库分集页面无效，请刷新详情后重试")
 	}
 	if !isProviderHTTPMediaURL(address) {
 		return providerMedia{}, fmt.Errorf("%s未返回有效播放地址，请刷新章节后重试", name)

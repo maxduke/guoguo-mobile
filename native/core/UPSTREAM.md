@@ -394,3 +394,29 @@ The [default-path validation](../../docs/huangguo-default-route-recovery-2026-11
 uses an unmodified probe with no saved or injected route and completes a real
 episode through FFmpeg preparation and decoding. Device acceptance remains
 separate.
+
+## November 24 Huangguo categories and Dbku
+
+[HGhub `b223ff6`](https://github.com/Minireel/HGhub/tree/b223ff6187369408803b2be7878ce456fceb0a7b)
+uses a plugin host. The native adapters reference public endpoint behavior from
+[HGhub-Plugin `a98a99e`](https://github.com/poisonhs/HGhub-Plugin/tree/a98a99ea21e08d46bff6761dda6e6c326499e86f).
+
+- [Huangguo](https://github.com/poisonhs/HGhub-Plugin/blob/a98a99ea21e08d46bff6761dda6e6c326499e86f/plugins/huangguo.source.js)
+  reads numeric categories through `/api/videos`. The app keeps its existing
+  topic IDs and independent aggregate cursors. Live categories 26 and 27
+  returned empty pages through the numeric endpoint and HTTP 410 through the
+  old slug endpoint.
+- [Dbku](https://github.com/poisonhs/HGhub-Plugin/blob/a98a99ea21e08d46bff6761dda6e6c326499e86f/plugins/dbku.source.js)
+  uses MacCMS catalog pages and an encoded URL in the same-site episode page
+  player object. The native adapter uses the work and episode numbers from
+  those links and resolves direct media on the observed CDN.
+
+## HGhub plugin collection
+
+The source manager lists the 23 entries in
+[HGhub-Plugin `017ff92`](https://github.com/poisonhs/HGhub-Plugin/blob/017ff9289fdbdde31b2116e2655b203c027db45c/manifest/manifest.json).
+Huangguo and Dbku use their native adapters. Seventeen plugins use a Go HPP
+adapter with an on-demand fetch from that exact revision and a per-file
+SHA-256 check. Scripts run with scoped host functions, public HTTPS transport,
+request ceilings and cancellation. Protected endpoints terminate the request.
+Juzong, Chengguo, Dhvideo and Hhkan are listed with a browser address.
