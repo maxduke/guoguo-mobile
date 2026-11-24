@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +30,8 @@ type hppProgram struct {
 
 var hppPrograms sync.Map
 
+const hppProgramLimit = 256 << 10
+
 func (d *Downloader) hppProgram(ctx context.Context, source hppSource) (*goja.Program, error) {
 	item, _ := hppPrograms.LoadOrStore(source.file, &hppProgram{lock: make(chan struct{}, 1)})
 	entry := item.(*hppProgram)
@@ -40,33 +44,92 @@ func (d *Downloader) hppProgram(ctx context.Context, source hppSource) (*goja.Pr
 	if entry.code != nil {
 		return entry.code, nil
 	}
-	ctx = context.WithValue(ctx, hppPublicRequestKey{}, true)
-	address := "https://raw.githubusercontent.com/poisonhs/HGhub-Plugin/" + hppRevision + "/plugins/" + source.file + ".js"
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
-	if err != nil {
-		return nil, err
+	path := filepath.Join(d.cfg.dataDirectory(), "hpp-"+source.file+".js")
+	var raw []byte
+	if file, err := os.Open(path); err == nil {
+		raw, _ = readHPPProgram(file, source)
+		file.Close()
 	}
-	client := *d.client
-	client.Jar = nil
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	resp, err := d.doPreparedCatalogRequestWithClient(request, 8*time.Second, nil, &client)
-	if err != nil {
-		return nil, errors.New("插件文件暂时无法取得，请重试")
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, (256<<10)+1))
-	if err != nil || len(raw) > 256<<10 || resp.StatusCode != http.StatusOK {
-		return nil, errors.New("插件文件读取失败，请重试")
-	}
-	if fmt.Sprintf("%x", sha256.Sum256(raw)) != source.hash {
-		return nil, errors.New("插件文件校验失败")
+	fromCache := raw != nil
+	if !fromCache {
+		var err error
+		raw, err = d.downloadHPPProgram(ctx, source)
+		if err != nil {
+			return nil, err
+		}
 	}
 	code, err := compileHPP(source.file, string(raw))
 	if err != nil {
-		return nil, errors.New("插件版本与当前应用不兼容")
+		return nil, errors.New("插件脚本与当前应用不兼容")
+	}
+	if !fromCache {
+		cacheHPPProgram(path, raw)
 	}
 	entry.code = code
 	return code, nil
+}
+
+func (d *Downloader) downloadHPPProgram(ctx context.Context, source hppSource) ([]byte, error) {
+	ctx = context.WithValue(ctx, hppPublicRequestKey{}, true)
+	file := "/plugins/" + source.file + ".js"
+	client := *d.client
+	client.Jar = nil
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	var lastErr error
+	for _, address := range []string{
+		"https://raw.githubusercontent.com/poisonhs/HGhub-Plugin/" + hppRevision + file,
+		"https://cdn.jsdelivr.net/gh/poisonhs/HGhub-Plugin@" + hppRevision + file,
+	} {
+		raw, err := d.fetchHPPProgram(ctx, address, source, &client)
+		if err == nil {
+			return raw, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("插件脚本加载失败：%w", lastErr)
+}
+
+func (d *Downloader) fetchHPPProgram(ctx context.Context, address string, source hppSource, client *http.Client) ([]byte, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
+	if err != nil {
+		return nil, errors.New("插件脚本地址无效")
+	}
+	resp, err := d.doPreparedCatalogRequestWithClient(request, 8*time.Second, nil, client)
+	if err != nil {
+		return nil, hppNetworkError(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("插件脚本服务器 HTTP %d", resp.StatusCode)
+	}
+	return readHPPProgram(resp.Body, source)
+}
+
+func readHPPProgram(reader io.Reader, source hppSource) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(reader, hppProgramLimit+1))
+	if err != nil || len(raw) > hppProgramLimit {
+		return nil, errors.New("插件脚本读取失败或过大")
+	}
+	if fmt.Sprintf("%x", sha256.Sum256(raw)) != source.hash {
+		return nil, errors.New("插件脚本校验失败")
+	}
+	return raw, nil
+}
+
+func cacheHPPProgram(path string, raw []byte) {
+	file, err := os.CreateTemp(filepath.Dir(path), ".hpp-*.tmp")
+	if err != nil {
+		return
+	}
+	defer os.Remove(file.Name())
+	_, writeErr := file.Write(raw)
+	closeErr := file.Close()
+	if writeErr == nil && closeErr == nil {
+		_ = os.Rename(file.Name(), path)
+	}
 }
 
 // The pinned single-file plugins export one manifest and one factory.
@@ -87,9 +150,11 @@ type hppInvocation struct {
 	api          *goja.Object
 	client       http.Client
 	d            *Downloader
+	scriptID     string
 	calls        int
 	bytes        int
-	denied       bool
+	denied       error
+	requestError error
 	mediaHeaders http.Header
 }
 
@@ -98,6 +163,7 @@ func (d *Downloader) useHPP(ctx context.Context, source hppSource, action func(*
 	defer cancel()
 	program, err := d.hppProgram(ctx, source)
 	if err != nil {
+		traceUpdate(ctx, func(value *mobileDiagnostic) { value.SourceStage = "plugin_script" })
 		return err
 	}
 	return d.useHPPProgram(ctx, source, program, action)
@@ -108,7 +174,7 @@ func (d *Downloader) useHPPProgram(ctx context.Context, source hppSource, progra
 	vm.SetMaxCallStackSize(256)
 	stop := context.AfterFunc(ctx, func() { vm.Interrupt("插件请求已取消或超时") })
 	defer stop()
-	work := &hppInvocation{ctx: ctx, vm: vm, d: d, client: *d.client}
+	work := &hppInvocation{ctx: ctx, vm: vm, d: d, scriptID: source.file, client: *d.client}
 	work.client.Jar, _ = cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
 	work.client.CheckRedirect = func(request *http.Request, previous []*http.Request) error {
 		if len(previous) >= 4 || !validImageURL(request.URL) ||
@@ -159,15 +225,22 @@ func (p *hppInvocation) call(group, name string, params map[string]any, out any)
 	if !ok {
 		return errors.New("插件暂未提供此功能")
 	}
+	p.requestError = nil
 	result, err := method(object, p.vm.ToValue(params), p.vm.NewObject())
-	if p.denied {
-		return errors.New("站源拒绝请求或要求验证，请稍后重试")
+	if p.denied != nil {
+		return p.denied
 	}
 	if err != nil {
+		if p.requestError != nil {
+			return p.requestError
+		}
 		return errors.New("站源读取失败，请稍后重试")
 	}
 	if promise, ok := result.Export().(*goja.Promise); ok {
 		if promise.State() != goja.PromiseStateFulfilled {
+			if p.requestError != nil {
+				return p.requestError
+			}
 			if promise.State() == goja.PromiseStateRejected {
 				if value, ok := promise.Result().(*goja.Object); ok {
 					if code := value.Get("code"); code != nil {

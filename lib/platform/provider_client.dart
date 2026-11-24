@@ -219,6 +219,9 @@ String? providerFailureHint(Object error) {
     return '站源返回内容无法处理，请稍后重试或切换站源';
   }
   if (error is! ProviderException) return null;
+  if (error.diagnostic?['sourceStage'] == 'plugin_script') {
+    return '插件脚本加载失败，请检查网络后重试';
+  }
   // Prefer the core's fixed failure code. Older cores retain their safe hint.
   return switch (error.diagnostic?['failure']) {
     'dns' => '站点域名解析异常，可尝试切换网络后重试',

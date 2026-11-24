@@ -67,7 +67,13 @@ class SourceDiagnostic {
     'http',
     'connection',
   };
-  static const sourceStages = {'', 'registration', 'model', 'model_fallback'};
+  static const sourceStages = {
+    '',
+    'registration',
+    'model',
+    'model_fallback',
+    'plugin_script',
+  };
   static const sourceFailures = {
     '',
     'registration_failed',
@@ -199,6 +205,7 @@ class SourceDiagnostic {
     'registration' => '准备播放连接',
     'model' => '读取播放资料',
     'model_fallback' => '读取备用播放资料',
+    'plugin_script' => '加载插件脚本',
     _ => '',
   };
   String get sourceFailureLabel => switch (sourceFailure) {

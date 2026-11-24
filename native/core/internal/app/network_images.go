@@ -18,10 +18,12 @@ type coverRequestKey struct{}
 type coverSourceKey struct{}
 type hppPublicRequestKey struct{}
 
+var proxySyntheticNetwork = netip.MustParsePrefix("198.18.0.0/15")
+
 var nonPublicImageNetworks = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"), netip.MustParsePrefix("100.64.0.0/10"),
 	netip.MustParsePrefix("192.0.0.0/24"), netip.MustParsePrefix("192.0.2.0/24"),
-	netip.MustParsePrefix("198.18.0.0/15"), netip.MustParsePrefix("198.51.100.0/24"),
+	proxySyntheticNetwork, netip.MustParsePrefix("198.51.100.0/24"),
 	netip.MustParsePrefix("203.0.113.0/24"), netip.MustParsePrefix("240.0.0.0/4"),
 	netip.MustParsePrefix("64:ff9b::/96"), netip.MustParsePrefix("64:ff9b:1::/48"),
 	netip.MustParsePrefix("100::/64"), netip.MustParsePrefix("2001::/32"),
@@ -141,7 +143,8 @@ func (transport *imageTransport) RoundTrip(request *http.Request) (*http.Respons
 	for attempt := 0; attempt < 2; attempt++ {
 		if addressErr := validateImageAddresses(addresses); addressErr != nil {
 			source, _ := request.Context().Value(coverSourceKey{}).(string)
-			if fallbackUsed || transport.fallback == nil || !mobileCoverSource(source) || net.ParseIP(host) != nil || request.Context().Err() != nil {
+			canReresolve := mobileCoverSource(source) || fromPlugin && allProxySyntheticAddresses(addresses)
+			if fallbackUsed || transport.fallback == nil || !canReresolve || net.ParseIP(host) != nil || request.Context().Err() != nil {
 				return nil, addressErr
 			}
 
@@ -189,6 +192,18 @@ func (transport *imageTransport) RoundTrip(request *http.Request) (*http.Respons
 		}
 	}
 	return nil, fmt.Errorf("封面 CDN 连接失败: %w", lastErr)
+}
+
+// Some VPN resolvers return only synthetic addresses from this benchmark range.
+// These addresses remain blocked for dialing; the fresh answer must be public.
+func allProxySyntheticAddresses(addresses []string) bool {
+	for _, value := range addresses {
+		address, err := netip.ParseAddr(value)
+		if err != nil || address.Zone() != "" || !proxySyntheticNetwork.Contains(address.Unmap()) {
+			return false
+		}
+	}
+	return len(addresses) > 0
 }
 
 func validateImageAddresses(addresses []string) error {

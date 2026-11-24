@@ -62,6 +62,44 @@ func TestImageTransportRejectsPrivateDNSBeforeAnyConnection(t *testing.T) {
 	}
 }
 
+func TestPluginTransportReresolvesSyntheticDNSBeforeDialing(t *testing.T) {
+	for _, test := range []struct {
+		name, system, trusted string
+		wantFallback          bool
+		wantDial              string
+	}{
+		{"proxy DNS", "198.18.2.10", "93.184.216.34", true, "93.184.216.34:443"},
+		{"trusted DNS remains private", "198.18.2.10", "192.168.0.1", true, ""},
+		{"actual private DNS", "192.168.0.1", "93.184.216.34", false, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var dials []string
+			standard := http.DefaultTransport.(*http.Transport).Clone()
+			standard.Proxy = nil
+			standard.DialContext = func(_ context.Context, _, address string) (net.Conn, error) {
+				dials = append(dials, address)
+				return nil, errors.New("fixture stops at the selected address")
+			}
+			transport := newImageTransport(standard, standard)
+			defer transport.CloseIdleConnections()
+			transport.lookup = func(context.Context, string) ([]string, error) { return []string{test.system}, nil }
+			var fallbackCalls int
+			transport.fallback = func(context.Context, string) ([]string, error) {
+				fallbackCalls++
+				return []string{test.trusted}, nil
+			}
+			request := httptest.NewRequest(http.MethodGet, "https://catalog.example.org/", nil)
+			request = request.WithContext(context.WithValue(request.Context(), hppPublicRequestKey{}, true))
+			if _, err := transport.RoundTrip(request); err == nil {
+				t.Fatal("fixture unexpectedly served a response")
+			}
+			if (fallbackCalls == 1) != test.wantFallback || strings.Join(dials, ",") != test.wantDial {
+				t.Fatalf("fallbacks=%d, attempted connections=%v", fallbackCalls, dials)
+			}
+		})
+	}
+}
+
 func TestImageTransportPinsDNSPreservesSNIAndProxy(t *testing.T) {
 	for _, mode := range []string{"direct", "http-proxy", "https-proxy"} {
 		t.Run(mode, func(t *testing.T) {

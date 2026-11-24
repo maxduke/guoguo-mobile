@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -12,13 +14,17 @@ import (
 
 func (p *hppInvocation) fetch(input map[string]any) map[string]any {
 	fail := func(message string) map[string]any { panic(p.vm.NewTypeError(message)) }
-	if p.denied || p.ctx.Err() != nil || p.calls >= 18 || p.bytes >= 16<<20 {
+	if p.denied != nil || p.ctx.Err() != nil || p.calls >= 18 || p.bytes >= 16<<20 {
 		return fail("站源请求已结束")
 	}
 	p.calls++
 	remote, err := url.Parse(mapString(input, "url"))
 	if err != nil || !validImageURL(remote) {
 		return fail("站源请求地址无效")
+	}
+	// The provider documents this primary host for the same MacCMS JSON API.
+	if p.scriptID == "bfzy.source" && remote.Host == "bfzyapi.com" && remote.Path == "/api.php/provide/vod/" {
+		remote.Host = bfzyPrimaryHost
 	}
 	values := remote.Query()
 	for name, value := range nestedMap(input, "query") {
@@ -71,19 +77,27 @@ func (p *hppInvocation) fetch(input map[string]any) map[string]any {
 	}
 	response, err := p.d.doPreparedCatalogRequestWithClient(request, 8*time.Second, nil, &client)
 	if err != nil {
-		return fail("站源连接失败")
+		p.requestError = hppNetworkError(err)
+		return fail(p.requestError.Error())
 	}
 	defer response.Body.Close()
+	p.requestError = nil
 	remaining := min(4<<20, 16<<20-p.bytes)
 	raw, err := io.ReadAll(io.LimitReader(response.Body, int64(remaining)+1))
 	p.bytes += len(raw)
-	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden ||
-		response.StatusCode == http.StatusTooManyRequests || catalogResponseBlockReason(response, raw) != "" {
-		p.denied = true
-		return fail("站源拒绝请求或要求验证")
+	if reason := catalogResponseBlockReason(response, raw); reason != "" {
+		p.denied = errors.New("站点要求浏览器验证")
+		return fail(p.denied.Error())
+	}
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusTooManyRequests {
+		p.denied = fmt.Errorf("站源拒绝请求 HTTP %d", response.StatusCode)
+		return fail(p.denied.Error())
 	}
 	if err != nil || len(raw) > remaining {
 		return fail("站源响应读取失败或过大")
+	}
+	if response.StatusCode >= 400 {
+		p.requestError = fmt.Errorf("站源接口 HTTP %d", response.StatusCode)
 	}
 	var data any = string(raw)
 	if mapString(input, "responseType") == "json" {
@@ -107,5 +121,20 @@ func (p *hppInvocation) fetch(input map[string]any) map[string]any {
 		"data":    data,
 		"url":     final,
 		"headers": headers,
+	}
+}
+
+func hppNetworkError(err error) error {
+	switch diagnosticFailure(err) {
+	case "cancelled":
+		return context.Canceled
+	case "dns":
+		return errors.New("站源域名解析失败")
+	case "timeout":
+		return context.DeadlineExceeded
+	case "backoff":
+		return errors.New("已暂停该域名请求，请稍后重试")
+	default:
+		return errors.New("站源连接失败")
 	}
 }

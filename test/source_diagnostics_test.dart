@@ -451,4 +451,28 @@ void main() {
       expect(SourceDiagnostic.fromJson(_sample()).sourceStage, isEmpty);
     },
   );
+  test('plugin script failures are distinguishable from site failures', () {
+    final response = {
+      ..._sample(method: 'catalog', result: 'failed'),
+      'source': 'yingxi',
+      'failure': 'dns',
+      'sourceStage': 'plugin_script',
+    };
+    final sample = SourceDiagnostic.fromJson(response);
+    expect(sample.source, DramaSource.yingxi);
+    expect(sample.sourceStageLabel, '加载插件脚本');
+    expect(
+      providerFailureHint(ProviderException('hidden', diagnostic: response)),
+      '插件脚本加载失败，请检查网络后重试',
+    );
+    expect(
+      providerFailureHint(
+        ProviderException(
+          'hidden',
+          diagnostic: {...response, 'sourceStage': ''},
+        ),
+      ),
+      '站点域名解析异常，可尝试切换网络后重试',
+    );
+  });
 }

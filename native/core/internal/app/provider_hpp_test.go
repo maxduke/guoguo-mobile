@@ -2,12 +2,116 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
+
+func TestHPPColdCatalogSurvivesScriptHostFailureAndRestart(t *testing.T) {
+	const script = `
+export const meta = { id: 'fixture.catalog', protocol: 1 };
+export default hg => ({ catalog: {
+  async getCategories() { return [{id: 'movies', label: '电影'}]; },
+  async list() {
+    const response = await hg.http.fetch({url: 'https://catalog.example.org/movies', responseType: 'json'});
+    return {items: response.data};
+  }
+}});`
+	spec := hppSource{file: "fixture.catalog", home: "https://catalog.example.org/", hash: fmt.Sprintf("%x", sha256.Sum256([]byte(script)))}
+	t.Cleanup(func() { hppPrograms.Delete(spec.file) })
+	directory := t.TempDir()
+	var scriptHosts []string
+	for _, restarted := range []bool{false, true} {
+		client, err := NewMobileClient(directory)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close()
+		client.downloader.client.Transport = rankingTransport(func(request *http.Request) (*http.Response, error) {
+			host := request.URL.Hostname()
+			if host == "catalog.example.org" && request.URL.Path == "/movies" {
+				return rankingHTTPResponse(request, 200, `[{"id":"m1","title":"目录样本"}]`), nil
+			}
+			scriptHosts = append(scriptHosts, host)
+			if restarted || host != "cdn.jsdelivr.net" {
+				return nil, errors.New("script host unreachable")
+			}
+			wantPath := "/gh/poisonhs/HGhub-Plugin@" + hppRevision + "/plugins/" + spec.file + ".js"
+			if request.URL.Path != wantPath {
+				t.Errorf("alternate script host requested %s, want %s", request.URL.Path, wantPath)
+			}
+			return rankingHTTPResponse(request, 200, script), nil
+		})
+		rows, _, err := client.downloader.hppPage(context.Background(), "fixture", spec, 1, "", "")
+		if err != nil || len(rows) != 1 || rows[0].Title != "目录样本" {
+			t.Fatalf("restarted=%v, rows=%+v, hosts=%v: %v", restarted, rows, scriptHosts, err)
+		}
+		hppPrograms.Delete(spec.file)
+	}
+	if want := "raw.githubusercontent.com,cdn.jsdelivr.net"; strings.Join(scriptHosts, ",") != want {
+		t.Fatalf("script hosts=%v, want %s", scriptHosts, want)
+	}
+}
+
+func TestHPPRejectsUnverifiedCachedAndDownloadedScripts(t *testing.T) {
+	client := newSourceMobileClient(t)
+	spec := hppSources["yingxi"]
+	t.Cleanup(func() { hppPrograms.Delete(spec.file) })
+	const changedScript = `export const meta = {id: 'yingxi.source', protocol: 1}; export default hg => ({});`
+	if err := os.WriteFile(filepath.Join(client.downloader.cfg.dataDirectory(), "hpp-"+spec.file+".js"), []byte(changedScript), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var networkCalls int
+	client.downloader.client.Transport = rankingTransport(func(request *http.Request) (*http.Response, error) {
+		networkCalls++
+		return rankingHTTPResponse(request, 200, changedScript), nil
+	})
+	trace := &mobileTrace{value: mobileDiagnostic{At: time.Now()}}
+	ctx := context.WithValue(context.Background(), mobileTraceKey{}, trace)
+	err := client.downloader.useHPP(ctx, spec, func(*hppInvocation) error {
+		t.Fatal("unverified script reached the runtime")
+		return nil
+	})
+	if networkCalls != 2 || err == nil || !strings.Contains(err.Error(), "校验失败") || trace.snapshot(err, nil, true).SourceStage != "plugin_script" {
+		t.Fatalf("calls=%d, error=%v, trace=%+v", networkCalls, err, trace.value)
+	}
+}
+
+func TestHPPBFZYCatalogUsesOfficialPrimaryAPI(t *testing.T) {
+	client := newSourceMobileClient(t)
+	spec := hppSources["bfzy"]
+	program, err := compileHPP(spec.file, `
+export const meta = {id: 'bfzy.source', protocol: 1};
+export default hg => ({catalog: {async list() {
+  const response = await hg.http.fetch({url:'https://bfzyapi.com/api.php/provide/vod/?ac=detail', query:{t:'20'}, responseType:'json'});
+  return {items: response.data};
+}}});`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.downloader.client.Transport = rankingTransport(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Host != "apibfzy.com" || request.URL.Path != "/api.php/provide/vod/" ||
+			request.URL.Query().Get("ac") != "detail" || request.URL.Query().Get("t") != "20" {
+			t.Errorf("unexpected BFZY request %s", request.URL)
+		}
+		return rankingHTTPResponse(request, 200, `[{"id":"1","title":"样本"}]`), nil
+	})
+	var result struct{ Items []hppItem }
+	err = client.downloader.useHPPProgram(context.Background(), spec, program, func(p *hppInvocation) error {
+		return p.call("catalog", "list", nil, &result)
+	})
+	if err != nil || len(result.Items) != 1 || result.Items[0].ID != "1" {
+		t.Fatalf("items=%+v err=%v", result.Items, err)
+	}
+}
 
 func TestHPPMobileSourceUsesCatalogAndEpisodeIdentity(t *testing.T) {
 	client := newSourceMobileClient(t)
