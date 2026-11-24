@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../domain/models.dart';
 import '../data/catalog_store.dart';
@@ -8,10 +9,52 @@ import '../data/preferences_store.dart';
 import 'discovery_cache_status.dart';
 import 'source_diagnostics_page.dart';
 import 'source_request_status.dart';
+import 'television_scope.dart';
 
 class _SourceChoice {
   const _SourceChoice(this.source);
   final DramaSource? source;
+}
+
+enum _SourceGroup {
+  all('全部'),
+  shortDrama('短剧'),
+  film('综合影视'),
+  plugins('插件库');
+
+  const _SourceGroup(this.label);
+  final String label;
+
+  bool includes(DramaSource? source) => switch (this) {
+    all => true,
+    shortDrama =>
+      source != null && !source.adult && !source.offersLongFormVideo,
+    film => source?.offersLongFormVideo ?? false,
+    plugins => source?.inPluginLibrary ?? false,
+  };
+}
+
+Future<void> showSourceManagement(
+  BuildContext context, {
+  required PreferencesStore preferences,
+  required CatalogStore catalog,
+  required bool Function() isCurrent,
+}) {
+  final television = TelevisionScope.of(context);
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (_) => _SourceSheet(
+      selected: catalog.source,
+      includeAll: false,
+      preferences: preferences,
+      catalog: catalog,
+      isCurrent: isCurrent,
+      managementOnly: true,
+      television: television,
+    ),
+  );
 }
 
 /// A fixed-width entry to all sources, shared by browsing and record filters.
@@ -43,6 +86,7 @@ class _SourceSelectorState extends State<SourceSelector> {
         mounted &&
         widget.preferences == preferences &&
         widget.catalog == catalog;
+    final television = TelevisionScope.of(context);
     try {
       final choice = await showModalBottomSheet<_SourceChoice>(
         context: context,
@@ -54,6 +98,7 @@ class _SourceSelectorState extends State<SourceSelector> {
           preferences: preferences,
           catalog: catalog,
           isCurrent: current,
+          television: television,
         ),
       );
       if (current() && choice != null && choice.source != widget.value) {
@@ -89,14 +134,17 @@ class _SourceSheet extends StatefulWidget {
     required this.selected,
     required this.includeAll,
     required this.isCurrent,
+    required this.television,
     this.preferences,
     this.catalog,
+    this.managementOnly = false,
   });
   final DramaSource? selected;
   final bool includeAll;
   final PreferencesStore? preferences;
   final CatalogStore? catalog;
   final bool Function() isCurrent;
+  final bool television, managementOnly;
   @override
   State<_SourceSheet> createState() => _SourceSheetState();
 }
@@ -105,12 +153,16 @@ class _SourceSheetState extends State<_SourceSheet> {
   final _scroll = ScrollController();
   String _query = '';
   bool _managing = false, _saving = false, _stale = false;
+  bool _showHidden = false;
+  _SourceGroup _group = _SourceGroup.all;
   bool _retrying = false;
   String? _error;
+  bool get _management => widget.managementOnly || _managing;
 
   bool _checkOwner() {
     if (widget.isCurrent()) return true;
     setState(() => _stale = true);
+    if (_scroll.hasClients) _scroll.jumpTo(0);
     return false;
   }
 
@@ -136,9 +188,17 @@ class _SourceSheetState extends State<_SourceSheet> {
     }
   }
 
-  void _manage(bool value) {
+  void _manage(
+    bool value, {
+    bool showHidden = false,
+    _SourceGroup group = _SourceGroup.all,
+  }) {
     if (!_checkOwner()) return;
-    setState(() => _managing = value);
+    setState(() {
+      _managing = value;
+      _showHidden = showHidden;
+      _group = group;
+    });
     if (_scroll.hasClients) _scroll.jumpTo(0);
   }
 
@@ -199,6 +259,14 @@ class _SourceSheetState extends State<_SourceSheet> {
     final available =
         media.size.height - media.viewInsets.bottom - media.padding.top;
     final query = _query.trim().toLowerCase();
+    final preferences = widget.preferences;
+    final favorite = preferences?.favoriteSources ?? const <DramaSource>{};
+    final hidden = preferences?.hiddenSources ?? const <DramaSource>{};
+    final groupSources = DramaSource.values.where(_group.includes).toList();
+    final shownCount = groupSources
+        .where((source) => !hidden.contains(source))
+        .length;
+    final hiddenCount = groupSources.length - shownCount;
     final sources =
         <DramaSource?>[if (widget.includeAll) null, ...DramaSource.values]
             .where(
@@ -206,10 +274,16 @@ class _SourceSheetState extends State<_SourceSheet> {
                   .toLowerCase()
                   .contains(query),
             )
+            .where((source) => query.isNotEmpty || _group.includes(source))
+            .where(
+              (source) =>
+                  _management ||
+                  preferences == null ||
+                  source == widget.selected ||
+                  source?.plugin != true ||
+                  !hidden.contains(source),
+            )
             .toList();
-    final preferences = widget.preferences;
-    final favorite = preferences?.favoriteSources ?? const <DramaSource>{};
-    final hidden = preferences?.hiddenSources ?? const <DramaSource>{};
     final visible = sources
         .where(
           (source) => source == widget.selected || !hidden.contains(source),
@@ -229,6 +303,18 @@ class _SourceSheetState extends State<_SourceSheet> {
     final remaining = visible
         .where(
           (source) => !favorites.contains(source) && !recent.contains(source),
+        )
+        .toList();
+    final shortForm = remaining
+        .where(_SourceGroup.shortDrama.includes)
+        .toList();
+    final generalVideo = remaining.where(_SourceGroup.film.includes).toList();
+    final adult = remaining.where((source) => source?.adult ?? false).toList();
+    final managed = sources
+        .whereType<DramaSource>()
+        .where(
+          (source) =>
+              query.isNotEmpty || hidden.contains(source) == _showHidden,
         )
         .toList();
     return Padding(
@@ -256,115 +342,204 @@ class _SourceSheetState extends State<_SourceSheet> {
                     : 3;
                 final width =
                     (constraints.maxWidth - (columns - 1) * 8) / columns;
-                return SingleChildScrollView(
-                  controller: _scroll,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              _managing ? '站源管理' : '选择站源',
-                              style: Theme.of(context).textTheme.titleLarge,
+                final header = Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _management ? '站源管理' : '选择站源',
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                        ),
+                        if (preferences != null && !widget.managementOnly)
+                          IconButton(
+                            tooltip: _managing ? '返回站源选择' : '管理站源',
+                            onPressed: _saving || _stale
+                                ? null
+                                : () => _manage(!_managing),
+                            icon: Icon(
+                              _managing ? Icons.arrow_back : Icons.tune,
                             ),
                           ),
-                          if (preferences != null)
-                            IconButton(
-                              tooltip: _managing ? '返回站源选择' : '管理站源',
-                              onPressed: _saving || _stale
-                                  ? null
-                                  : () => _manage(!_managing),
-                              icon: Icon(
-                                _managing ? Icons.arrow_back : Icons.tune,
-                              ),
-                            ),
+                        if (preferences != null && !_management)
                           IconButton(
-                            tooltip: '关闭站源选择',
-                            onPressed: () => Navigator.pop(context),
-                            icon: const Icon(Icons.close),
+                            tooltip: '打开插件库',
+                            onPressed: _saving || _stale
+                                ? null
+                                : () => _manage(
+                                    true,
+                                    showHidden: true,
+                                    group: _SourceGroup.plugins,
+                                  ),
+                            icon: const Icon(Icons.extension_outlined),
+                          ),
+                        IconButton(
+                          tooltip: widget.managementOnly ? '关闭站源管理' : '关闭站源选择',
+                          onPressed: () => Navigator.pop(context),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      decoration: const InputDecoration(
+                        hintText: '搜索站源',
+                        prefixIcon: Icon(Icons.search),
+                      ),
+                      onChanged: (value) => setState(() => _query = value),
+                    ),
+                    const SizedBox(height: 16),
+                    if (preferences != null &&
+                        !widget.includeAll &&
+                        query.isEmpty &&
+                        available > 265) ...[
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          for (final group in _SourceGroup.values)
+                            if (_management || group != _SourceGroup.plugins)
+                              FilterChip(
+                                label: Text(group.label),
+                                selected: _group == group,
+                                showCheckmark: false,
+                                onSelected: (_) =>
+                                    setState(() => _group = group),
+                              ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (showStatus && !_management && query.isEmpty) ...[
+                      Text(
+                        '最近请求记录 · 未验证视频播放',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      if (widget.selected != null &&
+                          widget.catalog!.diagnostics!.latestFor(
+                                widget.selected!,
+                              ) !=
+                              null) ...[
+                        const SizedBox(height: 12),
+                        _currentStatus(widget.selected!),
+                      ],
+                      const SizedBox(height: 16),
+                    ],
+                    if (_stale) const Text('页面已更新，请关闭后重新选择站源'),
+                    if (_saving) const LinearProgressIndicator(),
+                    if (_error != null) ...[
+                      Text(_error!),
+                      TextButton(
+                        onPressed: _saving || _stale
+                            ? null
+                            : () => _change(preferences!.saveSources),
+                        child: const Text('重试保存'),
+                      ),
+                    ],
+                    if (_management && query.isEmpty) ...[
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          ChoiceChip(
+                            label: Text('已显示 $shownCount'),
+                            selected: !_showHidden,
+                            autofocus:
+                                widget.television && widget.managementOnly,
+                            onSelected: (_) =>
+                                setState(() => _showHidden = false),
+                          ),
+                          ChoiceChip(
+                            label: Text('已隐藏 $hiddenCount'),
+                            selected: _showHidden,
+                            onSelected: (_) =>
+                                setState(() => _showHidden = true),
                           ),
                         ],
                       ),
                       const SizedBox(height: 8),
-                      TextField(
-                        decoration: const InputDecoration(
-                          hintText: '搜索站源',
-                          prefixIcon: Icon(Icons.search),
+                    ],
+                    if (sources.isEmpty || _management && managed.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 32),
+                        child: Text(
+                          query.isNotEmpty
+                              ? '没有匹配的站源'
+                              : _showHidden
+                              ? '没有隐藏的站源'
+                              : '没有显示的站源',
                         ),
-                        onChanged: (value) => setState(() => _query = value),
-                      ),
-                      const SizedBox(height: 16),
-                      if (showStatus && !_managing) ...[
-                        Text(
-                          '最近请求记录 · 未验证视频播放',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                        if (widget.selected != null &&
-                            query.isEmpty &&
-                            widget.catalog!.diagnostics!.latestFor(
-                                  widget.selected!,
-                                ) !=
-                                null) ...[
-                          const SizedBox(height: 12),
-                          _currentStatus(widget.selected!),
-                        ],
+                      )
+                    else if (!_management &&
+                        (query.isNotEmpty || preferences == null))
+                      _grid(sources, width, scale, favorite, hidden)
+                    else if (!_management) ...[
+                      if (widget.includeAll) ...[
+                        _grid([null], width, scale, favorite, hidden),
                         const SizedBox(height: 16),
                       ],
-                      if (_stale) const Text('页面已更新，请关闭后重新选择站源'),
-                      if (_saving) const LinearProgressIndicator(),
-                      if (_error != null) ...[
-                        Text(_error!),
-                        TextButton(
+                      if (favorites.isNotEmpty) ...[
+                        const Text('常用站源'),
+                        const SizedBox(height: 8),
+                        _grid(favorites, width, scale, favorite, hidden),
+                        const SizedBox(height: 16),
+                      ],
+                      if (recent.isNotEmpty) ...[
+                        const Text('最近选择'),
+                        const SizedBox(height: 8),
+                        _grid(recent, width, scale, favorite, hidden),
+                        const SizedBox(height: 16),
+                      ],
+                      if (shortForm.isNotEmpty) ...[
+                        const Text('短剧站源'),
+                        const SizedBox(height: 8),
+                        _grid(shortForm, width, scale, favorite, hidden),
+                        const SizedBox(height: 16),
+                      ],
+                      if (generalVideo.isNotEmpty) ...[
+                        const Text('综合影视站源'),
+                        const SizedBox(height: 8),
+                        _grid(generalVideo, width, scale, favorite, hidden),
+                      ],
+                      if (adult.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        const Text('成人内容'),
+                        const SizedBox(height: 8),
+                        _grid(adult, width, scale, favorite, hidden),
+                      ],
+                      if (hidden.isNotEmpty)
+                        TextButton.icon(
                           onPressed: _saving || _stale
                               ? null
-                              : () => _change(preferences!.saveSources),
-                          child: const Text('重试保存'),
+                              : () => _manage(true, showHidden: true),
+                          icon: const Icon(Icons.visibility_off_outlined),
+                          label: Text('已隐藏 ${hidden.length} 个站源'),
                         ),
-                      ],
-                      if (sources.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 32),
-                          child: Text('没有匹配的站源'),
-                        )
-                      else if (_managing)
-                        for (final source in sources.whereType<DramaSource>())
-                          _managementCard(
-                            source,
-                            favorite.contains(source),
-                            hidden.contains(source),
-                          )
-                      else if (query.isNotEmpty || preferences == null)
-                        _grid(sources, width, scale, favorite, hidden)
-                      else ...[
-                        if (favorites.isNotEmpty) ...[
-                          const Text('常用站源'),
-                          const SizedBox(height: 8),
-                          _grid(favorites, width, scale, favorite, hidden),
-                          const SizedBox(height: 16),
-                        ],
-                        if (recent.isNotEmpty) ...[
-                          const Text('最近选择'),
-                          const SizedBox(height: 8),
-                          _grid(recent, width, scale, favorite, hidden),
-                          const SizedBox(height: 16),
-                        ],
-                        if (remaining.isNotEmpty) ...[
-                          if (favorites.isNotEmpty || recent.isNotEmpty)
-                            const Text('其他站源'),
-                          _grid(remaining, width, scale, favorite, hidden),
-                        ],
-                        if (hidden.isNotEmpty)
-                          TextButton.icon(
-                            onPressed: _saving || _stale
-                                ? null
-                                : () => _manage(true),
-                            icon: const Icon(Icons.visibility_off_outlined),
-                            label: Text('已隐藏 ${hidden.length} 个站源'),
-                          ),
-                      ],
                     ],
-                  ),
+                  ],
+                );
+                if (!_management) {
+                  return SingleChildScrollView(
+                    controller: _scroll,
+                    child: header,
+                  );
+                }
+                return CustomScrollView(
+                  controller: _scroll,
+                  slivers: [
+                    SliverToBoxAdapter(child: header),
+                    SliverList.builder(
+                      itemCount: managed.length,
+                      itemBuilder: (_, index) {
+                        final source = managed[index];
+                        return _managementCard(
+                          source,
+                          favorite.contains(source),
+                          hidden.contains(source),
+                        );
+                      },
+                    ),
+                  ],
                 );
               },
             ),
@@ -442,6 +617,7 @@ class _SourceSheetState extends State<_SourceSheet> {
             padding: const EdgeInsets.symmetric(horizontal: 8),
             showCheckmark: false,
             selected: widget.selected == source,
+            autofocus: widget.television && widget.selected == source,
             onSelected: _saving || _stale ? null : (_) => _select(source),
           ),
         ),
@@ -523,7 +699,7 @@ class _SourceSheetState extends State<_SourceSheet> {
                 ),
                 IconButton(
                   tooltip: '${favorite ? '取消收藏' : '收藏'}站源${source.label}',
-                  onPressed: _saving || _stale
+                  onPressed: _saving || _stale || source.browserOnly
                       ? null
                       : () => _change(
                           () => preferences.toggleFavoriteSource(source),
@@ -531,8 +707,9 @@ class _SourceSheetState extends State<_SourceSheet> {
                   icon: Icon(favorite ? Icons.star : Icons.star_outline),
                 ),
                 IconButton(
-                  tooltip: '${hidden ? '恢复' : '隐藏'}站源${source.label}',
-                  onPressed: _saving || _stale
+                  tooltip:
+                      '${hidden ? (source.plugin ? '启用' : '恢复') : '隐藏'}站源${source.label}',
+                  onPressed: _saving || _stale || source.browserOnly
                       ? null
                       : () => _change(
                           () => preferences.setSourceHidden(source, !hidden),
@@ -554,7 +731,23 @@ class _SourceSheetState extends State<_SourceSheet> {
             ),
             if (source.defaultDisabledReason != null)
               Text(
-                '${hidden ? '默认停用' : '兼容性提示'} · ${source.defaultDisabledReason}',
+                source.browserOnly
+                    ? source.defaultDisabledReason!
+                    : source.plugin
+                    ? source.subtitle
+                    : '${hidden ? '默认停用' : '兼容性提示'} · ${source.defaultDisabledReason}',
+              ),
+            if (source.browserUrl case final address?)
+              TextButton.icon(
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: address));
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(const SnackBar(content: Text('已复制站点地址')));
+                },
+                icon: const Icon(Icons.copy),
+                label: const Text('复制站点地址'),
               ),
             Text(
               retrieved == null
@@ -574,10 +767,12 @@ class _SourceSheetState extends State<_SourceSheet> {
                 label: const Text('查看记录'),
               ),
             ],
-            if (hidden)
+            if (hidden && !source.browserOnly)
               Text(
                 source == widget.selected
                     ? '已隐藏 · 当前站源仍保留选择入口'
+                    : source.plugin
+                    ? '启用后可在选源中找到'
                     : '已隐藏 · 可搜索选择或恢复显示',
               ),
           ],

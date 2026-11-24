@@ -5,12 +5,22 @@ go 1.26.0
 require (
 	github.com/bogdanfinn/fhttp v0.6.9
 	github.com/bogdanfinn/tls-client v1.16.0
-	golang.org/x/text v0.32.0
+	golang.org/x/text v0.43.0
 )
 
 require github.com/ulikunitz/xz v0.5.15
 
-require github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8
+require (
+	github.com/andybalholm/cascadia v1.3.3
+	github.com/dop251/goja v0.0.0-20261122185237-35fdc4b88e39
+	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8
+)
+
+require (
+	github.com/dlclark/regexp2/v2 v2.11.0 // indirect
+	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
+	github.com/google/pprof v0.0.0-20230207041349-798e818bf904 // indirect
+)
 
 require (
 	github.com/andybalholm/brotli v1.2.0 // indirect
@@ -25,6 +35,6 @@ require (
 	github.com/tam7t/hpkp v0.0.0-20160821193359-2b70b4024ed5 // indirect
 	golang.org/x/crypto v0.46.0 // indirect
 	golang.org/x/mobile v0.0.0-20260908204917-8b95e45f8d3e
-	golang.org/x/net v0.48.0 // indirect
+	golang.org/x/net v0.48.0
 	golang.org/x/sys v0.48.0 // indirect
 )

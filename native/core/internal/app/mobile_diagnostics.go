@@ -66,6 +66,9 @@ func diagnosticSource(request mobileRequest) string {
 		return "huangguo"
 	}
 	source = canonicalProviderSource(source)
+	if _, ok := hppSources[source]; ok {
+		return source
+	}
 	if source == sourceHongguo || source == sourceHuangdou || source == sourceHuangju || source == sourceYeguo || source == sourceDSD || isDuanjuProviderSource(source) {
 		return source
 	}

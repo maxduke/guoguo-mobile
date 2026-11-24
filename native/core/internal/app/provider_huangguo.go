@@ -106,6 +106,9 @@ func splitProviderDramaID(id string) (source, sourceID string, ok bool) {
 }
 
 func isHuangguoProviderSource(source string) bool {
+	if _, ok := hppSources[source]; ok {
+		return true
+	}
 	switch canonicalProviderSource(source) {
 	case sourceHuangguoAI, sourceHuangguoVideo, sourceHuangdou, sourceHongguo, sourceHuangju, sourceYeguo, sourceDSD:
 		return true

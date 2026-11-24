@@ -20,7 +20,7 @@ func TestMobileHuangguoCategoriesUseOfficialIDsWithoutLoadingTheCatalog(t *testi
 	if len(categories) != 5 || categories[0]["id"] != "" || calls.Load() != 0 {
 		t.Fatal("categories fetched the aggregate catalog or lost their IDs", categories, calls.Load())
 	}
-	for index, id := range huangguoAICategoryIDs {
+	for index, id := range []string{"ai-duanju", "ai-manju", "ai-huanlian", "ai-mogai"} {
 		if categories[index+1]["id"] != id || categories[index+1]["name"] != huangguoAITypeName(id) {
 			t.Fatal("source category was replaced by a local tag", categories[index+1])
 		}
@@ -39,7 +39,7 @@ func TestMobileHuangguoCategoryPageKeepsAggregateCursorAndPageIdentity(t *testin
 	var calls atomic.Int32
 	c.downloader.client.Transport = rankingTransport(func(request *http.Request) (*http.Response, error) {
 		calls.Add(1)
-		if huangguoEnvelopePath(t, request) != "/api/videos/category/ai-manju?sort=hot&page=2&size=24" {
+		if huangguoEnvelopePath(t, request) != "/api/videos?cate_id=25&page=2&size=24&sort=hot_window" {
 			t.Error("category read did not forward the exact ID/page")
 		}
 		return huangguoAPIResponse(request, strings.Replace(huangguoAPIPageFixture, `"page":1,"pages":2`, `"page":2,"pages":3`, 1)), nil
@@ -52,6 +52,23 @@ func TestMobileHuangguoCategoryPageKeepsAggregateCursorAndPageIdentity(t *testin
 	row := newMobileSourceRows(t, result, "items")[0]
 	if row["category"] != huangguoAITypeName("ai-manju") {
 		t.Fatal("category provenance was lost", row)
+	}
+}
+
+func TestMobileHuangguoEmptyCategoryIsAValidPage(t *testing.T) {
+	c := newSourceMobileClient(t)
+	c.downloader.cfg.HuangguoAIURL = "https://category.example.org"
+	var calls atomic.Int32
+	c.downloader.client.Transport = rankingTransport(func(request *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		if huangguoEnvelopePath(t, request) != "/api/videos?cate_id=26&page=1&size=24&sort=hot_window" {
+			t.Error("empty category restarted on an old route")
+		}
+		return huangguoAPIResponse(request, `{"items":[],"pagination":{"page":1,"pages":0}}`), nil
+	})
+	result := callNewMobileSource(t, c, map[string]any{"method": "catalog", "source": "huangguo", "category": "ai-huanlian"})
+	if len(newMobileSourceRows(t, result, "items")) != 0 || result["hasMore"] != false || calls.Load() != 1 {
+		t.Fatalf("empty category: %+v, calls=%d", result, calls.Load())
 	}
 }
 

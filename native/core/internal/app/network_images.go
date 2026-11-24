@@ -16,6 +16,7 @@ import (
 
 type coverRequestKey struct{}
 type coverSourceKey struct{}
+type hppPublicRequestKey struct{}
 
 var nonPublicImageNetworks = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"), netip.MustParsePrefix("100.64.0.0/10"),
@@ -97,16 +98,19 @@ func newImageTransport(base http.RoundTripper, standard *http.Transport) *imageT
 }
 
 func (transport *imageTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	if request.Context().Value(coverRequestKey{}) != true {
+	fromPlugin := request.Context().Value(hppPublicRequestKey{}) == true
+	if request.Context().Value(coverRequestKey{}) != true && !fromPlugin {
 		return transport.base.RoundTrip(request)
 	}
 	// The Huangguo edge endpoint wraps an anonymous GET in a POST. Only this
 	// internal caller may reuse the public-DNS pinned transport for a POST.
 	envelopeRead := request.Context().Value(huangguoAPIRequestKey{}) == true && request.Method == http.MethodPost && request.URL.Path == "/api/edge/request"
-	if !validImageURL(request.URL) || request.Method != http.MethodGet && !envelopeRead {
+	pluginRead := fromPlugin && (request.Method == http.MethodHead || request.Method == http.MethodPost)
+	if !validImageURL(request.URL) || request.Method != http.MethodGet && !envelopeRead && !pluginRead {
 		return nil, errors.New("封面地址不受支持")
 	}
-	if envelopeRead {
+	replayBody := envelopeRead || fromPlugin && request.Method == http.MethodPost
+	if replayBody {
 		if request.GetBody == nil {
 			return nil, errors.New("黄果接口请求无法重放")
 		}
@@ -156,7 +160,7 @@ func (transport *imageTransport) RoundTrip(request *http.Request) (*http.Respons
 			tried[address] = true
 			pinned := transport.pinned(host, address, proxyURL)
 			upstream := request.Clone(request.Context())
-			if envelopeRead {
+			if replayBody {
 				upstream.Body, err = request.GetBody()
 				if err != nil {
 					return nil, err
@@ -279,6 +283,9 @@ func (transport *imageTransport) CloseIdleConnections() {
 }
 
 func mobileCoverSource(source string) bool {
+	if _, ok := hppSources[source]; ok {
+		return true
+	}
 	if isDuanjuProviderSource(source) {
 		return true
 	}

@@ -11,6 +11,7 @@ import (
 )
 
 type providerMediaCredentials struct {
+	publicOnly       bool
 	cookie           string
 	origin           string
 	referer          string
@@ -39,6 +40,13 @@ func providerMediaOrigin(address *url.URL) string {
 }
 
 func (credentials *providerMediaCredentials) apply(request *http.Request) error {
+	if credentials.publicOnly {
+		if !validImageURL(request.URL) {
+			return errors.New("插件媒体地址无效")
+		}
+		*request = *request.WithContext(context.WithValue(request.Context(), hppPublicRequestKey{}, true))
+		request.Header.Del("Referer")
+	}
 	request.Header.Del("Cookie")
 	for name := range credentials.headers {
 		request.Header.Del(name)

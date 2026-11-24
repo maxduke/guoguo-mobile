@@ -7,7 +7,7 @@ import 'package:guoguo_mobile/ui/catalog_search_controller.dart';
 
 import 'widget_test.dart' show NoNetwork;
 
-const unavailable = {
+final hiddenByDefault = {
   DramaSource.niuguo,
   DramaSource.piguo,
   DramaSource.chaoguo,
@@ -15,15 +15,16 @@ const unavailable = {
   DramaSource.miguo,
   DramaSource.wuguo,
   DramaSource.huaguo,
+  ...DramaSource.values.where((source) => source.plugin),
 };
 
 void main() {
   test(
-    'default unavailable sources are hidden while device-verified DSD stays enabled',
+    'unavailable and opt-in sources are hidden by default, with DSD enabled',
     () {
       final preferences = PreferencesStore(save: () async {});
       addTearDown(preferences.dispose);
-      expect(preferences.hiddenSources, unavailable);
+      expect(preferences.hiddenSources, hiddenByDefault);
       expect(preferences.hiddenSources, isNot(contains(DramaSource.dsd)));
       expect(DramaSource.dsd.defaultDisabledReason, isNull);
       // Default policy stays separate from deliberate visibility preferences.
@@ -48,13 +49,13 @@ void main() {
       expect(saves, 1);
       expect(
         preferences.hiddenSources,
-        unavailable.difference({DramaSource.shuangguo}),
+        hiddenByDefault.difference({DramaSource.shuangguo}),
       );
       restored.restore(preferences.toJson());
       expect(restored.hiddenSources, preferences.hiddenSources);
       expect(restored.toJson()['enabledSources'], ['shuangguo']);
       await restored.setSourceHidden(DramaSource.shuangguo, true);
-      expect(restored.hiddenSources, unavailable);
+      expect(restored.hiddenSources, hiddenByDefault);
       expect(restored.toJson()['enabledSources'], isEmpty);
       await preferences.setSourceHidden(DramaSource.dsd, true);
       expect(preferences.toJson()['hiddenSources'], ['dsd']);

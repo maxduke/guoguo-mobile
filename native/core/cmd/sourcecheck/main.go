@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	sources := flag.String("sources", "", "comma-separated source IDs; default: all declared sources")
+	sources := flag.String("sources", "", "comma-separated source IDs; default: native sources")
 	query := flag.String("query", "长生", "search sample; excluded from the report")
 	includeMedia := flag.Bool("media", false, "also resolve one episode and probe manifests, keys and its first media bytes")
 	output := flag.String("output", "", "write the report to this file instead of stdout")
@@ -94,7 +94,7 @@ func run(selection, query string, includeMedia bool) (report, error) {
 	}
 	var selected []sourcecheck.Capability
 	for _, capability := range capabilities.Items {
-		if selection == "" || wanted[capability.Source] {
+		if selection == "" && !capability.Plugin || wanted[capability.Source] {
 			selected = append(selected, capability)
 			delete(wanted, capability.Source)
 		}
