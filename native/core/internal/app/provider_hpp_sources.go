@@ -1,6 +1,7 @@
 package app
 
 const hppRevision = "017ff9289fdbdde31b2116e2655b203c027db45c"
+const bfzyPrimaryHost = "apibfzy.com"
 
 type hppSource struct {
 	file   string
@@ -10,7 +11,7 @@ type hppSource struct {
 }
 
 var hppSources = map[string]hppSource{
-	"bfzy":      {"bfzy.source", "https://bfzyapi.com/", "04835ec4bac1cf05d11bddcfa365c919aae24628ab68d81ed403eca28ab25cf2", true},
+	"bfzy":      {"bfzy.source", "https://" + bfzyPrimaryHost + "/", "04835ec4bac1cf05d11bddcfa365c919aae24628ab68d81ed403eca28ab25cf2", true},
 	"tangxin":   {"tangxin.vlog", "https://tangxinvlog.app/", "fc00b01f7d356964af56ca3a977c403b14a13786d3679c0bd383d662202d8ade", true},
 	"av321":     {"av321.source", "https://321av.art/", "e4d3312bd539c365b4ae474943af699a5fce33dcec49c448a7f11375328b9d69", true},
 	"hanime16":  {"hanime16.source", "https://www.hanime16.com/", "abd7e07370bbf3e544a0d7b479c2bb696045018cc46c12183887633f43719a90", true},

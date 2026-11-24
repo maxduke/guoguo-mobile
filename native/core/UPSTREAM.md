@@ -416,7 +416,12 @@ uses a plugin host. The native adapters reference public endpoint behavior from
 The source manager lists the 23 entries in
 [HGhub-Plugin `017ff92`](https://github.com/poisonhs/HGhub-Plugin/blob/017ff9289fdbdde31b2116e2655b203c027db45c/manifest/manifest.json).
 Huangguo and Dbku use their native adapters. Seventeen plugins use a Go HPP
-adapter with an on-demand fetch from that exact revision and a per-file
-SHA-256 check. Scripts run with scoped host functions, public HTTPS transport,
-request ceilings and cancellation. Protected endpoints terminate the request.
+adapter. On first use the adapter fetches the exact revision from GitHub Raw,
+with jsDelivr as a fallback. Its on-disk cache is verified against the same
+per-file SHA-256 on each process start. Scripts run with scoped host functions,
+public HTTPS transport, request ceilings and cancellation. Synthetic VPN DNS
+answers are never dialed, and trusted DNS fallback answers must still be public.
+Protected endpoints terminate the request.
+The BFZY plugin's catalog requests use its [documented primary API](https://bfzy.tv/index.php/help.html)
+with the original query and item IDs.
 Juzong, Chengguo, Dhvideo and Hhkan are listed with a browser address.
