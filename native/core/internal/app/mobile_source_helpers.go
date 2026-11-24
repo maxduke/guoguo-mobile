@@ -55,6 +55,8 @@ func nativeText(value any) string {
 		return strconv.Itoa(int(v))
 	case int:
 		return strconv.Itoa(v)
+	case int64:
+		return strconv.FormatInt(v, 10)
 	}
 	return ""
 }

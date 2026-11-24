@@ -237,6 +237,80 @@ void main() {
     },
   );
 
+  testWidgets('plugin catalog renders on home and paginates in all columns', (
+    tester,
+  ) async {
+    const source = DramaSource.yingxi;
+    const board = 'yingxi-catalog';
+    final (:store, :provider) = await _fixture(tester);
+    await store.preferences.setSourceHidden(source, false);
+    await store.catalog.saveDiscoveryBoards(source, const []);
+    final downloads = DownloadStore(store);
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox());
+      downloads.dispose();
+    });
+
+    Future<void> completeBoards() async {
+      final request = provider.requests.last;
+      expect(request.method, 'boards');
+      expect(request.args, {'source': source.name});
+      request.result.complete({
+        'items': [
+          {
+            'id': board,
+            'source': source.name,
+            'name': '剧库目录',
+            'kind': 'catalog',
+          },
+        ],
+      });
+      await tester.pump();
+    }
+
+    Future<void> completeColumn(int page) async {
+      final request = provider.requests.last;
+      expect(request.method, 'ranking');
+      expect(request.args, {'board': board, 'page': page, 'refresh': false});
+      request.result.complete({
+        ..._column([
+          DiscoveryRow(_drama('样本$page', source: source)),
+        ], DiscoveryKind.catalog),
+        'boardId': board,
+        'page': page,
+        'hasMore': page == 1,
+      });
+      await tester.pumpAndSettle();
+    }
+
+    await tester.pumpWidget(GuoguoApp(store: store, downloads: downloads));
+    expect(provider.requests.single.method, 'recommendations');
+    provider.requests.single.result.complete(_recommendations([]));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, '红果'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), source.label);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ChoiceChip, source.label));
+    await tester.pump();
+    await completeBoards();
+    await completeColumn(1);
+    expect(_ids(tester), ['样本1']);
+    expect(find.text('暂时没有栏目内容'), findsNothing);
+
+    await tester.tap(find.text('查看全部栏目'));
+    await tester.pump();
+    await completeBoards();
+    await completeColumn(1);
+    expect(find.text('故事样本1'), findsOneWidget);
+    await tester.tap(find.text('加载更多'));
+    await tester.pump();
+    await completeColumn(2);
+    expect(find.text('故事样本1'), findsOneWidget);
+    expect(find.text('故事样本2'), findsOneWidget);
+    expect(find.text('加载更多'), findsNothing);
+  });
+
   testWidgets(
     'home fetches one recommendation prefix without a directory or pagination',
     (tester) async {

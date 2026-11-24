@@ -88,7 +88,7 @@ enum DramaSource {
       _search &&
       this != shuangguo &&
       (this == hongguo || this == huangguo || remoteCategories);
-  bool get rankings => !plugin;
+  bool get rankings => !browserOnly;
   static DramaSource parse(Object? value) => values.firstWhere(
     (source) => source.name == value,
     orElse: () => throw const FormatException('未知站源'),

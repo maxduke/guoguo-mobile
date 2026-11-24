@@ -422,6 +422,8 @@ per-file SHA-256 on each process start. Scripts run with scoped host functions,
 public HTTPS transport, request ceilings and cancellation. Synthetic VPN DNS
 answers are never dialed, and trusted DNS fallback answers must still be public.
 Protected endpoints terminate the request.
+Each in-app HPP source exposes its default catalog through the mobile discovery
+board and ranking calls, with catalog ordering and no rank numbers.
 The BFZY plugin's catalog requests use its [documented primary API](https://bfzy.tv/index.php/help.html)
 with the original query and item IDs.
 Juzong, Chengguo, Dhvideo and Hhkan are listed with a browser address.

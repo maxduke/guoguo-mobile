@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -75,14 +76,22 @@ func (p *hppInvocation) fetch(input map[string]any) map[string]any {
 	if mapString(input, "credentials") == "omit" {
 		client.Jar = nil
 	}
-	response, err := p.d.doPreparedCatalogRequestWithClient(request, 8*time.Second, nil, &client)
+	timeout := 8 * time.Second
+	if requested, err := strconv.Atoi(nativeText(input["timeoutMs"])); err == nil && requested > 0 {
+		timeout = time.Duration(min(requested, 25000)) * time.Millisecond
+	}
+	response, err := p.d.doPreparedCatalogRequestWithClient(request, timeout, nil, &client)
 	if err != nil {
 		p.requestError = hppNetworkError(err)
 		return fail(p.requestError.Error())
 	}
 	defer response.Body.Close()
 	p.requestError = nil
-	remaining := min(4<<20, 16<<20-p.bytes)
+	limit := 4 << 20
+	if requested, err := strconv.Atoi(nativeText(input["maxBytes"])); err == nil && requested > 0 {
+		limit = min(requested, 6<<20)
+	}
+	remaining := min(limit, 16<<20-p.bytes)
 	raw, err := io.ReadAll(io.LimitReader(response.Body, int64(remaining)+1))
 	p.bytes += len(raw)
 	if reason := catalogResponseBlockReason(response, raw); reason != "" {
@@ -93,8 +102,13 @@ func (p *hppInvocation) fetch(input map[string]any) map[string]any {
 		p.denied = fmt.Errorf("站源拒绝请求 HTTP %d", response.StatusCode)
 		return fail(p.denied.Error())
 	}
-	if err != nil || len(raw) > remaining {
-		return fail("站源响应读取失败或过大")
+	if err != nil {
+		p.requestError = hppNetworkError(err)
+		return fail(p.requestError.Error())
+	}
+	if len(raw) > remaining {
+		p.requestError = errors.New("站源响应内容过大")
+		return fail(p.requestError.Error())
 	}
 	if response.StatusCode >= 400 {
 		p.requestError = fmt.Errorf("站源接口 HTTP %d", response.StatusCode)

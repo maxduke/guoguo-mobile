@@ -155,7 +155,7 @@ void main() {
 
   test(
     'discovery cache reads record cache use without global store notifications',
-    () {
+    () async {
       final store = AppStore(storage: MemoryStorage(), provider: _Provider());
       addTearDown(store.dispose);
       var notifications = 0;
@@ -168,6 +168,7 @@ void main() {
       store.catalog.discoveryCache.recommendations(
         RecommendationGenre.shortPlay,
       );
+      await Future<void>.value();
       expect(store.sourceDiagnostics.samples.single.method, 'recommendations');
       expect(store.sourceDiagnostics.samples.single.cacheHits, 1);
       expect(store.sourceDiagnostics.samples.single.networkAttempts, 0);
