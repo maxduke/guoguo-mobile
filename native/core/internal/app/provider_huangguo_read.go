@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -19,8 +20,8 @@ func (d *Downloader) huangguoAIPinned() bool {
 		(!huangguoAIIsProviderRoute(configured) || huangguoAIIsContentRoute(configured))
 }
 
-// Each read gets at most two API attempts within the original caller deadline
-// and a shared 16-second bound. Probe requests deliberately bypass this helper.
+// Each read tries at most two official routes within the caller deadline and a
+// shared 16-second bound. Playback may try one direct request on an edge 503.
 // Validate the actual page/work/episode before remembering a recovered origin.
 func (d *Downloader) readHuangguoAPI(ctx context.Context, path string, validate func([]byte, string) error, methods ...string) (huangguoAPIReply, error) {
 	work, cancel := context.WithTimeout(ctx, 16*time.Second)
@@ -34,8 +35,19 @@ func (d *Downloader) readHuangguoAPI(ctx context.Context, path string, validate 
 	preferred := d.providerHosts[sourceHuangguoAI]
 	routes := append([]string(nil), d.huangguoAIRoutes...)
 	d.providerMu.Unlock()
+	directTried := false
 	attempt := func(origin string) (huangguoAPIReply, error) {
 		reply, err := d.requestHuangguoAPI(work, origin, path, false, methods...)
+		if !directTried && len(methods) > 0 && methods[0] == http.MethodPost && isHuangguoPlaybackAPIPath(path) &&
+			reply.status == http.StatusServiceUnavailable && huangguoAPICanFallback(work, err) {
+			directTried = true
+			// The origin already serves this anonymous playback API directly.
+			// Retain the edge failure if the direct endpoint is also unavailable.
+			directReply, directErr := d.postHuangguoAPI(work, origin, path, []byte("{}"))
+			if directErr == nil || !huangguoAPICanFallback(work, directErr) {
+				reply, err = directReply, directErr
+			}
+		}
 		if err == nil {
 			err = validate(reply.data, origin)
 		}

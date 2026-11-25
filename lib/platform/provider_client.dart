@@ -163,6 +163,9 @@ class NativeProviderClient implements ProviderClient {
     if (text.contains('浏览器验证') || text.contains('cloudflare')) {
       return '站点要求浏览器验证，暂时无法加载';
     }
+    if (text.contains('站源未提供可用的公开播放地址')) {
+      return '该作品当前没有可用的公开播放地址';
+    }
     if (text.contains('域名解析失败') ||
         text.contains('dns') ||
         text.contains('no such host') ||

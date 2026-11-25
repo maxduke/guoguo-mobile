@@ -104,14 +104,20 @@ func (transport *imageTransport) RoundTrip(request *http.Request) (*http.Respons
 	if request.Context().Value(coverRequestKey{}) != true && !fromPlugin {
 		return transport.base.RoundTrip(request)
 	}
-	// The Huangguo edge endpoint wraps an anonymous GET in a POST. Only this
-	// internal caller may reuse the public-DNS pinned transport for a POST.
-	envelopeRead := request.Context().Value(huangguoAPIRequestKey{}) == true && request.Method == http.MethodPost && request.URL.Path == "/api/edge/request"
+	// Only the native Huangguo anonymous endpoints and HPP transport can POST.
+	huangguoRead := request.Context().Value(huangguoAPIRequestKey{}) == true && request.Method == http.MethodPost &&
+		(request.URL.Path == huangguoEdgePath || isHuangguoPlaybackAPIPath(request.URL.Path))
 	pluginRead := fromPlugin && (request.Method == http.MethodHead || request.Method == http.MethodPost)
-	if !validImageURL(request.URL) || request.Method != http.MethodGet && !envelopeRead && !pluginRead {
+	dpwSegment := fromPlugin && request.Context().Value(dpwSegmentRequestKey{}) == true &&
+		request.Method == http.MethodGet && isDPWSegmentURL(request.URL)
+	if !dpwSegment && (!validImageURL(request.URL) || request.Method != http.MethodGet && !huangguoRead && !pluginRead) {
 		return nil, errors.New("封面地址不受支持")
 	}
-	replayBody := envelopeRead || fromPlugin && request.Method == http.MethodPost
+	port := "443"
+	if dpwSegment {
+		port = request.URL.Port()
+	}
+	replayBody := huangguoRead || fromPlugin && request.Method == http.MethodPost
 	if replayBody {
 		if request.GetBody == nil {
 			return nil, errors.New("黄果接口请求无法重放")
@@ -170,7 +176,7 @@ func (transport *imageTransport) RoundTrip(request *http.Request) (*http.Respons
 				}
 			}
 			upstream.Host = request.URL.Host
-			upstream.URL.Host = net.JoinHostPort(address, "443")
+			upstream.URL.Host = net.JoinHostPort(address, port)
 			response, roundTripErr := pinned.RoundTrip(upstream)
 			if response != nil {
 				response.Request = request

@@ -99,22 +99,10 @@ func providerChapterID(source, sourceID, chapterKey string) string {
 func splitProviderDramaID(id string) (source, sourceID string, ok bool) {
 	source, sourceID, ok = strings.Cut(strings.TrimSpace(id), ":")
 	source = canonicalProviderSource(source)
-	if !ok || strings.TrimSpace(sourceID) == "" || !isHuangguoProviderSource(source) {
+	if !ok || strings.TrimSpace(sourceID) == "" || !isProviderSource(source) {
 		return "", "", false
 	}
 	return source, strings.TrimSpace(sourceID), true
-}
-
-func isHuangguoProviderSource(source string) bool {
-	if _, ok := hppSources[source]; ok {
-		return true
-	}
-	switch canonicalProviderSource(source) {
-	case sourceHuangguoAI, sourceHuangguoVideo, sourceHuangdou, sourceHongguo, sourceHuangju, sourceYeguo, sourceDSD:
-		return true
-	default:
-		return isDuanjuProviderSource(source)
-	}
 }
 
 func canonicalProviderSource(source string) string {
@@ -1589,7 +1577,7 @@ func normalizeProviderMediaURL(pageURL, raw string) string {
 }
 
 func isHuangguoProviderChapter(ch Chapter) bool {
-	return isHuangguoProviderSource(ch.Source) && isProviderHTTPMediaURL(ch.VideoURL)
+	return isProviderSource(ch.Source) && isProviderHTTPMediaURL(ch.VideoURL)
 }
 
 func isProviderHTTPMediaURL(raw string) bool {

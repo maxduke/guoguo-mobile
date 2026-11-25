@@ -2,12 +2,66 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestHuangguoPlaybackUsesDirectAPIOnEdge503(t *testing.T) {
+	const base = "https://first.example.org"
+	const path = "/api/videos/501/episodes/3/playback"
+	var calls []string
+	d := huangguoAutomaticFixture(t, func(request *http.Request) (*http.Response, error) {
+		calls = append(calls, request.URL.Host+request.URL.Path)
+		if request.URL.Host != "first.example.org" || request.Context().Value(huangguoAPIRequestKey{}) != true ||
+			request.Context().Value(hppPublicRequestKey{}) == true || request.Header.Get("Cookie") != "" || request.Header.Get("Authorization") != "" {
+			t.Fatal("playback request escaped the native anonymous route", request.URL)
+		}
+		if request.URL.Path == huangguoEdgePath {
+			if huangguoEnvelopePath(t, request) != path {
+				t.Fatal("edge identity changed")
+			}
+			return rankingHTTPResponse(request, 503, "temporary"), nil
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil || request.Method != http.MethodPost || request.URL.Path != path || string(body) != "{}" ||
+			request.Header.Get("Origin") != base || request.Header.Get("Referer") != base+"/" {
+			t.Fatal("wrong direct request", request.URL, request.Method, string(body), err)
+		}
+		return huangguoAPIResponse(request, `{"id":501,"ep":3,"manifest_method":"GET","streams":{"main":"/main.m3u8","preview":"/preview.m3u8"}}`), nil
+	})
+	media, origin, err := d.huangguoAPIPlayback(context.Background(), "501", "3")
+	if err != nil || media.URL != base+"/main.m3u8" || origin != base || media.Referer != base+"/" || len(calls) != 2 {
+		t.Fatalf("direct native playback did not preserve identity: %+v, %s, %v, %v", media, origin, err, calls)
+	}
+}
+
+func TestHuangguoPlaybackStopsOnEdgeOrDirectRefusal(t *testing.T) {
+	for _, deniedOnEdge := range []bool{true, false} {
+		var calls int
+		d := huangguoAutomaticFixture(t, func(request *http.Request) (*http.Response, error) {
+			calls++
+			if request.URL.Host != "first.example.org" {
+				t.Fatal("playback tried another route after refusal")
+			}
+			if !deniedOnEdge && request.URL.Path == huangguoEdgePath {
+				return rankingHTTPResponse(request, 503, "temporary"), nil
+			}
+			return rankingHTTPResponse(request, http.StatusForbidden, "refused"), nil
+		})
+		_, _, err := d.huangguoAPIPlayback(context.Background(), "501", "3")
+		want := 2
+		if deniedOnEdge {
+			want = 1
+		}
+		if !errors.Is(err, errHuangguoAPIRejected) || calls != want {
+			t.Fatalf("refusal was retried: edge=%v, calls=%d err=%v", deniedOnEdge, calls, err)
+		}
+	}
+}
 
 func TestHuangguoNewPlaybackCarriesCDNGrantIntoInitialPlaylist(t *testing.T) {
 	d := rankingTestDownloader(t, func(r *http.Request) (*http.Response, error) {

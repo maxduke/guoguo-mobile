@@ -29,6 +29,12 @@ official discovery path; its catalog check does not claim media or device
 playback acceptance. Details and validation are recorded in
 [the adoption record](../../docs/hghub-adoption-2026-11-05.md).
 
+The native playback reader can try the same origin's direct episode API once
+when the edge request returns HTTP 503. The request follows the anonymous
+playback shape in [the HGhub Huangguo plugin](https://github.com/poisonhs/HGhub-Plugin/blob/017ff9289fdbdde31b2116e2655b203c027db45c/plugins/huangguo.source.js).
+The shared deadline, selected line, episode identity validation, and scoped CDN
+credentials continue to apply.
+
 ## September 2026 selective refresh
 
 Provider/search/recommendation/ranking, cover decoding and public image transport,
@@ -424,6 +430,14 @@ answers are never dialed, and trusted DNS fallback answers must still be public.
 Protected endpoints terminate the request.
 Each in-app HPP source exposes its default catalog through the mobile discovery
 board and ranking calls, with catalog ordering and no rank numbers.
+Huangguo retains the original native category endpoints and provider identities.
+HPP episode IDs are resolved only through their matching plugin adapter.
+Chapters skip episodes marked locked by the plugin, including playlists with
+only app-specific episodes. The first playlist with available episodes keeps its
+original playlist and episode IDs.
+Jisu's anonymous HEAD probe can follow the observed HTTPS redirect from its
+edge to the known playlist host. DPW's verified manifest origin can use its
+known HTTPS segment host on port 999 through the same public DNS checks.
 The BFZY plugin's catalog requests use its [documented primary API](https://bfzy.tv/index.php/help.html)
 with the original query and item IDs.
 Juzong, Chengguo, Dhvideo and Hhkan are listed with a browser address.

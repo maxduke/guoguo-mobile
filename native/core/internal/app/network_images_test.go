@@ -100,6 +100,44 @@ func TestPluginTransportReresolvesSyntheticDNSBeforeDialing(t *testing.T) {
 	}
 }
 
+func TestHPPDPWSegmentPortStillRequiresPublicDNS(t *testing.T) {
+	for _, sample := range []struct {
+		name, address, dns string
+		enabled            bool
+		dial               string
+	}{
+		{"verified source", "https://p.jisuts.com:999/segment.ts", "93.184.216.34", true, "93.184.216.34:999"},
+		{"other source", "https://p.jisuts.com:999/segment.ts", "93.184.216.34", false, ""},
+		{"other host", "https://other.example.org:999/segment.ts", "93.184.216.34", true, ""},
+		{"private DNS", "https://p.jisuts.com:999/segment.ts", "127.0.0.1", true, ""},
+	} {
+		t.Run(sample.name, func(t *testing.T) {
+			var dial string
+			standard := http.DefaultTransport.(*http.Transport).Clone()
+			standard.Proxy = nil
+			standard.DialContext = func(_ context.Context, _, address string) (net.Conn, error) {
+				dial = address
+				return nil, errors.New("fixture stops at the selected address")
+			}
+			transport := newImageTransport(standard, standard)
+			defer transport.CloseIdleConnections()
+			transport.lookup = func(context.Context, string) ([]string, error) { return []string{sample.dns}, nil }
+			transport.fallback = nil
+			credentials := providerMediaCredentials{publicOnly: true, dpwSegments: sample.enabled}
+			request := httptest.NewRequest(http.MethodGet, sample.address, nil)
+			if err := credentials.apply(request); err == nil {
+				_, err = transport.RoundTrip(request)
+				if err == nil {
+					t.Fatal("fixture unexpectedly served a response")
+				}
+			}
+			if dial != sample.dial {
+				t.Fatalf("dialed %q, want %q", dial, sample.dial)
+			}
+		})
+	}
+}
+
 func TestImageTransportPinsDNSPreservesSNIAndProxy(t *testing.T) {
 	for _, mode := range []string{"direct", "http-proxy", "https-proxy"} {
 		t.Run(mode, func(t *testing.T) {

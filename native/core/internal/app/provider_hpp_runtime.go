@@ -185,11 +185,21 @@ func (d *Downloader) useHPPProgram(ctx context.Context, source hppSource, progra
 	work := &hppInvocation{ctx: ctx, vm: vm, d: d, scriptID: source.file, client: *d.client}
 	work.client.Jar, _ = cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
 	work.client.CheckRedirect = func(request *http.Request, previous []*http.Request) error {
-		if len(previous) >= 4 || !validImageURL(request.URL) ||
-			providerMediaOrigin(request.URL) != providerMediaOrigin(previous[0].URL) {
+		if len(previous) >= 4 || !validImageURL(request.URL) {
 			return http.ErrUseLastResponse
 		}
-		return nil
+		original := previous[0]
+		if providerMediaOrigin(request.URL) == providerMediaOrigin(original.URL) {
+			return nil
+		}
+		// The public Jisu CDN redirects its HEAD probe to a separate playlist host.
+		if len(previous) == 1 && isHPPJisuCDNProbe(work.scriptID, original) &&
+			providerMediaOrigin(request.URL) == "https://apple-co-speed-wug.sviptq.com" &&
+			strings.HasSuffix(strings.ToLower(request.URL.Path), ".m3u8") {
+			request.Header = http.Header{"User-Agent": {original.UserAgent()}}
+			return nil
+		}
+		return http.ErrUseLastResponse
 	}
 	work.installGlobals()
 	module, err := vm.RunProgram(program)

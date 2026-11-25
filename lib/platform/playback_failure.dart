@@ -86,6 +86,10 @@ class PlaybackFailure {
       // Preserve known actionable messages; upstream exception text is not UI.
       return switch (error.message) {
         '已取消准备' => _cancelled,
+        '站源未提供可用的公开播放地址' => const PlaybackFailure(
+          '站源未提供此分集的公开播放地址',
+          autoRecover: false,
+        ),
         '播放器初始化超时，请重试' => const PlaybackFailure('播放器启动超时，请重试或切换分集'),
         '视频传输失败，请检查网络后重试' || '视频准备超时，请重试' => _network,
         '存储空间不足，请清理空间后重试' => const PlaybackFailure(

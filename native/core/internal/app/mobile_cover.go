@@ -38,7 +38,7 @@ func (d *Downloader) coverReferer(ctx context.Context, address string) string {
 		}
 		return strings.TrimRight(d.huangdouRequestBaseURL(), "/") + "/home"
 	}
-	if isHuangguoProviderSource(source) {
+	if isProviderSource(source) {
 		return d.providerBaseURL(source) + "/"
 	}
 	return imageReferer(address)

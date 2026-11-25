@@ -76,6 +76,7 @@ void main() {
     ),
     ('site.invalid HTTP 200：站点要求浏览器验证', '站点要求浏览器验证，暂时无法加载'),
     ('site.invalid HTTP 429，已暂停该域名请求', '站点暂时限制请求，请稍后重试'),
+    ('站源未提供可用的公开播放地址', '该作品当前没有可用的公开播放地址'),
     ('https://private.invalid?token=secret', null),
   ]) {
     test('native failure has a fixed safe hint: ${sample.$2}', () async {

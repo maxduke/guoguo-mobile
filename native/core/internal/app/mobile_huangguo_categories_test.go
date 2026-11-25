@@ -39,8 +39,10 @@ func TestMobileHuangguoCategoryPageKeepsAggregateCursorAndPageIdentity(t *testin
 	var calls atomic.Int32
 	c.downloader.client.Transport = rankingTransport(func(request *http.Request) (*http.Response, error) {
 		calls.Add(1)
-		if huangguoEnvelopePath(t, request) != "/api/videos?cate_id=25&page=2&size=24&sort=hot_window" {
-			t.Error("category read did not forward the exact ID/page")
+		if huangguoEnvelopePath(t, request) != "/api/videos/category/ai-manju?sort=hot&page=2&size=24" {
+			// A selected line can support the original route without accepting the
+			// newer list endpoint. Its business refusal cannot trigger a retry.
+			return rankingHTTPResponse(request, 200, `{"status":0,"data":null}`), nil
 		}
 		return huangguoAPIResponse(request, strings.Replace(huangguoAPIPageFixture, `"page":1,"pages":2`, `"page":2,"pages":3`, 1)), nil
 	})
@@ -61,7 +63,7 @@ func TestMobileHuangguoEmptyCategoryIsAValidPage(t *testing.T) {
 	var calls atomic.Int32
 	c.downloader.client.Transport = rankingTransport(func(request *http.Request) (*http.Response, error) {
 		calls.Add(1)
-		if huangguoEnvelopePath(t, request) != "/api/videos?cate_id=26&page=1&size=24&sort=hot_window" {
+		if huangguoEnvelopePath(t, request) != "/api/videos/category/ai-huanlian?sort=hot&page=1&size=24" {
 			t.Error("empty category restarted on an old route")
 		}
 		return huangguoAPIResponse(request, `{"items":[],"pagination":{"page":1,"pages":0}}`), nil

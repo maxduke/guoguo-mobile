@@ -185,6 +185,7 @@ func (d *Downloader) hppDetail(ctx context.Context, source string, spec hppSourc
 				ID     string `json:"id"`
 				Label  string `json:"label"`
 				Number int    `json:"episodeNumber"`
+				Locked bool   `json:"locked"`
 			} `json:"episodes"`
 		} `json:"playlists"`
 	}
@@ -208,7 +209,7 @@ func (d *Downloader) hppDetail(ctx context.Context, source string, spec hppSourc
 		}
 		seen := map[string]bool{}
 		for i, episode := range playlist.Episodes[:min(5000, len(playlist.Episodes))] {
-			if episode.ID == "" || len(episode.ID) > 160 || seen[episode.ID] {
+			if episode.Locked || episode.ID == "" || len(episode.ID) > 160 || seen[episode.ID] {
 				continue
 			}
 			seen[episode.ID] = true
@@ -294,6 +295,10 @@ func (d *Downloader) hppResolve(ctx context.Context, source string, spec hppSour
 			media.Playlist, media.URL, err = d.fetchMediaPlaylist(work, media.URL, referer)
 			if err != nil {
 				continue
+			}
+			if source == "dpw" {
+				final, _ := url.Parse(media.URL)
+				media.credentials.dpwSegments = providerMediaOrigin(final) == "https://vv.jisuzyv.com"
 			}
 			media.Duration = m3u8Duration(media.Playlist)
 		} else if stream.Format != "progressive" && !strings.HasSuffix(path, ".mp4") {
