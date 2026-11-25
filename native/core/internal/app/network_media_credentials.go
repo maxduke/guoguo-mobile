@@ -12,6 +12,7 @@ import (
 
 type providerMediaCredentials struct {
 	publicOnly       bool
+	dpwSegments      bool
 	cookie           string
 	origin           string
 	referer          string
@@ -22,6 +23,12 @@ type providerMediaCredentials struct {
 }
 
 type providerMediaCredentialsKey struct{}
+type dpwSegmentRequestKey struct{}
+
+func isDPWSegmentURL(address *url.URL) bool {
+	return address.Scheme == "https" && address.Opaque == "" && address.User == nil &&
+		strings.EqualFold(address.Host, "p.jisuts.com:999")
+}
 
 func providerMediaContext(ctx context.Context, credentials *providerMediaCredentials) context.Context {
 	return context.WithValue(ctx, providerMediaCredentialsKey{}, credentials)
@@ -41,10 +48,13 @@ func providerMediaOrigin(address *url.URL) string {
 
 func (credentials *providerMediaCredentials) apply(request *http.Request) error {
 	if credentials.publicOnly {
-		if !validImageURL(request.URL) {
+		ctx := context.WithValue(request.Context(), hppPublicRequestKey{}, true)
+		if credentials.dpwSegments && isDPWSegmentURL(request.URL) {
+			ctx = context.WithValue(ctx, dpwSegmentRequestKey{}, true)
+		} else if !validImageURL(request.URL) {
 			return errors.New("插件媒体地址无效")
 		}
-		*request = *request.WithContext(context.WithValue(request.Context(), hppPublicRequestKey{}, true))
+		*request = *request.WithContext(ctx)
 		request.Header.Del("Referer")
 	}
 	request.Header.Del("Cookie")

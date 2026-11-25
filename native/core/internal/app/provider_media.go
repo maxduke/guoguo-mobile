@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -119,14 +120,19 @@ func (d *Downloader) providerURLCandidates(raw string) []string {
 }
 
 func (d *Downloader) resolveProviderMedia(ctx context.Context, task Task) (providerMedia, error) {
-	if source, _, valid := splitProviderDramaID(task.DramaID); valid {
+	source, _, valid := splitProviderDramaID(task.DramaID)
+	chapterSource := canonicalProviderSource(task.Chapter.Source)
+	if _, plugin := hppSources[chapterSource]; plugin && (!valid || source != chapterSource) {
+		return providerMedia{}, errors.New("插件分集与作品不符")
+	}
+	if valid {
 		if adapter, ok := d.mobileSource(source); ok {
 			return adapter.resolve(ctx, task)
 		}
 	}
 
 	chapter := task.Chapter
-	chapter.Source = canonicalProviderSource(chapter.Source)
+	chapter.Source = chapterSource
 	if chapter.Source == "" {
 		chapter.Source = sourceFromDramaID(task.DramaID)
 	}

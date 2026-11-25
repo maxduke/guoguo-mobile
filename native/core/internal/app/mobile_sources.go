@@ -13,6 +13,16 @@ type mobileSourceAdapter struct {
 	resolve    func(context.Context, Task) (providerMedia, error)
 }
 
+func isProviderSource(source string) bool {
+	source = canonicalProviderSource(source)
+	switch source {
+	case sourceHuangguoAI, sourceHuangguoVideo, sourceHuangdou, sourceHongguo, sourceHuangju, sourceYeguo, sourceDSD:
+		return true
+	}
+	_, plugin := hppSources[source]
+	return plugin || isDuanjuProviderSource(source)
+}
+
 func (d *Downloader) mobileSource(source string) (mobileSourceAdapter, bool) {
 	source = canonicalProviderSource(source)
 	if spec, ok := hppSources[source]; ok {

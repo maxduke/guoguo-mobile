@@ -25,6 +25,16 @@ void main() {
       expect(failure.message, isNot(contains('secret')));
     }
   });
+
+  test('a missing public plugin stream stops automatic recovery', () {
+    final failure = PlaybackFailure.from(
+      const ProviderException('站源未提供可用的公开播放地址'),
+    );
+
+    expect(failure.message, '站源未提供此分集的公开播放地址');
+    expect(failure.autoRecover, false);
+  });
+
   test(
     'unavailable files, cancellation and AirPlay require explicit action',
     () {

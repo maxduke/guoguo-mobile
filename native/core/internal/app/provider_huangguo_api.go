@@ -28,6 +28,14 @@ type huangguoAPIReply struct {
 
 type huangguoAPIRequestKey struct{}
 
+const huangguoEdgePath = "/api/edge/request"
+
+func isHuangguoPlaybackAPIPath(path string) bool {
+	parts := strings.Split(path, "/")
+	return len(parts) == 7 && parts[0] == "" && parts[1] == "api" && parts[2] == "videos" &&
+		huangguoAPIID(parts[3]) && parts[4] == "episodes" && huangguoAPIID(parts[5]) && parts[6] == "playback"
+}
+
 // Only anonymous reads use this envelope. Account cookies, tokens and redirect
 // destinations cannot become part of the provider or media session.
 func (d *Downloader) requestHuangguoAPI(ctx context.Context, base, path string, force bool, methods ...string) (huangguoAPIReply, error) {
@@ -46,10 +54,19 @@ func (d *Downloader) requestHuangguoAPI(ctx context.Context, base, path string, 
 		requestEnvelope["method"], requestEnvelope["body"], requestEnvelope["content_type"] = http.MethodPost, "e30=", "application/json"
 	}
 	body, _ := json.Marshal(requestEnvelope)
+	return d.postHuangguoAPI(ctx, base, huangguoEdgePath, body)
+}
+
+func (d *Downloader) postHuangguoAPI(ctx context.Context, base, path string, body []byte) (huangguoAPIReply, error) {
+	reply := huangguoAPIReply{base: base}
+	throughEdge := path == huangguoEdgePath
+	if !throughEdge && !isHuangguoPlaybackAPIPath(path) {
+		return reply, errHuangguoAPIInvalid
+	}
 	ctx = context.WithValue(ctx, coverRequestKey{}, true)
 	ctx = context.WithValue(ctx, coverSourceKey{}, sourceHuangguoAI)
 	ctx = context.WithValue(ctx, huangguoAPIRequestKey{}, true)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/edge/request", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, bytes.NewReader(body))
 	if err != nil {
 		return reply, err
 	}
@@ -57,6 +74,9 @@ func (d *Downloader) requestHuangguoAPI(ctx context.Context, base, path string, 
 	req.Header.Set("Referer", base+"/")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
+	if !throughEdge {
+		req.Header.Set("Origin", base)
+	}
 	if noCache, _ := ctx.Value(providerTextNoCacheKey{}).(bool); noCache {
 		req.Header.Set("Cache-Control", "no-cache")
 	}
@@ -76,8 +96,14 @@ func (d *Downloader) requestHuangguoAPI(ctx context.Context, base, path string, 
 	if len(raw) > 2*1024*1024 {
 		return reply, errors.New("黄果接口响应过大")
 	}
+	unavailable := func() error {
+		if throughEdge {
+			return d.rememberHuangguoAPIUnavailable(base)
+		}
+		return errHuangguoAPIUnavailable
+	}
 	if response.StatusCode == 404 || response.StatusCode == 405 || response.StatusCode == 501 {
-		return reply, d.rememberHuangguoAPIUnavailable(base)
+		return reply, unavailable()
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 || catalogResponseBlockReason(response, raw) != "" {
 		err := d.catalogResponseError(req, response, raw)
@@ -91,7 +117,7 @@ func (d *Downloader) requestHuangguoAPI(ctx context.Context, base, path string, 
 		Data   json.RawMessage `json:"data"`
 	}
 	if json.Unmarshal(raw, &envelope) != nil || envelope.Status == nil {
-		return reply, d.rememberHuangguoAPIUnavailable(base)
+		return reply, unavailable()
 	}
 	if *envelope.Status != 1 {
 		return reply, errHuangguoAPIRejected
@@ -104,7 +130,7 @@ func (d *Downloader) requestHuangguoAPI(ctx context.Context, base, path string, 
 		return reply, err
 	}
 	d.providerMu.Lock()
-	if d.huangguoAIUnsupported == base {
+	if throughEdge && d.huangguoAIUnsupported == base {
 		d.huangguoAIUnsupported, d.huangguoAIUnsupportedUntil = "", time.Time{}
 	}
 	d.providerMu.Unlock()

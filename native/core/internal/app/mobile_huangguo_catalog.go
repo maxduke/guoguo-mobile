@@ -25,44 +25,31 @@ type mobileHuangguoCursor struct {
 	Done bool `json:"done"`
 }
 
-var huangguoAICategoryRoutes = []struct {
-	slug string
-	id   int
-}{
-	{"ai-duanju", 24},
-	{"ai-manju", 25},
-	{"ai-huanlian", 26},
-	{"ai-mogai", 27},
-}
+var huangguoAICategoryIDs = []string{"ai-duanju", "ai-manju", "ai-huanlian", "ai-mogai"}
 
 func huangguoAICategories() []nativeCategory {
-	items := make([]nativeCategory, 0, len(huangguoAICategoryRoutes))
-	for _, category := range huangguoAICategoryRoutes {
-		items = append(items, nativeCategory{ID: category.slug, Name: huangguoAITypeName(category.slug)})
+	items := make([]nativeCategory, 0, len(huangguoAICategoryIDs))
+	for _, id := range huangguoAICategoryIDs {
+		items = append(items, nativeCategory{ID: id, Name: huangguoAITypeName(id)})
 	}
 	return items
 }
 
 func validHuangguoAICategory(category string) bool {
-	return huangguoAICategoryNumber(category) != 0
-}
-
-func huangguoAICategoryNumber(category string) int {
-	for _, route := range huangguoAICategoryRoutes {
-		if category == route.slug {
-			return route.id
+	for _, id := range huangguoAICategoryIDs {
+		if category == id {
+			return true
 		}
 	}
-	return 0
+	return false
 }
 
 // Category reads are independent of the three-provider aggregate cursor.
 func (d *Downloader) mobileAICategoryPage(ctx context.Context, category string, page int) ([]Drama, bool, error) {
-	id := huangguoAICategoryNumber(category)
-	if id == 0 || page < 1 || page > 200 {
+	if !validHuangguoAICategory(category) || page < 1 || page > 200 {
 		return nil, false, errors.New("黄果分类或页码无效")
 	}
-	path := fmt.Sprintf("/api/videos?cate_id=%d&page=%d&size=24&sort=hot_window", id, page)
+	path := fmt.Sprintf("/api/videos/category/%s?sort=hot&page=%d&size=24", category, page)
 	var rows []Drama
 	var more bool
 	reply, err := d.readHuangguoAPI(ctx, path, func(raw []byte, base string) error {
@@ -77,8 +64,7 @@ func (d *Downloader) mobileAICategoryPage(ctx context.Context, category string, 
 	if base == "" {
 		base = d.huangguoAIContentBaseURL(ctx)
 	}
-	// Older lines without the envelope still expose a direct slug endpoint.
-	address := fmt.Sprintf("%s/api/videos/category/%s?sort=hot&page=%d&size=24", base, category, page)
+	address := base + path
 	work := context.WithValue(ctx, providerTextValidatorKey{}, providerTextValidator(func(body, effectiveURL string) error {
 		_, _, err := parseMobileAIPage(body, effectiveURL, category, page)
 		return err
@@ -193,7 +179,7 @@ func (d *Downloader) mobileAICatalogPage(ctx context.Context, page int) ([]Drama
 	// Discover once before the category workers, retaining the cold-start
 	// request budget when the official entry only serves the legacy API.
 	d.huangguoAIContentBaseURL(ctx)
-	categories := huangguoAICategoryRoutes
+	categories := huangguoAICategoryIDs
 	results := make([]mobileCatalogPage, len(categories))
 	slots := make(chan struct{}, 2)
 	var group sync.WaitGroup
@@ -206,7 +192,7 @@ func (d *Downloader) mobileAICatalogPage(ctx context.Context, page int) ([]Drama
 				results[index].err = ctx.Err()
 				return
 			}
-			rows, more, err := d.mobileAICategoryPage(ctx, category.slug, page)
+			rows, more, err := d.mobileAICategoryPage(ctx, category, page)
 			results[index] = mobileCatalogPage{rows, more, err}
 		})
 	}
@@ -218,7 +204,7 @@ func (d *Downloader) mobileAICatalogPage(ctx context.Context, page int) ([]Drama
 		rows = append(rows, result.items...)
 		more = more || result.more
 		if result.err != nil {
-			failures = append(failures, fmt.Errorf("%s: %w", huangguoAITypeName(categories[index].slug), result.err))
+			failures = append(failures, fmt.Errorf("%s: %w", huangguoAITypeName(categories[index]), result.err))
 		}
 	}
 	return rows, more, errors.Join(failures...)

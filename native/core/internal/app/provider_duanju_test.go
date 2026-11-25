@@ -46,7 +46,7 @@ func TestDuanjuRegistryKeepsDistinctIdentitiesFromExistingSources(t *testing.T) 
 		if canonicalProviderSource(spec.ID) != spec.ID {
 			t.Fatalf("duanju source %q is not canonical", spec.ID)
 		}
-		if !isHuangguoProviderSource(spec.ID) || !isDuanjuProviderSource(spec.ID) {
+		if !isProviderSource(spec.ID) || !isDuanjuProviderSource(spec.ID) {
 			t.Fatalf("duanju source %q was not recognized as a provider source", spec.ID)
 		}
 		if duanjuSourceForHost(duanjuHostOf(spec.Base)) != spec.ID {

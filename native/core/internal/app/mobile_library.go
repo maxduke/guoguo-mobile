@@ -250,7 +250,7 @@ func normalizeMobileLibraryEntry(entry mobileLibraryEntry) (mobileLibraryEntry, 
 		return entry, "rejected"
 	}
 	source := canonicalProviderSource(rawSource)
-	if !isHuangguoProviderSource(source) && source != "cloudfront" {
+	if !isProviderSource(source) && source != "cloudfront" {
 		return entry, "skipped"
 	}
 	if source == "cloudfront" && !rankingSourceID.MatchString(sourceID) {

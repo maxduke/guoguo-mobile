@@ -73,7 +73,7 @@ func (p *hppInvocation) fetch(input map[string]any) map[string]any {
 		}
 	}
 	client := p.client
-	if mapString(input, "credentials") == "omit" {
+	if mapString(input, "credentials") == "omit" || isHPPJisuCDNProbe(p.scriptID, request) {
 		client.Jar = nil
 	}
 	timeout := 8 * time.Second
@@ -136,6 +136,11 @@ func (p *hppInvocation) fetch(input map[string]any) map[string]any {
 		"url":     final,
 		"headers": headers,
 	}
+}
+
+func isHPPJisuCDNProbe(scriptID string, request *http.Request) bool {
+	return scriptID == "jisu.source" && request.Method == http.MethodHead &&
+		providerMediaOrigin(request.URL) == "https://cibn-edge-5g.1ljx.com"
 }
 
 func hppNetworkError(err error) error {

@@ -231,7 +231,13 @@ export default hg => ({
   search: {async search(params) { return {items: [{id: 'item:42', title: params.query}]}; }},
   media: {
     async getDetail(params) {
-      return {id: params.id, title: '测试剧', playlists: [{id: 'route.a', kind: 'main', episodes: [{id: 'e:1', label: '首集', episodeNumber: 3}]}]};
+      return {id: params.id, title: '测试剧', playlists: [
+        {id: 'app-only', kind: 'other', episodes: [{id: 'locked', label: '仅 App', locked: true}]},
+        {id: 'route.a', kind: 'main', episodes: [
+          {id: 'locked', label: '仅 App', locked: true},
+          {id: 'e:1', label: '首集', episodeNumber: 3}
+        ]}
+      ]};
     },
     async resolvePlayback(params) {
       if (params.mediaId !== 'item:42' || params.playlistId !== 'route.a' || params.episodeId !== 'e:1') throw new Error('bad identity');
@@ -306,6 +312,9 @@ export default hg => ({
 	if chapter["id"] != providerChapterID("pianku", hppKey("item:42"), hppKey("route.a")+"."+hppKey("e:1")) {
 		t.Fatalf("wrong chapter identity: %+v", chapter)
 	}
+	if chapter["currentEpisode"] != float64(3) {
+		t.Fatalf("wrong chapter number: %+v", chapter)
+	}
 	media := callNewMobileSource(t, client, map[string]any{"method": "resolve", "id": id, "chapter": chapter})
 	session, _ := media["session"].(string)
 	proxy, err := url.Parse(media["url"].(string))
@@ -343,6 +352,58 @@ export default hg => ({
 	}
 }
 
+func TestHPPJisuProbeAllowsOnlyKnownPublicPlaylistRedirect(t *testing.T) {
+	downloader := newSourceMobileClient(t).downloader
+	spec := hppSources["jisu"]
+	program, err := compileHPP(spec.file, `
+export const meta = { id: 'jisu.source', protocol: 1 };
+export default hg => ({media: {async resolvePlayback() {
+  const response = await hg.http.fetch({
+    url: 'https://cibn-edge-5g.1ljx.com/media?token=source',
+    method: 'HEAD',
+    headers: {Referer: 'https://jisuzhuiju.com/'}
+  });
+  return {status: response.status};
+}}});`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sample := range []struct {
+		location string
+		status   int
+	}{
+		{"https://apple-co-speed-wug.sviptq.com/index.m3u8", http.StatusOK},
+		{"https://apple-co-speed-wug.sviptq.com/landing.html", http.StatusFound},
+		{"https://another.example.org/index.m3u8", http.StatusFound},
+		{"http://apple-co-speed-wug.sviptq.com/index.m3u8", http.StatusFound},
+	} {
+		t.Run(sample.location, func(t *testing.T) {
+			redirected := false
+			downloader.client.Transport = rankingTransport(func(request *http.Request) (*http.Response, error) {
+				if request.URL.Host == "cibn-edge-5g.1ljx.com" {
+					response := rankingHTTPResponse(request, http.StatusFound, "")
+					response.Header.Set("Location", sample.location)
+					return response, nil
+				}
+				redirected = true
+				if request.Method != http.MethodHead || request.URL.String() != sample.location ||
+					request.Context().Value(hppPublicRequestKey{}) != true ||
+					request.Referer() != "" || request.Header.Get("Cookie") != "" {
+					t.Errorf("unexpected redirect request: %s %s", request.Method, request.URL)
+				}
+				return rankingHTTPResponse(request, http.StatusOK, ""), nil
+			})
+			var result struct{ Status int }
+			err := downloader.useHPPProgram(context.Background(), spec, program, func(p *hppInvocation) error {
+				return p.call("media", "resolvePlayback", nil, &result)
+			})
+			if err != nil || result.Status != sample.status || redirected != (sample.status == http.StatusOK) {
+				t.Fatalf("status=%d redirected=%v error=%v", result.Status, redirected, err)
+			}
+		})
+	}
+}
+
 func TestHPPStopsAfterARefusal(t *testing.T) {
 	client := newSourceMobileClient(t)
 	var calls atomic.Int32
@@ -367,5 +428,18 @@ export default hg => ({catalog: {async list() {
 	})
 	if err == nil || calls.Load() != 1 {
 		t.Fatalf("calls=%d err=%v", calls.Load(), err)
+	}
+}
+
+func TestHPPChapterCannotFallBackToNativePlayback(t *testing.T) {
+	client := newSourceMobileClient(t)
+	for _, id := range []string{"501", "huangguoai:501", "huangju:501", "yingxi:eA"} {
+		_, _, err := client.downloader.resolvePlaybackMedia(context.Background(), Task{
+			DramaID: id,
+			Chapter: Chapter{Source: "pianku", VideoURL: "https://media.example.org/unscoped.mp4"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "插件分集与作品不符") {
+			t.Fatalf("mixed provider identity %q escaped the plugin adapter: %v", id, err)
+		}
 	}
 }
