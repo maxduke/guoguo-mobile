@@ -35,6 +35,14 @@ void main() {
     expect(failure.autoRecover, false);
   });
 
+  test('Hongguo public access errors stop automatic recovery', () {
+    for (final message in ['红果官网未开放本集的公开播放', '红果官网暂时拒绝播放请求，请稍后重试']) {
+      final failure = PlaybackFailure.from(ProviderException(message));
+      expect(failure.message, startsWith(message));
+      expect(failure.autoRecover, false);
+    }
+  });
+
   test(
     'unavailable files, cancellation and AirPlay require explicit action',
     () {

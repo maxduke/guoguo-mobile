@@ -101,26 +101,32 @@ func newImageTransport(base http.RoundTripper, standard *http.Transport) *imageT
 
 func (transport *imageTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	fromPlugin := request.Context().Value(hppPublicRequestKey{}) == true
-	if request.Context().Value(coverRequestKey{}) != true && !fromPlugin {
+	hongguoPublic := request.Context().Value(hongguoPublicPlaybackRequestKey{}) == true
+	if request.Context().Value(coverRequestKey{}) != true && !fromPlugin && !hongguoPublic {
 		return transport.base.RoundTrip(request)
 	}
-	// Only the native Huangguo anonymous endpoints and HPP transport can POST.
+	// Only the named anonymous playback endpoints and HPP transport can POST.
 	huangguoRead := request.Context().Value(huangguoAPIRequestKey{}) == true && request.Method == http.MethodPost &&
 		(request.URL.Path == huangguoEdgePath || isHuangguoPlaybackAPIPath(request.URL.Path))
+	hongguoRead := hongguoPublic && request.Method == http.MethodPost &&
+		providerMediaOrigin(request.URL) == hongguoBaseURL && request.URL.Path == hongguoPublicPlaybackPath && request.URL.RawQuery == ""
+	if hongguoPublic && !hongguoRead {
+		return nil, errors.New("红果公开播放请求地址无效")
+	}
 	pluginRead := fromPlugin && (request.Method == http.MethodHead || request.Method == http.MethodPost)
 	dpwSegment := fromPlugin && request.Context().Value(dpwSegmentRequestKey{}) == true &&
 		request.Method == http.MethodGet && isDPWSegmentURL(request.URL)
-	if !dpwSegment && (!validImageURL(request.URL) || request.Method != http.MethodGet && !huangguoRead && !pluginRead) {
+	if !dpwSegment && (!validImageURL(request.URL) || request.Method != http.MethodGet && !huangguoRead && !hongguoRead && !pluginRead) {
 		return nil, errors.New("封面地址不受支持")
 	}
 	port := "443"
 	if dpwSegment {
 		port = request.URL.Port()
 	}
-	replayBody := huangguoRead || fromPlugin && request.Method == http.MethodPost
+	replayBody := huangguoRead || hongguoRead || fromPlugin && request.Method == http.MethodPost
 	if replayBody {
 		if request.GetBody == nil {
-			return nil, errors.New("黄果接口请求无法重放")
+			return nil, errors.New("站源接口请求无法重放")
 		}
 		defer request.Body.Close()
 	}
