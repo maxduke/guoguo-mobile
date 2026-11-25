@@ -417,6 +417,20 @@ uses a plugin host. The native adapters reference public endpoint behavior from
   player object. The native adapter uses the work and episode numbers from
   those links and resolves direct media on the observed CDN.
 
+## Hongguo public website playback fallback
+
+The public 360p fallback is adapted from
+[jackotom/hongguo-drama `a1b69da`](https://github.com/jackotom/hongguo-drama/blob/a1b69da5562b9063f3442f3284c3347358f26090/src/native/hongguo.js),
+`fetchPublicFallbackPlayUrl`, GPL-3.0-only. Its [playback investigation](https://github.com/jackotom/hongguo-drama/blob/a1b69da5562b9063f3442f3284c3347358f26090/docs/issue-178-179-2026-11-23.md)
+documents the distinction between full public streams and SEO previews.
+
+After an unusable native model, Auto and fixed 360p can request the existing
+website's anonymous playback endpoint once with a six-second bound. The response
+must provide an unexpired HTTPS address on a known media domain. Playback uses
+the existing public transport and media expiry tracking. An episode-specific
+403 stops playback for that episode. Site-wide refusals retain their normal
+backoff, and the App model's registration and refusal policies keep precedence.
+
 ## HGhub plugin collection
 
 The source manager lists the 23 entries in

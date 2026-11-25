@@ -86,6 +86,14 @@ class PlaybackFailure {
       // Preserve known actionable messages; upstream exception text is not UI.
       return switch (error.message) {
         '已取消准备' => _cancelled,
+        '红果官网未开放本集的公开播放' => const PlaybackFailure(
+          '红果官网未开放本集的公开播放，可选择其他分集',
+          autoRecover: false,
+        ),
+        '红果官网暂时拒绝播放请求，请稍后重试' => const PlaybackFailure(
+          '红果官网暂时拒绝播放请求，请稍后重试',
+          autoRecover: false,
+        ),
         '站源未提供可用的公开播放地址' => const PlaybackFailure(
           '站源未提供此分集的公开播放地址',
           autoRecover: false,

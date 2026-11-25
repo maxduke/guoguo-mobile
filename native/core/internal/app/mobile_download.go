@@ -46,7 +46,7 @@ func (c *MobileClient) downloadPlan(ctx context.Context, request mobileRequest) 
 		return plan, err
 	}
 	if media.credentials != nil {
-		plan.RefreshOnResume = media.credentials.cookie != "" || len(media.credentials.headers) > 0
+		plan.RefreshOnResume = media.credentials.cookie != "" || len(media.credentials.headers) > 0 || !media.credentials.expires.IsZero()
 		headerRequest, _ := http.NewRequest(http.MethodGet, media.URL, nil)
 		if err := media.credentials.apply(headerRequest); err != nil {
 			return plan, publicError(err)

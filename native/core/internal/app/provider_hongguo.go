@@ -213,9 +213,19 @@ func (d *Downloader) resolveHongguoMedia(ctx context.Context, task Task) (provid
 	if err := ctx.Err(); err != nil {
 		return providerMedia{}, err
 	}
+	requested, _ := ctx.Value(playbackQualityKey{}).(int)
+	if requested == 0 || requested == hongguoPublicPlaybackQuality {
+		media, err := d.resolveHongguoPublicMedia(ctx, videoID)
+		if err == nil || errors.Is(err, errHongguoPublicEpisodeUnavailable) || errors.Is(err, errHongguoPublicPlaybackDenied) {
+			return media, err
+		}
+		if err := ctx.Err(); err != nil {
+			return providerMedia{}, err
+		}
+	}
 	media, pageErr := d.resolveHongguoWebMedia(ctx, seriesID, videoID)
-	if pageErr == nil {
-		return media, nil
+	if pageErr == nil || errors.Is(pageErr, errHongguoPublicEpisodeUnavailable) {
+		return media, pageErr
 	}
 	if err := ctx.Err(); err != nil {
 		return providerMedia{}, err
@@ -236,6 +246,9 @@ func (d *Downloader) resolveHongguoWebMedia(ctx context.Context, seriesID, video
 	page := routerLoaderMap(parseRouterData(body), "player_", "player_page")
 	if mapString(page, "vid") != videoID || mapString(page, "series_id") != seriesID {
 		return providerMedia{}, fmt.Errorf("红果未返回所请求的剧集，可能仅允许网页试看；请在站点确认该集的访问权限")
+	}
+	if protected, _ := page["protectedPlayback"].(bool); protected {
+		return providerMedia{}, errHongguoPublicEpisodeUnavailable
 	}
 	info, _ := page["video_player_info"].(map[string]any)
 	mediaURL := mapString(info, "main_url")

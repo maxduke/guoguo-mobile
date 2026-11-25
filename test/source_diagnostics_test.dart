@@ -60,6 +60,25 @@ void main() {
         diagnostics = SourceDiagnostics(now: () => DateTime.utc(2026, 10, 10)),
   );
   tearDown(() => diagnostics.dispose());
+  test('Hongguo public playback denial remains episode-specific', () {
+    final sample = SourceDiagnostic.fromJson({
+      ..._sample(method: 'downloadPlan', result: 'failed'),
+      'source': 'hongguo',
+      'sourceStage': 'public_playback',
+      'sourceFailure': 'public_episode_unavailable',
+      'responseBytes': 40,
+      'httpStatus': 403,
+    });
+    expect(sample.sourceStageLabel, '读取红果官网公开片源');
+    expect(sample.sourceFailureLabel, '红果官网未开放本集的公开播放');
+    expect(
+      ProviderException(
+        sample.sourceFailureLabel,
+        diagnostic: sample.toJson(),
+      ).stopsSourceBatch,
+      false,
+    );
+  });
   test(
     'observed metadata records actual attempts without changing request arguments',
     () async {

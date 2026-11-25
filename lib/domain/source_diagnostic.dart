@@ -72,6 +72,7 @@ class SourceDiagnostic {
     'registration',
     'model',
     'model_fallback',
+    'public_playback',
     'plugin_script',
   };
   static const sourceFailures = {
@@ -86,6 +87,7 @@ class SourceDiagnostic {
     'business_rejected',
     'fallback_invalid',
     'fallback_request_failed',
+    'public_episode_unavailable',
   };
   final String sourceStage, sourceFailure;
   final int responseBytes;
@@ -205,6 +207,7 @@ class SourceDiagnostic {
     'registration' => '准备播放连接',
     'model' => '读取播放资料',
     'model_fallback' => '读取备用播放资料',
+    'public_playback' => '读取红果官网公开片源',
     'plugin_script' => '加载插件脚本',
     _ => '',
   };
@@ -215,6 +218,7 @@ class SourceDiagnostic {
     'empty_model' => '站源未返回播放资料',
     'business_rejected' => '站源暂未提供本集资源',
     'fallback_request_failed' => '备用播放资料读取失败',
+    'public_episode_unavailable' => '红果官网未开放本集的公开播放',
     'http_error' => '取源接口返回错误',
     'invalid_model' ||
     'invalid_response' ||
